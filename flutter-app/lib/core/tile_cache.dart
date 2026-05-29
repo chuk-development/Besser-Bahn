@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 
@@ -59,23 +60,23 @@ class TileCache {
     return NetworkTileProvider(headers: headers ?? const {});
   }
 
-  /// German OpenStreetMap tiles (`tile.openstreetmap.de`) — the OSM standard
-  /// style rendered with German labels (`name:de`), so place names read
-  /// "München", "Köln", … instead of international/English forms. No API key.
-  /// No retina (`{r}`) variant exists on this server, so we upscale tiles past
-  /// the native max instead.
+  /// CARTO "Positron" (light_all): a deliberately minimal grey basemap. It
+  /// renders place and region names (cities, Bundesländer) and roads/water but
+  /// almost no POI clutter — no restaurant/shop icons like the full OSM style —
+  /// so it stays an unobtrusive backdrop for our route/markers. In Germany the
+  /// names come out German (OSM `name` tag). No API key.
   static const String outdoorTileUrl =
-      'https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png';
+      'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
-  /// The shared outdoor base layer (German OSM), cached on disk. Used by every
-  /// outdoor map (route, departures, station fallback) so the style/source lives
-  /// in one place.
-  static TileLayer outdoorLayer() => TileLayer(
+  /// The shared outdoor base layer, cached on disk. Used by every outdoor map
+  /// (route, departures, station fallback) so the style/source lives in one
+  /// place. [context] only drives retina tile selection.
+  static TileLayer outdoorLayer(BuildContext context) => TileLayer(
         urlTemplate: outdoorTileUrl,
-        subdomains: const ['a', 'b', 'c'],
+        subdomains: const ['a', 'b', 'c', 'd'],
+        retinaMode: RetinaMode.isHighDensity(context),
         userAgentPackageName: 'de.chuk.besserebahn',
         tileProvider: provider(),
-        maxNativeZoom: 18, // osm.de serves to ~18; flutter_map upscales above
         maxZoom: 20,
       );
 }

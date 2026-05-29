@@ -123,7 +123,7 @@ class TrainMap extends StatelessWidget {
         ),
       ),
       children: [
-        TileCache.outdoorLayer(),
+        TileCache.outdoorLayer(context),
         PolylineLayer(
           polylines: [
             Polyline(
