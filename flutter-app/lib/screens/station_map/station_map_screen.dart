@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import '../../core/tile_cache.dart';
 import '../../models/station.dart';
 import '../../models/station_map.dart';
+import '../../providers/service_providers.dart';
 import '../../providers/station_map_provider.dart';
 import '../../services/location_service.dart';
 import '../../theme/app_colors.dart';
