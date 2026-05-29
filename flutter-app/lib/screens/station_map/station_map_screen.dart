@@ -283,6 +283,18 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     if (state.error != null) {
+      // No indoor station plan (typical for bus stops, tram halts and stations
+      // bahnhof.de hides). If we at least know where the stop IS, don't dead-end
+      // on an error — drop to a plain OSM map with a pin on its coordinates.
+      final st = state.station;
+      if (st != null && st.hasLocation) {
+        return _FallbackLocationMap(
+          station: st,
+          note: state.highlightGleis != null
+              ? 'Gleis ${state.highlightGleis}'
+              : null,
+        );
+      }
       return _Message(
         icon: Icons.map_outlined,
         title: 'Keine Karte',
@@ -1298,6 +1310,239 @@ class _BoardingBanner extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Fallback for stations with no indoor plan (bus stops, tram halts, hidden
+/// stations): a plain OpenStreetMap with a single pin on the stop's
+/// coordinates, plus the same "Mein Standort" framing as the full map — so the
+/// rider can still see where the stop is and walk to it.
+class _FallbackLocationMap extends ConsumerStatefulWidget {
+  final Station station;
+
+  /// Optional hint shown in the info banner (e.g. the boarding Gleis).
+  final String? note;
+
+  const _FallbackLocationMap({required this.station, this.note});
+
+  @override
+  ConsumerState<_FallbackLocationMap> createState() =>
+      _FallbackLocationMapState();
+}
+
+class _FallbackLocationMapState extends ConsumerState<_FallbackLocationMap> {
+  final _mapController = MapController();
+  UserFix? _userFix;
+  bool _locating = false;
+
+  LatLng get _target =>
+      LatLng(widget.station.latitude!, widget.station.longitude!);
+
+  @override
+  void dispose() {
+    _mapController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _locateMe() async {
+    setState(() => _locating = true);
+    try {
+      final fix = await ref.read(locationServiceProvider).currentFix();
+      if (!mounted) return;
+      setState(() => _userFix = fix);
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints([fix.latLng, _target]),
+          padding: const EdgeInsets.all(72),
+          maxZoom: 17.5,
+        ),
+      );
+    } on LocationException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Standort konnte nicht ermittelt werden.')));
+      }
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
+  }
+
+  double get _distanceToTarget =>
+      const Distance().as(LengthUnit.Meter, _userFix!.latLng, _target);
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: _target,
+            initialZoom: 16.5,
+            minZoom: 10,
+            maxZoom: 19,
+          ),
+          children: [
+            TileLayer(
+              urlTemplate:
+                  'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+              subdomains: const ['a', 'b', 'c', 'd'],
+              retinaMode: RetinaMode.isHighDensity(context),
+              userAgentPackageName: 'de.chuk.besserebahn',
+              tileProvider: TileCache.provider(),
+              maxZoom: 20,
+            ),
+            if (_userFix != null) ...[
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: [_userFix!.latLng, _target],
+                    color: AppColors.dbBlue.withAlpha(180),
+                    strokeWidth: 4,
+                    pattern: StrokePattern.dotted(),
+                  ),
+                ],
+              ),
+              CircleLayer(
+                circles: [
+                  CircleMarker(
+                    point: _userFix!.latLng,
+                    radius: _userFix!.accuracy,
+                    useRadiusInMeter: true,
+                    color: AppColors.dbBlue.withAlpha(30),
+                    borderColor: AppColors.dbBlue.withAlpha(90),
+                    borderStrokeWidth: 1,
+                  ),
+                ],
+              ),
+            ],
+            MarkerLayer(
+              markers: [
+                // The stop itself — a labelled DB-red location pin.
+                Marker(
+                  point: _target,
+                  width: 160,
+                  height: 64,
+                  alignment: Alignment.topCenter,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.location_on,
+                          color: AppColors.dbRed, size: 40),
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(6),
+                            boxShadow: const [
+                              BoxShadow(color: Colors.black26, blurRadius: 4),
+                            ],
+                          ),
+                          child: Text(
+                            widget.station.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 11, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_userFix != null)
+                  Marker(
+                    point: _userFix!.latLng,
+                    width: 22,
+                    height: 22,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.dbBlue,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 3),
+                        boxShadow: const [
+                          BoxShadow(
+                              color: Colors.black26,
+                              blurRadius: 4,
+                              spreadRadius: 1),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const RichAttributionWidget(
+              alignment: AttributionAlignment.bottomLeft,
+              showFlutterMapAttribution: false,
+              attributions: [
+                TextSourceAttribution('© OpenStreetMap'),
+                TextSourceAttribution('© CARTO'),
+              ],
+            ),
+          ],
+        ),
+        // Tell the rider this is a location fallback, not the full plan.
+        Positioned(
+          left: 12,
+          right: 12,
+          top: 12,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.dbBlue.withAlpha(235),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.place, color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    widget.note != null
+                        ? 'Kein Bahnhofsplan · Lage der Haltestelle (${widget.note})'
+                        : 'Kein Bahnhofsplan · Lage der Haltestelle',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          right: 8,
+          top: 60,
+          child: FloatingActionButton.small(
+            heroTag: 'locate-me-fallback',
+            tooltip: 'Mein Standort',
+            onPressed: _locating ? null : _locateMe,
+            child: _locating
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.my_location),
+          ),
+        ),
+        if (_userFix != null)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 16,
+            child: Center(child: _DistanceChip(metres: _distanceToTarget)),
+          ),
+      ],
     );
   }
 }
