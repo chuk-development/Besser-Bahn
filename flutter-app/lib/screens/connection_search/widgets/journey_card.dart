@@ -252,7 +252,6 @@ class JourneyCard extends ConsumerWidget {
     final mins = legs.map(legMinutes).toList();
     final total = mins.fold<int>(0, (s, m) => s + m);
     if (total <= 0) return const SizedBox.shrink();
-    final multi = legs.length > 1;
     // Floor so even a short leg keeps enough width for its line label.
     final minFlex = (total * 0.16).round().clamp(1, total);
 
@@ -268,7 +267,6 @@ class JourneyCard extends ConsumerWidget {
               legs[i].line?.displayName ?? '–',
               _productColor(context, legs[i]),
               legs[i].occupancy?.level,
-              multi ? (mins[i] / total * 100).round() : null,
             ),
           ),
         ],
@@ -277,8 +275,7 @@ class JourneyCard extends ConsumerWidget {
   }
 
   Widget _legSegment(BuildContext context, String label, Color color,
-      OccupancyLevel? occupancy, int? percent) {
-    final theme = Theme.of(context);
+      OccupancyLevel? occupancy) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -308,17 +305,6 @@ class JourneyCard extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.only(top: 3),
             child: Center(child: OccupancyIndicator(level: occupancy)),
-          ),
-        // Proportional share, underneath.
-        if (percent != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 1),
-            child: Text(
-              '$percent%',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  fontSize: 10, color: theme.colorScheme.onSurfaceVariant),
-            ),
           ),
       ],
     );

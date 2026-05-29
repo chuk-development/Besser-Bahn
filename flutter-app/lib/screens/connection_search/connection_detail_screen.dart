@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -681,10 +683,15 @@ class _LegSection extends ConsumerStatefulWidget {
 }
 
 class _LegSectionState extends ConsumerState<_LegSection>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   Trip? _trip;
   CoachSequence? _coach;
   bool _loading = true;
+
+  /// One-shot timer that re-fetches this leg's live data shortly before the
+  /// train's next stop, then re-arms itself. Stop-aligned beats constant polling:
+  /// the data only changes around stops, so that's when we refresh.
+  Timer? _refreshTimer;
 
   // Keep the leg alive when scrolled off-screen → no dispose, no re-fetch,
   // no UI rebuild when scrolling back to it.
@@ -694,7 +701,55 @@ class _LegSectionState extends ConsumerState<_LegSection>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Coming back to the foreground → refresh now and re-arm.
+      final id = widget.leg.tripId;
+      if (id != null && mounted) _fetchFresh(id, silent: true);
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _refreshTimer?.cancel(); // never fetch while backgrounded
+    }
+  }
+
+  /// Schedule the next silent re-fetch ~60 s before the train's next stop event,
+  /// clamped to [30 s, 10 min]. Re-armed after every fetch (success or failure,
+  /// using the freshest trip we hold). No future stop ⇒ the run is over ⇒ stop.
+  void _scheduleNextRefresh(Trip trip) {
+    _refreshTimer?.cancel();
+    final id = widget.leg.tripId;
+    if (id == null) return;
+    final now = DateTime.now();
+    DateTime? nextEvent;
+    for (final so in trip.stopovers) {
+      final t = so.departure ??
+          so.plannedDeparture ??
+          so.arrival ??
+          so.plannedArrival;
+      if (t != null && t.isAfter(now)) {
+        nextEvent = t;
+        break;
+      }
+    }
+    if (nextEvent == null) return;
+    var delay = nextEvent.difference(now) - const Duration(seconds: 60);
+    if (delay < const Duration(seconds: 30)) delay = const Duration(seconds: 30);
+    if (delay > const Duration(minutes: 10)) delay = const Duration(minutes: 10);
+    _refreshTimer = Timer(delay, () {
+      if (mounted) _fetchFresh(id, silent: true);
+    });
   }
 
   @override
@@ -757,6 +812,8 @@ class _LegSectionState extends ConsumerState<_LegSection>
       } catch (_) {/* optional */}
     } catch (_) {/* keep cached/fallback */} finally {
       if (mounted && !silent) setState(() => _loading = false);
+      // Re-arm the stop-aligned refresh from the freshest trip we hold.
+      if (mounted && _trip != null) _scheduleNextRefresh(_trip!);
     }
   }
 
