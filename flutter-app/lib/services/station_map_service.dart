@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import '../core/app_log.dart';
 import '../core/constants.dart';
 import '../models/station_map.dart';
 
@@ -28,11 +29,16 @@ class StationMapService {
   /// then swap `hbf` <-> `hauptbahnhof` as a fallback.
   Future<StationMap> fetchByStationName(String name) async {
     final slug = slugify(name);
+    AppLog.log('fetchByStationName "$name" → slug "$slug"', tag: 'map');
     try {
       return await fetchBySlug(slug);
-    } on StationMapException {
+    } on StationMapException catch (e) {
       final alt = _altSlug(slug);
-      if (alt != null) return await fetchBySlug(alt);
+      if (alt != null) {
+        AppLog.log('slug "$slug" failed ($e) → retry alt slug "$alt"',
+            tag: 'map');
+        return await fetchBySlug(alt);
+      }
       rethrow;
     }
   }
@@ -51,7 +57,14 @@ class StationMapService {
   /// Fetch the indoor map for a bahnhof.de slug (e.g. `hamburg-hbf`).
   Future<StationMap> fetchBySlug(String slug) async {
     final uri = Uri.parse('https://www.bahnhof.de/$slug/karte');
-    final res = await _client.get(uri, headers: _headers);
+    final res = await AppLog.timed(
+      'GET $uri',
+      () => _client.get(uri, headers: _headers),
+      tag: 'map',
+    );
+    AppLog.log(
+        'GET $slug → HTTP ${res.statusCode}, ${res.bodyBytes.length} bytes',
+        tag: 'map');
     if (res.statusCode != 200) {
       throw StationMapException('Bahnhof "$slug" nicht gefunden '
           '(HTTP ${res.statusCode}).');
@@ -74,6 +87,10 @@ class StationMapService {
 
   StationMap _parse(String slug, String html) {
     final blob = _decodeRscBlob(html);
+    AppLog.log(
+        'parse "$slug": html ${html.length}b → RSC blob ${blob.length}b'
+        '${blob.contains('"poi":') ? '' : ' · NO "poi": key!'}',
+        tag: 'map');
 
     // Map centre sits immediately before the `poi` object.
     final loc = RegExp(
@@ -86,6 +103,10 @@ class StationMapService {
 
     final poiObj = _extractPoiObject(blob);
     if (poiObj == null) {
+      AppLog.log(
+          'parse "$slug": poi object NOT extractable from blob '
+          '(${blob.length}b) → throwing "keine Kartendaten"',
+          tag: 'map');
       throw StationMapException(
           'Für "$slug" sind keine Kartendaten verfügbar.');
     }
@@ -109,13 +130,20 @@ class StationMapService {
         ? LatLng(double.parse(loc.group(2)!), double.parse(loc.group(1)!))
         : (pois.isNotEmpty ? pois.first.latLng : const LatLng(51.0, 10.0));
 
+    final anchors = _extractAnchors(blob);
+    AppLog.log(
+        'parse "$slug" OK: ${pois.length} POIs, ${levels.length} levels, '
+        '${pois.where((p) => p.isPlatform).length} platforms, '
+        '${pois.where((p) => p.isPlatformSector).length} sector-cubes, '
+        '${anchors.length} anchors',
+        tag: 'map');
     return StationMap(
       slug: slug,
       center: center,
       levels: levels,
       levelInit: lvl?.group(2) ?? (levels.isNotEmpty ? levels.first : ''),
       pois: pois,
-      platformAnchors: _extractAnchors(blob),
+      platformAnchors: anchors,
     );
   }
 

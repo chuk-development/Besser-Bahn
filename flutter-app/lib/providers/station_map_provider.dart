@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/app_log.dart';
 import '../models/station.dart';
 import '../models/station_map.dart';
 import '../services/station_map_service.dart';
@@ -388,18 +389,31 @@ class StationMapNotifier extends Notifier<StationMapState> {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
       final map = await fetch();
+      final level = _levelForLoad(map);
+      AppLog.log(
+          'map loaded: slug "${map.slug}", level "$level", '
+          'highlight ${state.highlightGleis ?? '–'} '
+          'section ${state.highlightSection == null ? '–' : '${state.highlightSection!.start}–${state.highlightSection!.end}'}',
+          tag: 'map');
       state = state.copyWith(
         map: map,
-        selectedLevel: _levelForLoad(map),
+        selectedLevel: level,
         hiddenCategories: const {},
         isLoading: false,
       );
     } on StationMapException catch (e) {
+      // Known/expected failure (bad slug, no map data) — message is user-safe.
+      AppLog.log('map load failed (StationMapException): ${e.message}',
+          tag: 'map');
       state = state.copyWith(isLoading: false, error: e.message);
-    } catch (e) {
+    } catch (e, st) {
+      // Unexpected — log the real type + message + stack so the in-app Log
+      // shows WHY, instead of the generic "konnte nicht geladen werden".
+      AppLog.log('map load CRASHED: ${e.runtimeType}: $e', tag: 'map');
+      AppLog.log('$st', tag: 'map');
       state = state.copyWith(
         isLoading: false,
-        error: 'Karte konnte nicht geladen werden.',
+        error: 'Karte konnte nicht geladen werden ($e).',
       );
     }
   }
