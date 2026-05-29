@@ -136,10 +136,13 @@ class _ConnectionSearchScreenState
                           ],
                         ),
                       ),
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 8),
+                      // A bit bigger than before — and since the fields are
+                      // Expanded, growing it nudges Von/Nach slightly narrower
+                      // (left-anchored), which is the look we want.
                       IconButton.filledTonal(
-                        icon: const Icon(Icons.swap_vert, size: 20),
-                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.swap_vert, size: 24),
+                        iconSize: 24,
                         tooltip: 'Tauschen',
                         onPressed: () {
                           notifier.swapStations();
@@ -204,8 +207,15 @@ class _ConnectionSearchScreenState
                         const SizedBox(width: 4),
                         FilledButton(
                           style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(horizontal: 10),
-                            minimumSize: const Size(0, 0),
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            // Give it real width so it reads as a proper button,
+                            // not a squeezed icon chip.
+                            minimumSize: const Size(64, 0),
+                            // Match the time field's rounding instead of the
+                            // default stadium pill, which looked oddly clipped
+                            // squeezed into this stretched row.
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
                             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           ),
                           onPressed: state.isLoading ? null : _search,
@@ -216,7 +226,7 @@ class _ConnectionSearchScreenState
                                   child: CircularProgressIndicator(
                                       strokeWidth: 2, color: Colors.white),
                                 )
-                              : const Icon(Icons.search, size: 20),
+                              : const Icon(Icons.search, size: 24),
                         ),
                       ],
                     ),
