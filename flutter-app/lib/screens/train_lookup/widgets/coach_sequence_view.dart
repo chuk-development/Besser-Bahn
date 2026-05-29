@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../models/coach_sequence.dart';
 import '../../../theme/app_colors.dart';
 
-class CoachSequenceView extends StatelessWidget {
+class CoachSequenceView extends StatefulWidget {
   final CoachSequence sequence;
 
   /// When true the train doubles as a seat-plan picker: passenger cars become
@@ -29,7 +29,23 @@ class CoachSequenceView extends StatelessWidget {
   });
 
   @override
+  State<CoachSequenceView> createState() => _CoachSequenceViewState();
+}
+
+class _CoachSequenceViewState extends State<CoachSequenceView> {
+  // Collapsed by default — the Wagenreihung is a sub-section you open when you
+  // need it (which coach, free seats), not always-on clutter.
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final sequence = widget.sequence;
+    final selectable = widget.selectable;
+    final freeByWagon = widget.freeByWagon;
+    final selectedWagon = widget.selectedWagon;
+    final onCoachTap = widget.onCoachTap;
+    final seatPlan = widget.seatPlan;
+
     final theme = Theme.of(context);
     final coaches = sequence.allCoaches;
     if (coaches.isEmpty) return const SizedBox.shrink();
@@ -47,26 +63,33 @@ class CoachSequenceView extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-            Row(
-              children: [
-                Text('Wagenreihung',
-                    style: theme.textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.bold)),
-                const Spacer(),
-                Text('Gleis ${sequence.departurePlatform}',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w600)),
-                if (sequence.hasPlatformChange) ...[
-                  const SizedBox(width: 4),
-                  Text('(plan: ${sequence.scheduledPlatform})',
-                      style: TextStyle(
-                          color: AppColors.delay,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold)),
+            InkWell(
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Row(
+                children: [
+                  Text('Wagenreihung',
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.bold)),
+                  const Spacer(),
+                  Text('Gleis ${sequence.departurePlatform}',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600)),
+                  if (sequence.hasPlatformChange) ...[
+                    const SizedBox(width: 4),
+                    Text('(plan: ${sequence.scheduledPlatform})',
+                        style: TextStyle(
+                            color: AppColors.delay,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold)),
+                  ],
+                  const SizedBox(width: 6),
+                  Icon(_expanded ? Icons.expand_less : Icons.expand_more,
+                      size: 20, color: theme.colorScheme.onSurfaceVariant),
                 ],
-              ],
+              ),
             ),
 
+            if (_expanded) ...[
             const SizedBox(height: 8),
 
             // Sector labels
@@ -120,7 +143,7 @@ class CoachSequenceView extends StatelessWidget {
                           coaches[i].wagonNumber == selectedWagon,
                       onTap: onCoachTap == null
                           ? null
-                          : () => onCoachTap!(coaches[i]),
+                          : () => onCoachTap(coaches[i]),
                     ),
                     if (i < coaches.length - 1) const _Coupler(),
                   ],
@@ -166,12 +189,13 @@ class CoachSequenceView extends StatelessWidget {
                   ),
                 ),
             ],
+            ], // end if (_expanded)
           ],
         ),
       ),
-      if (seatPlan != null) ...[
+      if (_expanded && seatPlan != null) ...[
         const Divider(height: 1),
-        seatPlan!,
+        seatPlan,
       ],
         ],
       ),
