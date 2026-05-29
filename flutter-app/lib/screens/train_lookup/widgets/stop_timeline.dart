@@ -91,15 +91,45 @@ class _StopTimelineState extends State<StopTimeline> {
       }
     }
 
-    // --- the ridden segment (always shown) --------------------------------
-    for (var i = board; i <= alight; i++) {
-      rows.add(_stopRow(
-        i,
-        board,
-        alight,
-        hasTop: i != board || (beforeCount > 0 && _expandedBefore),
-        hasBottom: i != alight || (afterCount > 0),
+    // --- the ridden segment -----------------------------------------------
+    // Endpoints (board, alight) are always shown. On a journey leg the stops
+    // between them collapse behind a "N Zwischenhalte" header; on a standalone
+    // train lookup every stop stays visible.
+    final middleCount = alight - board - 1;
+    final collapseMiddle = isLeg && middleCount > 0;
+
+    if (collapseMiddle) {
+      // board endpoint
+      rows.add(_stopRow(board, board, alight,
+          hasTop: beforeCount > 0 && _expandedBefore, hasBottom: true));
+      // collapsible middle
+      rows.add(_collapseHeader(
+        context,
+        expanded: _expandedMiddle,
+        count: middleCount,
+        label: _expandedMiddle
+            ? 'Zwischenhalte ausblenden'
+            : '$middleCount ${middleCount == 1 ? 'Zwischenhalt' : 'Zwischenhalte'} anzeigen',
+        onTap: () => setState(() => _expandedMiddle = !_expandedMiddle),
       ));
+      if (_expandedMiddle) {
+        for (var i = board + 1; i < alight; i++) {
+          rows.add(_stopRow(i, board, alight, hasTop: true, hasBottom: true));
+        }
+      }
+      // alight endpoint
+      rows.add(_stopRow(alight, board, alight,
+          hasTop: true, hasBottom: afterCount > 0));
+    } else {
+      for (var i = board; i <= alight; i++) {
+        rows.add(_stopRow(
+          i,
+          board,
+          alight,
+          hasTop: i != board || (beforeCount > 0 && _expandedBefore),
+          hasBottom: i != alight || (afterCount > 0),
+        ));
+      }
     }
 
     // --- stops after alighting (collapsed by default) ---------------------
