@@ -106,9 +106,6 @@ class SplitTicketScreen extends ConsumerWidget {
           // Empty state: nothing running, no result yet.
           if (!state.isLoading && state.result == null && state.error == null)
             _buildEmptyState(context),
-
-          // Logs
-          if (state.logs.isNotEmpty) _buildLogs(context, state.logs),
         ],
       ),
     );
@@ -434,28 +431,4 @@ class SplitTicketScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildLogs(BuildContext context, List<String> logs) {
-    final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      child: ExpansionTile(
-        title: Text('Log (${logs.length})', style: theme.textTheme.titleSmall),
-        initiallyExpanded: false,
-        children: [
-          Container(
-            height: 200,
-            padding: const EdgeInsets.all(8),
-            child: ListView.builder(
-              reverse: true,
-              itemCount: logs.length,
-              itemBuilder: (_, i) => Text(
-                logs[logs.length - 1 - i],
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }

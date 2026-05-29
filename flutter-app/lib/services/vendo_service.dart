@@ -123,6 +123,86 @@ class VendoService {
     );
   }
 
+  /// "Weitere Abfahrten" for ONE direct segment — the alternative trains of the
+  /// same product group running [abgangs]→[ziel] around [ankunft]. Mirrors the
+  /// DB Navigator `POST /mob/trip/weitereabfahrten` (each result is a one-leg
+  /// trip). [context] paginates ("Mehr anzeigen") via the prior result's
+  /// `spaeterContext`/`frueherContext`.
+  Future<JourneyResult> fetchWeitereAbfahrten({
+    required String abgangsLocationId,
+    required String zielLocationId,
+    required DateTime ankunft,
+    required String produktGattungen,
+    String? context,
+    bool fahrradmitnahme = false,
+  }) async {
+    final body = {
+      'wunsch': {
+        'abgangsLocationId': abgangsLocationId,
+        'alternativeHalteBerechnung': true,
+        'fahrradmitnahme': fahrradmitnahme,
+        'produktGattungen': produktGattungen,
+        'zeitWunsch': {
+          'reiseDatum': _isoWithOffset(ankunft),
+          'zeitPunktArt': 'ANKUNFT',
+        },
+        'zielLocationId': zielLocationId,
+        if (context != null) 'context': context,
+      },
+    };
+    final url = '$_base/trip/weitereabfahrten';
+    AppLog.log('weitereabfahrten gattung=$produktGattungen '
+        'an=${_isoWithOffset(ankunft)}${context != null ? ' (mehr)' : ''}',
+        tag: 'vendo');
+    final res = await _client
+        .post(Uri.parse(url),
+            headers: _headers(_journeyMedia),
+            body: utf8.encode(json.encode(body)))
+        .timeout(const Duration(seconds: 12));
+    AppLog.log('weitereabfahrten HTTP ${res.statusCode} '
+        '(${res.bodyBytes.length}B)', tag: 'vendo');
+    if (res.statusCode != 200) {
+      throw VendoException('Vendo weitereabfahrten HTTP ${res.statusCode}: '
+          '${_snippet(res.bodyBytes)}');
+    }
+    final data = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    final conns = data['verbindungen'] as List<dynamic>? ?? [];
+    return JourneyResult(
+      journeys: conns
+          .whereType<Map<String, dynamic>>()
+          .map(_parseConnection)
+          .toList(),
+      earlierRef: data['frueherContext'] as String?,
+      laterRef: data['spaeterContext'] as String?,
+    );
+  }
+
+  /// Map our internal HAFAS-style [product] back to the vendo product-group
+  /// code `weitereabfahrten` expects (e.g. "regional" → "RB", an RE/RB train).
+  static String produktGattungenFor(String? product) {
+    switch (product) {
+      case 'nationalExpress':
+        return 'ICE';
+      case 'national':
+        return 'EC_IC';
+      case 'regional':
+      case 'regionalExp':
+        return 'RB';
+      case 'suburban':
+        return 'SBAHN';
+      case 'bus':
+        return 'BUS';
+      case 'subway':
+        return 'U';
+      case 'tram':
+        return 'STR';
+      case 'ferry':
+        return 'SCHIFF';
+      default:
+        return 'ALL';
+    }
+  }
+
   /// Official bahn.de "Reise teilen" deep link for [journey] — the exact same
   /// `vbid` link the DB Navigator app produces. It opens the EXACT connection
   /// (all legs, this departure) on bahn.de, NOT a pre-filled search.

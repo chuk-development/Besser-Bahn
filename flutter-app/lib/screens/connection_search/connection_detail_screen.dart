@@ -19,6 +19,7 @@ import '../../providers/station_map_provider.dart';
 import '../../services/db_api_service.dart';
 import '../../widgets/prediction_badge.dart';
 import '../train_lookup/widgets/train_detail_view.dart';
+import 'widgets/leg_alternatives.dart';
 
 /// In-memory cache (app session) so a leg's train data is fetched once and
 /// reused — scrolling away and back never re-downloads or rebuilds from
@@ -553,14 +554,22 @@ class _LegSectionState extends ConsumerState<_LegSection>
     final trip = _trip;
     if (trip != null) {
       final leg = widget.leg;
-      return TrainDetailView(
-        trip: trip,
-        coach: _coach,
-        onStopTap: _openStopMap,
-        boardingId: leg.origin.id.isNotEmpty ? leg.origin.id : leg.origin.name,
-        alightingId: leg.destination.id.isNotEmpty
-            ? leg.destination.id
-            : leg.destination.name,
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TrainDetailView(
+            trip: trip,
+            coach: _coach,
+            onStopTap: _openStopMap,
+            boardingId:
+                leg.origin.id.isNotEmpty ? leg.origin.id : leg.origin.name,
+            alightingId: leg.destination.id.isNotEmpty
+                ? leg.destination.id
+                : leg.destination.name,
+          ),
+          if (!leg.isWalking && leg.line != null)
+            LegAlternatives(leg: leg),
+        ],
       );
     }
     // Loading / fallback: still show the leg summary so the user sees the train.

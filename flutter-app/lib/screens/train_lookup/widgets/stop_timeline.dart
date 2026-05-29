@@ -21,12 +21,18 @@ class StopTimeline extends StatefulWidget {
   final String? boardingId;
   final String? alightingId;
 
+  /// Leg-wide amenities (bike, quiet zone, …) shown in the gap between the
+  /// boarding and alighting stop — info that belongs to the whole ride, not a
+  /// single stop. Empty → nothing rendered.
+  final List<({IconData icon, String label})> legAmenities;
+
   const StopTimeline({
     super.key,
     required this.stopovers,
     this.onStopTap,
     this.boardingId,
     this.alightingId,
+    this.legAmenities = const [],
   });
 
   @override
