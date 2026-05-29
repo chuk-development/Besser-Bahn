@@ -428,10 +428,15 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
           left: 8,
           top: 8,
           bottom: 8,
-          child: _LevelSwitcher(
-            map: map,
-            selected: state.selectedLevel,
-            onSelect: notifier.selectLevel,
+          // Centre vertically and let the switcher size to its floor count —
+          // no full-height stretch.
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: _LevelSwitcher(
+              map: map,
+              selected: state.selectedLevel,
+              onSelect: notifier.selectLevel,
+            ),
           ),
         ),
         Positioned(
@@ -846,10 +851,15 @@ class _LevelSwitcher extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (map.levels.length <= 1) return const SizedBox.shrink();
-    return Card(
+    // A compact vertical strip sized to the floor count — rounded ends, hugging
+    // its content so it never stretches down the whole map edge.
+    return Material(
       elevation: 3,
+      color: Theme.of(context).colorScheme.surface,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+        padding: const EdgeInsets.all(3),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
