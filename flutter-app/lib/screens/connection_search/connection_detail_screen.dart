@@ -8,6 +8,7 @@ import '../../models/library_models.dart';
 import '../../models/trip.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/service_providers.dart';
+import '../../providers/split_ticket_provider.dart';
 import '../../providers/station_map_provider.dart';
 import '../../widgets/prediction_badge.dart';
 import '../train_lookup/widgets/train_detail_view.dart';
@@ -37,6 +38,11 @@ class ConnectionDetailScreen extends ConsumerWidget {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.call_split),
+            tooltip: 'Split-Ticket suchen',
+            onPressed: () => _openSplitTicket(context, ref),
+          ),
           Builder(builder: (context) {
             final key =
                 SavedJourney(journey: journey, savedAtMs: 0).key;
@@ -72,6 +78,52 @@ class ConnectionDetailScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  /// Build the ordered station list (split points) from the journey's legs and
+  /// kick off a split-ticket analysis, then jump to the Split tab — so the user
+  /// goes from "found a connection" to "is it cheaper split?" in one tap, no
+  /// copy-pasting a bahn.de link.
+  void _openSplitTicket(BuildContext context, WidgetRef ref) {
+    final stops = <Map<String, dynamic>>[];
+    void add(String id, String name, DateTime? dep) {
+      if (id.isEmpty) return;
+      if (stops.isNotEmpty && stops.last['id'] == id) {
+        // Same station as a transfer point → prefer the onward departure time.
+        if (dep != null) stops.last['departure_iso'] = dep.toIso8601String();
+        return;
+      }
+      stops.add({
+        'name': name,
+        'id': id,
+        'departure_iso': dep?.toIso8601String() ?? '',
+      });
+    }
+
+    for (final leg in journey.legs) {
+      if (leg.isWalking) continue;
+      add(leg.origin.id, leg.origin.name,
+          leg.plannedDeparture ?? leg.departure);
+      add(leg.destination.id, leg.destination.name, null);
+    }
+
+    if (stops.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Zu wenige Haltestellen für ein Split-Ticket.')),
+      );
+      return;
+    }
+
+    final dep = journey.plannedDeparture ?? journey.departure;
+    final date = dep != null ? dep.toIso8601String().split('T').first : '';
+
+    ref.read(splitTicketProvider.notifier).analyze(
+          stops: stops,
+          date: date,
+          directPrice: journey.price?.amount ?? 0,
+        );
+    context.go('/split');
   }
 
   Widget _summary(BuildContext context) {
