@@ -52,6 +52,12 @@ class SplitTicketNotifier extends Notifier<SplitTicketState> {
   // the same state. Fixes the double-search race.
   int _gen = 0;
 
+  // Signature (stop ids + date) of the analysis currently in flight. Re-calling
+  // analyze() with the SAME signature while it runs is a no-op, so returning to
+  // the screen (which re-triggers analyze) keeps the background run going
+  // instead of resetting it to 0.
+  String? _runningSig;
+
   void _log(String msg) {
     final logs = [...state.logs, msg];
     if (logs.length > 100) logs.removeRange(0, logs.length - 100);
@@ -60,6 +66,7 @@ class SplitTicketNotifier extends Notifier<SplitTicketState> {
 
   void cancel() {
     _gen++; // stop the in-flight loop as well
+    _runningSig = null;
     state = state.copyWith(isCancelled: true, isLoading: false);
   }
 
@@ -69,7 +76,14 @@ class SplitTicketNotifier extends Notifier<SplitTicketState> {
     required double directPrice,
     String? routeLabel,
   }) async {
+    final sig = '${stops.map((s) => s['id']).join('|')}@$date';
+    // Already running this exact analysis? Leave it running — re-entering the
+    // screen must not restart it from zero. (A different route DOES supersede,
+    // via the generation bump below.)
+    if (state.isLoading && _runningSig == sig) return;
+
     final myGen = ++_gen;
+    _runningSig = sig;
     final settings = ref.read(settingsProvider);
     final dbApi = ref.read(dbApiServiceProvider);
     final vendo = ref.read(vendoServiceProvider);
@@ -129,6 +143,9 @@ class SplitTicketNotifier extends Notifier<SplitTicketState> {
           }
           prices[key] = price;
 
+          // Re-check after the awaits above: a newer run may have superseded us
+          // while the price request was in flight — don't write stale progress.
+          if (myGen != _gen) return;
           processed++;
           state = state.copyWith(
             progress: SplitTicketProgress(
@@ -181,6 +198,7 @@ class SplitTicketNotifier extends Notifier<SplitTicketState> {
       }
 
       if (myGen != _gen) return; // superseded while computing
+      _runningSig = null;
       stopwatch.stop();
       final splitPrice = dp[n - 1];
       _log(
@@ -206,6 +224,7 @@ class SplitTicketNotifier extends Notifier<SplitTicketState> {
       NotificationService.showSplitResult(title: route, body: body);
     } catch (e) {
       if (myGen != _gen) return;
+      _runningSig = null;
       state = state.copyWith(isLoading: false, error: 'Fehler: $e');
     }
   }
