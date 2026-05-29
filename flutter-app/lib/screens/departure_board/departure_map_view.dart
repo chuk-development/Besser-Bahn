@@ -90,7 +90,7 @@ class _DepartureMapViewState extends ConsumerState<DepartureMapView> {
             maxZoom: 19,
           ),
           children: [
-            TileCache.outdoorLayer(),
+            TileCache.outdoorLayer(context),
             if (level.isNotEmpty)
               TileLayer(
                 urlTemplate: StationMap.indoorTileUrl(level),

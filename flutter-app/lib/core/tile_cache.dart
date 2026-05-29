@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 
@@ -59,26 +60,23 @@ class TileCache {
     return NetworkTileProvider(headers: headers ?? const {});
   }
 
-  /// BKG TopPlus-Open, grey variant (`web_grau`): the official German government
-  /// basemap. Neutral light-grey, fully German labels (Bayern/München — not the
-  /// "Bavaria" CARTO showed) and minimal POI clutter (no restaurant/shop icons),
-  /// so it's an unobtrusive backdrop for our route + markers. Free, no API key;
-  /// attribution "© BKG". It's a WMTS layer → path order is {z}/{y}/{x} and
-  /// there's no retina (`{r}`) variant, so we upscale past the native max.
+  /// CARTO "Positron" (light_all): a deliberately minimal light-grey basemap —
+  /// place + region names, roads, water, almost no POI clutter — an unobtrusive
+  /// backdrop for our route + markers. Labels are international (e.g. "Bavaria"),
+  /// but the user prefers this cleaner look over the German-labelled alternative.
+  /// No API key.
   static const String outdoorTileUrl =
-      'https://sgx.geodatenzentrum.de/wmts_topplus_open/tile/1.0.0/'
-      'web_grau/default/WEBMERCATOR/{z}/{y}/{x}.png';
-
-  /// Attribution required by the BKG TopPlus-Open licence (show on every map).
-  static const String outdoorAttribution = '© BKG (GeoBasis-DE)';
+      'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
   /// The shared outdoor base layer, cached on disk. Used by every outdoor map
-  /// (route, departures, station fallback) so the style/source lives in one place.
-  static TileLayer outdoorLayer() => TileLayer(
+  /// (route, departures, station fallback) so the style/source lives in one
+  /// place. [context] only drives retina (`{r}`) tile selection.
+  static TileLayer outdoorLayer(BuildContext context) => TileLayer(
         urlTemplate: outdoorTileUrl,
+        subdomains: const ['a', 'b', 'c', 'd'],
+        retinaMode: RetinaMode.isHighDensity(context),
         userAgentPackageName: 'de.chuk.besserebahn',
         tileProvider: provider(),
-        maxNativeZoom: 18, // TopPlus serves to ~18; flutter_map upscales above
         maxZoom: 20,
       );
 }

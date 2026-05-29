@@ -16,19 +16,10 @@ Eine App zum Finden günstigerer Split-Ticket-Optionen für Deutsche Bahn Verbin
 - Detaillierte Preisvergleiche und Ersparnisberechnung
 - **Keine Serverkosten: Die App läuft vollständig lokal auf Ihrem Gerät.**
 
-## Screenshots
-
-<p align="center">
-  <img src="assets/App1.png" width="400" />
-  <img src="assets/App2.png" width="400" />
-</p>
-
 ## Installation
 
 ### Android
-[<img src="https://gitlab.com/IzzyOnDroid/repo/-/raw/master/assets/IzzyOnDroidButtonGreyBorder_nofont.png" height="80" alt="Get it at IzzyOnDroid">](https://apt.izzysoft.de/packages/dev.chuk.betterbahn)
-
-Oder gehen Sie zur [Releases-Seite](https://github.com/chukfinley/Besser-Bahn/releases) und laden Sie die neueste Version herunter.
+Gehen Sie zur [Releases-Seite](https://github.com/chukfinley/Besser-Bahn/releases) und laden Sie die neueste Version herunter.
 
 ### iOS
 Ich selbst besitze weder einen Mac noch ein iOS-Gerät, um die App für iOS zu kompilieren. Sollte jemand von euch die App erfolgreich für iOS kompilieren können, meldet euch gerne bei mir, und ich werde die iOS-Version dann offiziell hier bereitstellen.

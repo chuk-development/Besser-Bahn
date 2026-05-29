@@ -123,7 +123,7 @@ class TrainMap extends StatelessWidget {
         ),
       ),
       children: [
-        TileCache.outdoorLayer(),
+        TileCache.outdoorLayer(context),
         const RichAttributionWidget(
           alignment: AttributionAlignment.bottomLeft,
           showFlutterMapAttribution: false,
