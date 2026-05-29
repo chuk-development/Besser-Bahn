@@ -996,6 +996,29 @@ class _LegSectionState extends ConsumerState<_LegSection>
 
   void _openStopMap(Stopover stop) {
     if (stop.stop.name.isEmpty) return;
+    final leg = widget.leg;
+
+    // On a wing train, when this is the stop you board at, narrow the map's
+    // section highlight to the portion bound for YOUR destination (e.g. just
+    // "I"), not the whole train's range — and label it on the map banner.
+    ({String start, String end})? sectionOverride;
+    String? transferNote;
+    final coach = _coach;
+    final isLegBoarding =
+        (stop.stop.id.isNotEmpty && stop.stop.id == leg.origin.id) ||
+            (stop.stop.name.isNotEmpty && stop.stop.name == leg.origin.name);
+    if (coach != null && isLegBoarding) {
+      final portion = coach.portionTo(leg.destination.name);
+      final range = portion?.sectorRange;
+      if (range != null) {
+        sectionOverride = range;
+        final sec = range.start == range.end
+            ? 'Abschnitt ${range.start}'
+            : 'Abschnitt ${range.start}–${range.end}';
+        transferNote = 'Zugteil Richtung ${leg.destination.name} · $sec';
+      }
+    }
+
     ref.read(stationMapProvider.notifier).loadForStation(
           stop.stop,
           highlightGleis: stop.platform,
@@ -1004,7 +1027,9 @@ class _LegSectionState extends ConsumerState<_LegSection>
               : stop.isOrigin
                   ? GleisRole.board
                   : GleisRole.none,
-          primaryTypes: primaryPoiTypesForProduct(widget.leg.line?.product),
+          sectionOverride: sectionOverride,
+          transferNote: transferNote,
+          primaryTypes: primaryPoiTypesForProduct(leg.line?.product),
         );
     context.push('/station-map');
   }

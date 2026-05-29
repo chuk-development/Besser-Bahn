@@ -464,11 +464,16 @@ class StationMapNotifier extends Notifier<StationMapState> {
       GleisRole role = GleisRole.board,
       String? secondaryGleis,
       GleisRole secondaryRole = GleisRole.none,
+      ({String start, String end})? sectionOverride,
       Set<String>? primaryTypes}) async {
     _primaryTypes = primaryTypes ?? kDefaultPrimaryTypes;
     final raw = highlightGleis?.trim() ?? '';
     final hl = raw.isNotEmpty ? normalizeGleis(raw) : null;
-    final section = raw.isNotEmpty ? parseGleisSection(raw) : null;
+    // [sectionOverride] (the boarding portion of a wing train, e.g. just "I")
+    // wins over the section parsed from the track label (the whole train's range)
+    // — so the map highlights exactly where the rider's coaches stop.
+    final section =
+        sectionOverride ?? (raw.isNotEmpty ? parseGleisSection(raw) : null);
     final sraw = secondaryGleis?.trim() ?? '';
     final sec = sraw.isNotEmpty ? normalizeGleis(sraw) : null;
     final secSection = sraw.isNotEmpty ? parseGleisSection(sraw) : null;

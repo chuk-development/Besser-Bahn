@@ -511,15 +511,8 @@ Widget splitTrainBanner(BuildContext context, CoachSequence sequence,
   final theme = Theme.of(context);
   final groups = sequence.groups;
   final target = targetDestination;
-  CoachGroup? mine;
-  if (target != null && target.isNotEmpty) {
-    for (final g in groups) {
-      if (_destMatches(g.transport.destination, target)) {
-        mine = g;
-        break;
-      }
-    }
-  }
+  final mine =
+      (target != null && target.isNotEmpty) ? sequence.portionTo(target) : null;
   // LOUD red: a fully filled, saturated red block with white text — impossible
   // to miss. This is a "board the wrong portion and you don't arrive" warning.
   const red = Color(0xFFD32011); // strong signal red
@@ -560,8 +553,8 @@ Widget splitTrainBanner(BuildContext context, CoachSequence sequence,
             fg,
             primary: true,
             icon: Icons.check_circle,
-            text: _sectorsOf(mine).isNotEmpty
-                ? 'Für $target: in Abschnitt ${_sectorsOf(mine)} einsteigen'
+            text: mine.sectors.isNotEmpty
+                ? 'Für $target: in Abschnitt ${mine.sectors.join('–')} einsteigen'
                 : 'Für $target: Zugteil Richtung '
                     '${mine.transport.destination ?? target}',
           ),
@@ -574,9 +567,9 @@ Widget splitTrainBanner(BuildContext context, CoachSequence sequence,
               fg,
               primary: false,
               icon: Icons.block,
-              text: _sectorsOf(g).isNotEmpty
+              text: g.sectors.isNotEmpty
                   ? 'Nicht: Richtung ${g.transport.destination ?? "?"} · '
-                      'Abschnitt ${_sectorsOf(g)}'
+                      'Abschnitt ${g.sectors.join('–')}'
                   : 'Nicht: Richtung ${g.transport.destination ?? "?"}',
             ),
         if (mine == null) ...[
@@ -615,25 +608,3 @@ Widget _bannerLine(BuildContext context, Color fg,
     ),
   );
 }
-
-/// Distinct platform sections the coaches of [g] occupy, e.g. "I" or "G–I".
-String _sectorsOf(CoachGroup g) {
-  final s = <String>{};
-  for (final c in g.coaches) {
-    final sec = c.platformPosition?.sector;
-    if (sec != null && sec.trim().isNotEmpty) s.add(sec.trim());
-  }
-  final list = s.toList()..sort();
-  return list.join('–');
-}
-
-bool _destMatches(String? a, String b) {
-  final na = _norm(a ?? ''), nb = _norm(b);
-  if (na.isEmpty || nb.isEmpty) return false;
-  return na == nb || na.contains(nb) || nb.contains(na);
-}
-
-String _norm(String s) => s
-    .toLowerCase()
-    .replaceAll('hauptbahnhof', 'hbf')
-    .replaceAll(RegExp(r'[^a-zäöüß0-9]'), '');

@@ -41,7 +41,28 @@ class CoachSequence {
   bool get hasPlatformChange =>
       scheduledPlatform != null &&
       departurePlatform != scheduledPlatform;
+
+  /// On a splitting train (a Flügelzug, ≥2 groups), the portion bound for
+  /// [destinationName] — matched on a normalised station name. Null when the
+  /// train doesn't split or no portion matches.
+  CoachGroup? portionTo(String destinationName) {
+    if (groups.length < 2) return null;
+    final nb = _normStation(destinationName);
+    if (nb.isEmpty) return null;
+    for (final g in groups) {
+      final na = _normStation(g.transport.destination ?? '');
+      if (na.isNotEmpty && (na == nb || na.contains(nb) || nb.contains(na))) {
+        return g;
+      }
+    }
+    return null;
+  }
 }
+
+String _normStation(String s) => s
+    .toLowerCase()
+    .replaceAll('hauptbahnhof', 'hbf')
+    .replaceAll(RegExp(r'[^a-zäöüß0-9]'), '');
 
 class Platform {
   final String name;
@@ -114,6 +135,25 @@ class CoachGroup {
           .map(Coach.fromJson)
           .toList(),
     );
+  }
+
+  /// Distinct platform sections this portion occupies, in letter order
+  /// (e.g. ["I"] or ["G", "H", "I"]).
+  List<String> get sectors {
+    final s = <String>{};
+    for (final c in coaches) {
+      final sec = c.platformPosition?.sector;
+      if (sec != null && sec.trim().isNotEmpty) s.add(sec.trim());
+    }
+    return s.toList()..sort();
+  }
+
+  /// The portion's section span as (first, last), e.g. ("G", "I"). Null when no
+  /// coach carries a section.
+  ({String start, String end})? get sectorRange {
+    final s = sectors;
+    if (s.isEmpty) return null;
+    return (start: s.first, end: s.last);
   }
 }
 
