@@ -15,6 +15,11 @@ import '../models/station_map.dart';
 class StationMapService {
   final http.Client _client = http.Client();
 
+  /// Parsed maps keyed by slug (session cache). Re-opening the same station —
+  /// the common case when bouncing between stops of a journey — is then instant
+  /// instead of re-downloading ~230 KB of HTML and re-parsing it.
+  final Map<String, StationMap> _cache = {};
+
   Map<String, String> get _headers => {
         'User-Agent': ApiConstants.userAgent,
         'Accept': 'text/html,application/xhtml+xml',
@@ -56,6 +61,11 @@ class StationMapService {
 
   /// Fetch the indoor map for a bahnhof.de slug (e.g. `hamburg-hbf`).
   Future<StationMap> fetchBySlug(String slug) async {
+    final hit = _cache[slug];
+    if (hit != null) {
+      AppLog.log('map cache hit "$slug" (instant)', tag: 'map');
+      return hit;
+    }
     final uri = Uri.parse('https://www.bahnhof.de/$slug/karte');
     final res = await AppLog.timed(
       'GET $uri',
@@ -69,7 +79,9 @@ class StationMapService {
       throw StationMapException('Bahnhof "$slug" nicht gefunden '
           '(HTTP ${res.statusCode}).');
     }
-    return _parse(slug, res.body);
+    final map = _parse(slug, res.body);
+    _cache[slug] = map;
+    return map;
   }
 
   /// Resolve a DB station name to a bahnhof.de slug.

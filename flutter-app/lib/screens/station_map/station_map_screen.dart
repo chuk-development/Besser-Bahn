@@ -385,12 +385,14 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
   List<Marker> _markers(
       BuildContext context, List<MapPoi> pois, Station? station) {
     final highlight = ref.read(stationMapProvider).highlightGleis;
+    // Phones get smaller markers — the desktop sizes crowd a small screen.
+    final compact = MediaQuery.of(context).size.shortestSide < 600;
     return [
       for (final poi in pois)
         Marker(
           point: poi.latLng,
-          width: poi.isPlatform ? 46 : 34,
-          height: 34,
+          width: poi.isPlatform ? (compact ? 38 : 46) : (compact ? 27 : 34),
+          height: compact ? 27 : 34,
           child: GestureDetector(
             // Gleise / transit bays open their live departures straight away;
             // everything else shows the small inline info card.
@@ -404,6 +406,7 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
             },
             child: _PoiMarker(
               poi: poi,
+              compact: compact,
               selected: identical(poi, _selectedPoi),
               boarding: poi.isPlatform &&
                   highlight != null &&
@@ -856,11 +859,17 @@ class _PoiMarker extends StatelessWidget {
   final MapPoi poi;
   final bool selected;
 
+  /// Phone-sized rendering (smaller glyphs/labels).
+  final bool compact;
+
   /// The boarding Gleis for the journey the user came from — emphasised.
   final bool boarding;
 
   const _PoiMarker(
-      {required this.poi, this.selected = false, this.boarding = false});
+      {required this.poi,
+      this.compact = false,
+      this.selected = false,
+      this.boarding = false});
 
   Border get _border => Border.all(
         color: boarding
@@ -889,10 +898,10 @@ class _PoiMarker extends StatelessWidget {
         ),
         child: Text(
           poi.name,
-          style: const TextStyle(
+          style: TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.bold,
-            fontSize: 13,
+            fontSize: compact ? 11 : 13,
           ),
         ),
       );
@@ -902,8 +911,8 @@ class _PoiMarker extends StatelessWidget {
     // filled amber to read as the highlighted band along the platform.
     if (poi.isPlatformSector) {
       return Container(
-        width: 22,
-        height: 22,
+        width: compact ? 18 : 22,
+        height: compact ? 18 : 22,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: boarding ? Colors.amber.shade700 : Colors.black54,
@@ -913,8 +922,10 @@ class _PoiMarker extends StatelessWidget {
         ),
         child: Text(
           poi.name,
-          style: const TextStyle(
-              color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+          style: TextStyle(
+              color: Colors.white,
+              fontSize: compact ? 9 : 11,
+              fontWeight: FontWeight.bold),
         ),
       );
     }
@@ -926,8 +937,8 @@ class _PoiMarker extends StatelessWidget {
         borderRadius: BorderRadius.circular(7),
         border: _border,
       ),
-      padding: const EdgeInsets.all(5),
-      child: Icon(meta.icon, color: Colors.white, size: 16),
+      padding: EdgeInsets.all(compact ? 4 : 5),
+      child: Icon(meta.icon, color: Colors.white, size: compact ? 13 : 16),
     );
   }
 }
@@ -1017,27 +1028,27 @@ class _LevelButton extends StatelessWidget {
       message: '${_levelLong(label)} · ${summary.tooltip}',
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(7),
         child: Container(
-          width: 44,
-          padding: const EdgeInsets.symmetric(vertical: 5),
+          width: 34,
+          padding: const EdgeInsets.symmetric(vertical: 4),
           alignment: Alignment.center,
-          margin: const EdgeInsets.symmetric(vertical: 2),
+          margin: const EdgeInsets.symmetric(vertical: 1),
           decoration: BoxDecoration(
             color: active ? AppColors.dbRed : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(7),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(summary.icon, size: 16, color: color),
-              const SizedBox(height: 2),
+              Icon(summary.icon, size: 13, color: color),
+              const SizedBox(height: 1),
               Text(
                 label,
                 style: TextStyle(
                   color: color,
                   fontWeight: active ? FontWeight.bold : FontWeight.normal,
-                  fontSize: 13,
+                  fontSize: 10,
                 ),
               ),
             ],
@@ -1054,8 +1065,9 @@ String _levelLong(String shortLabel) {
   return 'Ebene $shortLabel';
 }
 
-/// Tappable category legend / filter.
-class _Legend extends StatelessWidget {
+/// Tappable category legend / filter. Collapsed to a small pill by default so
+/// it doesn't cover the map on a phone; tap to expand the full list.
+class _Legend extends StatefulWidget {
   final Set<String> categories;
   final Set<String> hidden;
   final ValueChanged<String> onToggle;
@@ -1067,32 +1079,91 @@ class _Legend extends StatelessWidget {
   });
 
   @override
+  State<_Legend> createState() => _LegendState();
+}
+
+class _LegendState extends State<_Legend> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
-    final sorted = categories.toList()
-      ..sort((a, b) => _CategoryMeta.of(a)
-          .label
-          .compareTo(_CategoryMeta.of(b).label));
+    final sorted = widget.categories.toList()
+      ..sort((a, b) =>
+          _CategoryMeta.of(a).label.compareTo(_CategoryMeta.of(b).label));
     if (sorted.isEmpty) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+
+    if (!_expanded) {
+      // Collapsed: a compact "Legende" pill.
+      return Material(
+        elevation: 3,
+        color: theme.cardColor,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: () => setState(() => _expanded = true),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.layers, size: 15, color: theme.iconTheme.color),
+                const SizedBox(width: 5),
+                const Text('Legende',
+                    style:
+                        TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
     return Card(
       elevation: 3,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 240, maxWidth: 190),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (final cat in sorted)
-                _LegendRow(
-                  meta: _CategoryMeta.of(cat),
-                  color: _poiColor(cat),
-                  active: !hidden.contains(cat),
-                  onTap: () => onToggle(cat),
+        constraints: const BoxConstraints(maxHeight: 220, maxWidth: 168),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header doubles as the collapse control.
+            InkWell(
+              onTap: () => setState(() => _expanded = false),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 6, 6, 2),
+                child: Row(
+                  children: [
+                    const Text('Legende',
+                        style: TextStyle(
+                            fontSize: 11, fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    Icon(Icons.close,
+                        size: 15, color: theme.colorScheme.onSurfaceVariant),
+                  ],
                 ),
-            ],
-          ),
+              ),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final cat in sorted)
+                      _LegendRow(
+                        meta: _CategoryMeta.of(cat),
+                        color: _poiColor(cat),
+                        active: !widget.hidden.contains(cat),
+                        onTap: () => widget.onToggle(cat),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1119,25 +1190,25 @@ class _LegendRow extends StatelessWidget {
       child: Opacity(
         opacity: active ? 1 : 0.35,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 3),
+          padding: const EdgeInsets.symmetric(vertical: 2),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               // Match the on-map marker: small coloured square + white glyph.
               Container(
-                width: 20,
-                height: 20,
+                width: 17,
+                height: 17,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: color,
-                  borderRadius: BorderRadius.circular(5),
+                  borderRadius: BorderRadius.circular(4),
                 ),
-                child: Icon(meta.icon, color: Colors.white, size: 13),
+                child: Icon(meta.icon, color: Colors.white, size: 11),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 7),
               Flexible(
                 child: Text(meta.label,
-                    style: const TextStyle(fontSize: 12),
+                    style: const TextStyle(fontSize: 11),
                     overflow: TextOverflow.ellipsis),
               ),
             ],
