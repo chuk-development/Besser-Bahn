@@ -13,7 +13,8 @@ class AppSettings {
   final bool trwlAutoCheckin;
 
   /// Default visibility for app check-ins (TrwlVisibility.value: 0=öffentlich,
-  /// 1=nicht gelistet, 2=nur Follower, 3=privat, 4=angemeldete).
+  /// 1=nicht gelistet, 2=nur Follower, 3=privat, 4=angemeldete). Defaults to
+  /// private — check-ins stay between you and Träwelling unless you opt out.
   final int trwlVisibility;
 
   const AppSettings({
@@ -22,7 +23,7 @@ class AppSettings {
     this.age = 30,
     this.apiDelayMs = 400,
     this.trwlAutoCheckin = false,
-    this.trwlVisibility = 0,
+    this.trwlVisibility = 3,
   });
 
   AppSettings copyWith({
@@ -59,7 +60,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
       age: prefs.getInt('age') ?? 30,
       apiDelayMs: prefs.getInt('apiDelayMs') ?? 400,
       trwlAutoCheckin: prefs.getBool('trwlAutoCheckin') ?? false,
-      trwlVisibility: prefs.getInt('trwlVisibility') ?? 0,
+      trwlVisibility: prefs.getInt('trwlVisibility') ?? 3,
     );
   }
 

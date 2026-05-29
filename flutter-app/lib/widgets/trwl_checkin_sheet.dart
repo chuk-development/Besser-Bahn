@@ -21,7 +21,15 @@ import 'traewelling_logo.dart';
 ///   configured default visibility), no sheet;
 /// - off → opens a confirm sheet to pick the destination + visibility first.
 Future<void> startTrwlCheckin(
-    BuildContext context, WidgetRef ref, Trip trip) async {
+  BuildContext context,
+  WidgetRef ref,
+  Trip trip, {
+  /// Restrict the check-in to a segment of [trip] (a connection leg): the stop
+  /// you board at / alight at. Default to the run's origin → destination.
+  String? boardingName,
+  DateTime? boardingDeparture,
+  String? alightingName,
+}) async {
   final auth = ref.read(traewellingAuthProvider);
   if (!auth.isLoggedIn) {
     final messenger = ScaffoldMessenger.of(context);
@@ -40,9 +48,11 @@ Future<void> startTrwlCheckin(
     final stops = trip.stopovers;
     final boarding = stops.isNotEmpty ? stops.first : null;
     final alighting = stops.length > 1 ? stops.last : null;
-    final boardName = boarding?.stop.name ?? trip.origin.name;
-    final alightName = alighting?.stop.name ?? trip.destination.name;
-    final boardDep = boarding?.departure ??
+    final boardName = boardingName ?? boarding?.stop.name ?? trip.origin.name;
+    final alightName =
+        alightingName ?? alighting?.stop.name ?? trip.destination.name;
+    final boardDep = boardingDeparture ??
+        boarding?.departure ??
         boarding?.plannedDeparture ??
         DateTime.now();
     await runTrwlCheckin(
@@ -61,7 +71,11 @@ Future<void> startTrwlCheckin(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (_) => _CheckinSheet(trip: trip),
+    builder: (_) => _CheckinSheet(
+      trip: trip,
+      boardingName: boardingName,
+      alightingName: alightingName,
+    ),
   );
 }
 
@@ -142,7 +156,13 @@ Future<bool> runTrwlCheckin(
 
 class _CheckinSheet extends ConsumerStatefulWidget {
   final Trip trip;
-  const _CheckinSheet({required this.trip});
+  final String? boardingName;
+  final String? alightingName;
+  const _CheckinSheet({
+    required this.trip,
+    this.boardingName,
+    this.alightingName,
+  });
 
   @override
   ConsumerState<_CheckinSheet> createState() => _CheckinSheetState();
@@ -151,24 +171,43 @@ class _CheckinSheet extends ConsumerStatefulWidget {
 class _CheckinSheetState extends ConsumerState<_CheckinSheet> {
   final _timeFmt = DateFormat('HH:mm');
   final _bodyCtrl = TextEditingController();
+  late int _boardIdx;
   late Stopover _destination;
   late TrwlVisibility _visibility;
   bool _submitting = false;
 
-  /// Boarding stop (the run's first stop) and the valid destinations after it.
-  Stopover get _boarding => widget.trip.stopovers.first;
-  List<Stopover> get _destOptions =>
-      widget.trip.stopovers.length > 1 ? widget.trip.stopovers.sublist(1) : [];
+  bool _nameEq(String a, String b) =>
+      a.trim().toLowerCase() == b.trim().toLowerCase();
+
+  /// Boarding stop — the leg's origin when given, else the run's first stop.
+  Stopover get _boarding => widget.trip.stopovers[_boardIdx];
+
+  /// Valid destinations: every stop after the boarding stop.
+  List<Stopover> get _destOptions => widget.trip.stopovers.length > _boardIdx + 1
+      ? widget.trip.stopovers.sublist(_boardIdx + 1)
+      : [];
 
   @override
   void initState() {
     super.initState();
-    _destination = _destOptions.isNotEmpty
-        ? _destOptions.last
-        : widget.trip.stopovers.first;
+    final stops = widget.trip.stopovers;
+    final bn = widget.boardingName;
+    final bi = bn == null
+        ? 0
+        : stops.indexWhere((s) => _nameEq(s.stop.name, bn));
+    _boardIdx = bi >= 0 ? bi : 0;
+
+    final an = widget.alightingName;
+    final destMatch = an == null
+        ? -1
+        : _destOptions.indexWhere((s) => _nameEq(s.stop.name, an));
+    _destination = destMatch >= 0
+        ? _destOptions[destMatch]
+        : (_destOptions.isNotEmpty ? _destOptions.last : stops.first);
+
     final v = ref.read(settingsProvider).trwlVisibility;
     _visibility = TrwlVisibility.values.firstWhere((e) => e.value == v,
-        orElse: () => TrwlVisibility.public);
+        orElse: () => TrwlVisibility.private);
   }
 
   @override

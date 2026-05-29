@@ -835,6 +835,22 @@ def check_basemap_tiles() -> str:
     return f"TopPlus grey tile ok ({len(r.content)} bytes)"
 
 
+def check_traewelling_api() -> str:
+    """Träwelling REST host the check-in flow rides on. The endpoints we call
+    (station autocomplete, departures, trip, checkin) all require a Bearer token
+    — without one a *live* endpoint answers 401, while a removed/renamed path is
+    404/410. So we assert the autocomplete route still exists (status != 404),
+    which confirms the path shape the app builds. Soft: optional social feature,
+    and we can't exercise the authenticated body from CI."""
+    url = "https://traewelling.de/api/v1/trains/station/autocomplete/Berlin"
+    r = requests.get(url, headers={"Accept": "application/json"}, timeout=TIMEOUT)
+    if r.status_code in (404, 410):
+        raise CheckError(f"autocomplete path gone (status={r.status_code})")
+    if r.status_code not in (200, 401, 403):
+        raise CheckError(f"unexpected status {r.status_code}")
+    return f"trains/station/autocomplete reachable (status={r.status_code})"
+
+
 # (name, callable, soft) — soft checks warn instead of fail.
 CHECKS = [
     ("bahn.de autocomplete (orte)", check_bahn_autocomplete, False),
@@ -855,6 +871,7 @@ CHECKS = [
     ("map bay ↔ departures link", check_bay_departure_link, True),
     ("map Gleis ↔ departures (normalised)", check_gleis_departure_link, False),
     ("bahnhof.de sitemap", check_bahnhof_sitemap, False),
+    ("traewelling check-in API", check_traewelling_api, True),
     ("HAFAS rest mirror (flaky)", check_hafas_rest, True),
     ("website journey blocked check", check_website_journey_still_blocked, True),
 ]

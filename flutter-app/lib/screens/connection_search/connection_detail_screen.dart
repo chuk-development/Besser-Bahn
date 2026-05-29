@@ -22,6 +22,8 @@ import '../../providers/station_map_provider.dart';
 import '../../providers/train_lookup_provider.dart';
 import '../../services/db_api_service.dart';
 import '../../widgets/prediction_badge.dart';
+import '../../widgets/traewelling_logo.dart';
+import '../../widgets/trwl_checkin_sheet.dart';
 import '../train_lookup/widgets/train_detail_view.dart';
 import 'widgets/leg_alternatives.dart';
 
@@ -1018,7 +1020,26 @@ class _LegSectionState extends ConsumerState<_LegSection>
             ? leg.destination.id
             : leg.destination.name,
         headerAction: (!leg.isWalking && leg.line != null)
-            ? WeitereAbfahrtenButton(onTap: _openAlternatives)
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const TraewellingLogo(size: 20),
+                    tooltip: 'In Träwelling einchecken',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => startTrwlCheckin(
+                      context,
+                      ref,
+                      trip,
+                      boardingName: leg.origin.name,
+                      boardingDeparture:
+                          leg.plannedDeparture ?? leg.departure,
+                      alightingName: leg.destination.name,
+                    ),
+                  ),
+                  WeitereAbfahrtenButton(onTap: _openAlternatives),
+                ],
+              )
             : null,
         predictionStrip: (!leg.isWalking && leg.line != null)
             ? LegPredictionBadge(leg: leg, nextLeg: widget.nextTransitLeg)
