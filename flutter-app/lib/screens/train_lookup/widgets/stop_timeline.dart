@@ -35,6 +35,11 @@ class StopTimeline extends StatefulWidget {
   /// not a separate section.
   final Widget? trainExtra;
 
+  /// Optional widget rendered directly under the boarding stop (aligned beneath
+  /// the station name) — used for the wing-train split banner, surfaced exactly
+  /// where you board, not buried in the Wagenreihung.
+  final Widget? boardingBanner;
+
   /// When true, return content without the surrounding Card/margin so it can be
   /// embedded in a shared card.
   final bool embedded;
@@ -54,6 +59,7 @@ class StopTimeline extends StatefulWidget {
     this.legAmenities = const [],
     this.header,
     this.trainExtra,
+    this.boardingBanner,
     this.embedded = false,
     this.inlineHeader = false,
   });
@@ -259,6 +265,8 @@ class _StopTimelineState extends State<StopTimeline> {
     final s = widget.stopovers[i];
     final inSegment = i >= board && i <= alight;
     final isEndpoint = i == board || i == alight;
+    final isLeg = widget.boardingId != null || widget.alightingId != null;
+    final isBoard = isLeg && i == board;
     return InkWell(
       onTap: widget.onStopTap == null ? null : () => widget.onStopTap!(s),
       child: _StopRow(
@@ -268,6 +276,11 @@ class _StopTimelineState extends State<StopTimeline> {
         emphasize: isEndpoint,
         // Stops outside the ridden segment are visually muted.
         muted: !inSegment,
+        // The boarding stop's per-stop occupancy duplicates the ride-wide one in
+        // the train header just below it → drop it here.
+        hideOccupancy: isBoard,
+        // Wing-train split banner sits under the boarding stop, beneath the name.
+        footer: isBoard ? widget.boardingBanner : null,
       ),
     );
   }
@@ -586,6 +599,14 @@ class _StopRow extends StatelessWidget {
   final bool emphasize;
   final bool muted;
 
+  /// Suppress this stop's per-stop occupancy line (used on the boarding stop,
+  /// where the ride-wide occupancy in the train header just below would dupe it).
+  final bool hideOccupancy;
+
+  /// Extra content rendered at the bottom of this stop's text column, aligned
+  /// under the station name (the wing-train split banner on the boarding stop).
+  final Widget? footer;
+
   /// Fixed height of the station-name row. The timeline dot targets its centre,
   /// so every dot — endpoints (big Gleis chip) and intermediate stops alike —
   /// sits at the same vertical offset and lines up with its name.
@@ -597,6 +618,8 @@ class _StopRow extends StatelessWidget {
     required this.hasBottom,
     this.emphasize = false,
     this.muted = false,
+    this.hideOccupancy = false,
+    this.footer,
   });
 
   @override
@@ -758,7 +781,8 @@ class _StopRow extends StatelessWidget {
                                   color: theme.colorScheme.error,
                                   fontSize: 12,
                                   fontWeight: FontWeight.bold)),
-                        if (stopover.occupancy != OccupancyLevel.unknown)
+                        if (!hideOccupancy &&
+                            stopover.occupancy != OccupancyLevel.unknown)
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -773,6 +797,11 @@ class _StopRow extends StatelessWidget {
                           ),
                       ],
                     ),
+                    if (footer != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2, right: 4),
+                        child: footer,
+                      ),
                   ],
                 ),
               ),

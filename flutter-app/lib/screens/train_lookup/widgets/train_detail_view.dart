@@ -104,6 +104,15 @@ class _TrainDetailViewState extends ConsumerState<TrainDetailView> {
     // set — then the train header folds inline onto the route spine.
     final isLeg = widget.boardingId != null || widget.alightingId != null;
 
+    // Wing-train (Flügelzug) guidance. On a leg it's hoisted up under the
+    // boarding stop (where you decide which portion to board); otherwise it
+    // stays inside the Wagenreihung card.
+    final coach = widget.coach;
+    final splitBanner = (isLeg && coach != null && coach.groups.length > 1)
+        ? splitTrainBanner(context, coach,
+            targetDestination: widget.legDestinationName)
+        : null;
+
     // Wagenreihung (or, when there's none, the bare seat-plan panel) folded
     // INTO the train card as a sub-section, not a separate card.
     final Widget? trainExtra = widget.coach != null
@@ -116,6 +125,7 @@ class _TrainDetailViewState extends ConsumerState<TrainDetailView> {
             seatPlan: seatPlan,
             embedded: true,
             targetDestination: widget.legDestinationName,
+            showSplitBanner: !isLeg,
           )
         : seatPlan;
 
@@ -139,6 +149,7 @@ class _TrainDetailViewState extends ConsumerState<TrainDetailView> {
             predictionStrip: isLeg ? widget.predictionStrip : null,
           ),
           trainExtra: trainExtra,
+          boardingBanner: splitBanner,
         ),
       ],
     );
