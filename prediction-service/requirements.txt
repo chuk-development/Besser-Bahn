@@ -1,4 +1,0 @@
-# fastapi + uvicorn + xgboost + scikit-learn + polars + numpy come from the
-# upstream base image (trainconnectionprediction/bahnvorhersage-predictor).
-# We only add the rate limiter on top.
-slowapi==0.1.9
