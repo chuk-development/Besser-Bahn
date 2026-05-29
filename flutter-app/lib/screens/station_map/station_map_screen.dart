@@ -15,6 +15,15 @@ import '../../widgets/app_menu_button.dart';
 import '../../widgets/traewelling_avatar_button.dart';
 import '../../widgets/station_search_field.dart';
 
+/// Highlight colour for a journey role: Einstieg green, Ausstieg red, Umstieg
+/// amber. Null = not a highlight. One source for markers + section bands.
+Color? roleColor(GleisRole role) => switch (role) {
+      GleisRole.board => const Color(0xFF2E9E5B),
+      GleisRole.alight => Colors.red,
+      GleisRole.transfer => Colors.amber.shade700,
+      GleisRole.none => null,
+    };
+
 /// Marker/legend colour per POI type, matching bahnhof.de: tracks red,
 /// sectors dark, everything else DB blue.
 Color _poiColor(String type) {
@@ -291,17 +300,29 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
                 // elsewhere should just be transparent, not error pins.
                 errorTileCallback: (_, __, ___) {},
               ),
-            // Boarding section: amber line + labelled markers along the
-            // platform from the first to the last sector of the highlighted
-            // range (e.g. C–G), interpolated onto the boarding Gleis.
+            // Section bands: a coloured line + labelled markers along the
+            // platform for the highlighted range (e.g. G–I). Primary =
+            // Einstieg (green); on a transfer, secondary = Ausstieg (red).
             if (state.highlightSectionLine.length >= 2)
               PolylineLayer(
                 polylines: [
                   Polyline(
-                    points: state.highlightSectionLine
-                        .map((e) => e.pos)
-                        .toList(),
-                    color: Colors.amber.shade700,
+                    points:
+                        state.highlightSectionLine.map((e) => e.pos).toList(),
+                    color: roleColor(state.highlightRole) ?? Colors.amber.shade700,
+                    strokeWidth: 7,
+                    borderColor: Colors.white,
+                    borderStrokeWidth: 2,
+                  ),
+                ],
+              ),
+            if (state.secondarySectionLine.length >= 2)
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points:
+                        state.secondarySectionLine.map((e) => e.pos).toList(),
+                    color: roleColor(state.secondaryRole) ?? Colors.red,
                     strokeWidth: 7,
                     borderColor: Colors.white,
                     borderStrokeWidth: 2,
@@ -312,7 +333,13 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
                 markers:
                     _markers(context, state.visiblePois, state.station)),
             if (state.highlightSectionLine.isNotEmpty)
-              MarkerLayer(markers: _sectionMarkers(state.highlightSectionLine)),
+              MarkerLayer(
+                  markers: _sectionMarkers(state.highlightSectionLine,
+                      roleColor(state.highlightRole) ?? Colors.amber.shade700)),
+            if (state.secondarySectionLine.isNotEmpty)
+              MarkerLayer(
+                  markers: _sectionMarkers(state.secondarySectionLine,
+                      roleColor(state.secondaryRole) ?? Colors.red)),
             // "Mein Standort": the direction line to the target, the GPS
             // accuracy circle, and the blue dot — drawn on top of the POIs.
             if (_userFix != null) ...[
@@ -415,6 +442,9 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
   List<Marker> _markers(
       BuildContext context, List<MapPoi> pois, Station? station) {
     final mapState = ref.read(stationMapProvider);
+    // Transfer mode (two Gleise highlighted) → grey out the OTHER red platform
+    // pills so the red Ausstieg highlight actually stands out.
+    final transferMode = mapState.secondaryGleis != null;
     // Phones get smaller markers — the desktop sizes crowd a small screen.
     final compact = MediaQuery.of(context).size.shortestSide < 600;
     return [
@@ -439,6 +469,9 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
               compact: compact,
               selected: identical(poi, _selectedPoi),
               highlightRole: mapState.roleForPoi(poi),
+              dimmed: transferMode &&
+                  poi.isPlatform &&
+                  mapState.roleForPoi(poi) == GleisRole.none,
             ),
           ),
         ),
@@ -447,7 +480,8 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
 
   /// Amber labelled chips for the interpolated boarding-section letters,
   /// drawn on top of the section line so the rider sees exactly where to wait.
-  List<Marker> _sectionMarkers(List<({String letter, LatLng pos})> section) {
+  List<Marker> _sectionMarkers(
+      List<({String letter, LatLng pos})> section, Color color) {
     return [
       for (final s in section)
         Marker(
@@ -457,11 +491,11 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
           child: Container(
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: Colors.amber.shade700,
+              color: color,
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
-              boxShadow: const [
-                BoxShadow(color: Colors.amber, blurRadius: 8, spreadRadius: 1),
+              boxShadow: [
+                BoxShadow(color: color, blurRadius: 8, spreadRadius: 1),
               ],
             ),
             child: Text(
@@ -592,19 +626,19 @@ class _PoiMarker extends StatelessWidget {
   /// (red), Umstieg (amber), or none.
   final GleisRole highlightRole;
 
+  /// A non-highlighted platform during a transfer — drawn neutral grey so the
+  /// red Ausstieg / green Einstieg pills pop.
+  final bool dimmed;
+
   const _PoiMarker(
       {required this.poi,
       this.compact = false,
       this.selected = false,
-      this.highlightRole = GleisRole.none});
+      this.highlightRole = GleisRole.none,
+      this.dimmed = false});
 
   /// Highlight colour per role — null when this POI isn't highlighted.
-  Color? get _hlColor => switch (highlightRole) {
-        GleisRole.board => const Color(0xFF2E9E5B), // Einstieg – green
-        GleisRole.alight => Colors.red, // Ausstieg – red
-        GleisRole.transfer => Colors.amber.shade700, // Umstieg
-        GleisRole.none => null,
-      };
+  Color? get _hlColor => roleColor(highlightRole);
 
   bool get _hl => _hlColor != null;
 
@@ -626,7 +660,11 @@ class _PoiMarker extends StatelessWidget {
       return Container(
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: AppColors.dbRed,
+          // Highlighted Gleise fill fully with their role colour (green
+          // Einstieg / red Ausstieg); others grey out in transfer mode.
+          color: _hl
+              ? _hlColor!
+              : (dimmed ? Colors.blueGrey.shade300 : AppColors.dbRed),
           borderRadius: BorderRadius.circular(8),
           border: _border,
           boxShadow: _glow,

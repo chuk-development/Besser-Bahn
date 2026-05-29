@@ -38,6 +38,38 @@ class JourneyCard extends ConsumerWidget {
               Expanded(
                 child: Column(
             children: [
+              // Route row: which station to which station — so a saved/searched
+              // connection is identifiable at a glance, not just by its times.
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      journey.origin?.name ?? '',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Icon(Icons.arrow_forward,
+                        size: 13, color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                  Expanded(
+                    child: Text(
+                      journey.destination?.name ?? '',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+
               // Time row
               Row(
                 children: [

@@ -116,6 +116,9 @@ class StationMapState {
   final String? secondaryGleis;
   final GleisRole secondaryRole;
 
+  /// Section range for the secondary (Ausstieg) Gleis, e.g. "7 G-I" → (G,I).
+  final ({String start, String end})? secondarySection;
+
   final bool isLoading;
   final String? error;
 
@@ -130,6 +133,7 @@ class StationMapState {
     this.highlightRole = GleisRole.board,
     this.secondaryGleis,
     this.secondaryRole = GleisRole.none,
+    this.secondarySection,
     this.isLoading = false,
     this.error,
   });
@@ -145,6 +149,7 @@ class StationMapState {
     GleisRole? highlightRole,
     String? secondaryGleis,
     GleisRole? secondaryRole,
+    ({String start, String end})? secondarySection,
     bool clearHighlight = false,
     bool clearSection = false,
     bool clearTransferNote = false,
@@ -174,6 +179,9 @@ class StationMapState {
       secondaryRole: (clearHighlight || clearSecondary)
           ? GleisRole.none
           : (secondaryRole ?? this.secondaryRole),
+      secondarySection: (clearHighlight || clearSecondary)
+          ? null
+          : (secondarySection ?? this.secondarySection),
       isLoading: isLoading ?? this.isLoading,
       error: clearError ? null : (error ?? this.error),
     );
@@ -217,11 +225,16 @@ class StationMapState {
   /// lies closest to. The boarding Gleis's island gives the real cubes for the
   /// requested letters. Falls back to nearest-cube-per-letter when a station
   /// has no usable anchors. Universal, data-driven, no per-station table.
-  List<({String letter, LatLng pos})> get highlightSectionLine {
+  List<({String letter, LatLng pos})> get highlightSectionLine =>
+      _sectionLineFor(highlightPoi, highlightSection, highlightGleis);
+
+  /// Same band, for the secondary (Ausstieg) Gleis on a transfer map.
+  List<({String letter, LatLng pos})> get secondarySectionLine =>
+      _sectionLineFor(secondaryHighlightPoi, secondarySection, secondaryGleis);
+
+  List<({String letter, LatLng pos})> _sectionLineFor(
+      MapPoi? plat, ({String start, String end})? range, String? g) {
     final m = map;
-    final plat = highlightPoi;
-    final range = highlightSection;
-    final g = highlightGleis;
     if (m == null || plat == null || range == null || g == null) {
       return const [];
     }
@@ -429,6 +442,7 @@ class StationMapNotifier extends Notifier<StationMapState> {
     final section = raw.isNotEmpty ? parseGleisSection(raw) : null;
     final sraw = secondaryGleis?.trim() ?? '';
     final sec = sraw.isNotEmpty ? normalizeGleis(sraw) : null;
+    final secSection = sraw.isNotEmpty ? parseGleisSection(sraw) : null;
     state = state.copyWith(
       station: station,
       highlightGleis: hl,
@@ -437,6 +451,7 @@ class StationMapNotifier extends Notifier<StationMapState> {
       highlightRole: hl == null ? GleisRole.none : role,
       secondaryGleis: sec,
       secondaryRole: sec == null ? GleisRole.none : secondaryRole,
+      secondarySection: secSection,
       clearHighlight: hl == null,
       // Without an explicit section, drop any stale one from a previous train
       // (else every train would keep showing the first train's "G–I").
