@@ -43,16 +43,41 @@ class TraewellingService {
   DateTime? _expiresAt;
 
   // --- Session state --------------------------------------------------------
+  //
+  // All secure-storage access is wrapped: on platforms without a registered
+  // implementation (e.g. Linux desktop without libsecret) the plugin throws
+  // MissingPluginException. We must never let that crash the app — the token
+  // simply isn't persisted there and the integration behaves as logged-out.
 
-  /// Whether a token exists in storage (does not validate it server-side).
+  Future<String?> _read(String key) async {
+    try {
+      return await _storage.read(key: key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _write(String key, String value) async {
+    try {
+      await _storage.write(key: key, value: value);
+    } catch (_) {/* not persisted on this platform */}
+  }
+
+  Future<void> _delete(String key) async {
+    try {
+      await _storage.delete(key: key);
+    } catch (_) {/* nothing to clear / unsupported */}
+  }
+
+  /// Whether a token exists (in memory or storage). Does not validate it.
   Future<bool> hasSession() async {
-    _accessToken ??= await _storage.read(key: _kAccess);
+    _accessToken ??= await _read(_kAccess);
     return _accessToken != null;
   }
 
   Future<void> _loadTokens() async {
-    _accessToken = await _storage.read(key: _kAccess);
-    final exp = await _storage.read(key: _kExpiry);
+    _accessToken = await _read(_kAccess);
+    final exp = await _read(_kExpiry);
     _expiresAt = exp != null ? DateTime.tryParse(exp) : null;
   }
 
@@ -67,19 +92,19 @@ class TraewellingService {
     _expiresAt = expiresIn != null
         ? DateTime.now().add(Duration(seconds: expiresIn))
         : null;
-    await _storage.write(key: _kAccess, value: access);
-    if (refresh != null) await _storage.write(key: _kRefresh, value: refresh);
+    await _write(_kAccess, access);
+    if (refresh != null) await _write(_kRefresh, refresh);
     if (_expiresAt != null) {
-      await _storage.write(key: _kExpiry, value: _expiresAt!.toIso8601String());
+      await _write(_kExpiry, _expiresAt!.toIso8601String());
     }
   }
 
   Future<void> _clearTokens() async {
     _accessToken = null;
     _expiresAt = null;
-    await _storage.delete(key: _kAccess);
-    await _storage.delete(key: _kRefresh);
-    await _storage.delete(key: _kExpiry);
+    await _delete(_kAccess);
+    await _delete(_kRefresh);
+    await _delete(_kExpiry);
   }
 
   // --- OAuth (PKCE) ---------------------------------------------------------
@@ -151,7 +176,7 @@ class TraewellingService {
 
   /// Refreshes the access token. Returns false if no refresh token / it failed.
   Future<bool> _refresh() async {
-    final refresh = await _storage.read(key: _kRefresh);
+    final refresh = await _read(_kRefresh);
     if (refresh == null) return false;
     final res = await _client.post(
       Uri.parse(TraewellingConstants.tokenUrl),
