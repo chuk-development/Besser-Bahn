@@ -7,6 +7,7 @@ import '../../models/journey.dart';
 import '../../models/trip.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/station_map_provider.dart';
+import '../../widgets/prediction_badge.dart';
 import '../train_lookup/widgets/train_detail_view.dart';
 
 /// In-memory cache (app session) so a leg's train data is fetched once and
@@ -55,20 +56,27 @@ class ConnectionDetailScreen extends ConsumerWidget {
     final t = journey.transfers;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(journey.durationString,
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(width: 12),
-          Text(t == 0 ? 'Direkt' : '$t Umstieg${t > 1 ? 'e' : ''}',
-              style: theme.textTheme.bodyMedium),
-          const Spacer(),
-          if (journey.price != null)
-            Text(journey.price!.formatted,
-                style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: theme.colorScheme.primary)),
+          Row(
+            children: [
+              Text(journey.durationString,
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(width: 12),
+              Text(t == 0 ? 'Direkt' : '$t Umstieg${t > 1 ? 'e' : ''}',
+                  style: theme.textTheme.bodyMedium),
+              const Spacer(),
+              if (journey.price != null)
+                Text(journey.price!.formatted,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.primary)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          PredictionBadge(journey: journey, axis: Axis.horizontal),
         ],
       ),
     );

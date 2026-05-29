@@ -7,6 +7,7 @@ import '../../../core/extensions.dart';
 import '../../../widgets/delay_badge.dart';
 import '../../../widgets/platform_badge.dart';
 import '../../../widgets/occupancy_indicator.dart';
+import '../../../widgets/prediction_badge.dart';
 
 class JourneyCard extends ConsumerWidget {
   final Journey journey;
@@ -28,7 +29,14 @@ class JourneyCard extends ConsumerWidget {
         },
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: Column(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Prediction strip (Anschluss / Pünktlichkeit) on the left.
+              PredictionBadge(journey: journey),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
             children: [
               // Time row
               Row(
@@ -106,6 +114,9 @@ class JourneyCard extends ConsumerWidget {
                           color: theme.colorScheme.primary),
                     ),
                 ],
+              ),
+            ],
+                ),
               ),
             ],
           ),
