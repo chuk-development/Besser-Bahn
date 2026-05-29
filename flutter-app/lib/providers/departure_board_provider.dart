@@ -5,6 +5,9 @@ import 'service_providers.dart';
 
 enum BoardMode { departures, arrivals }
 
+/// How the board is presented: a scrolling list or the station map.
+enum BoardView { list, map }
+
 class DepartureBoardState {
   final Station? station;
   final List<Departure> departures;
@@ -12,6 +15,7 @@ class DepartureBoardState {
   final String? error;
   final BoardMode mode;
   final String? filterProduct; // null = all
+  final BoardView view;
 
   const DepartureBoardState({
     this.station,
@@ -20,6 +24,7 @@ class DepartureBoardState {
     this.error,
     this.mode = BoardMode.departures,
     this.filterProduct,
+    this.view = BoardView.list,
   });
 
   DepartureBoardState copyWith({
@@ -30,6 +35,7 @@ class DepartureBoardState {
     BoardMode? mode,
     String? filterProduct,
     bool clearFilter = false,
+    BoardView? view,
   }) {
     return DepartureBoardState(
       station: station ?? this.station,
@@ -38,6 +44,7 @@ class DepartureBoardState {
       error: error,
       mode: mode ?? this.mode,
       filterProduct: clearFilter ? null : (filterProduct ?? this.filterProduct),
+      view: view ?? this.view,
     );
   }
 
@@ -69,6 +76,8 @@ class DepartureBoardNotifier extends Notifier<DepartureBoardState> {
       clearFilter: product == null,
     );
   }
+
+  void setView(BoardView view) => state = state.copyWith(view: view);
 
   Future<void> load() async {
     final station = state.station;

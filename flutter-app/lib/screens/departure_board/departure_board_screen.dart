@@ -10,6 +10,7 @@ import '../../widgets/delay_badge.dart';
 import '../../widgets/platform_badge.dart';
 import '../../widgets/traewelling_avatar_button.dart';
 import '../../core/extensions.dart';
+import 'departure_map_view.dart';
 
 class DepartureBoardScreen extends ConsumerWidget {
   const DepartureBoardScreen({super.key});
@@ -28,6 +29,17 @@ class DepartureBoardScreen extends ConsumerWidget {
         title: Text(state.station?.name ?? 'Abfahrtstafel'),
         actions: [
           const TraewellingAvatarButton(),
+          if (state.station != null)
+            IconButton(
+              tooltip:
+                  state.view == BoardView.map ? 'Liste' : 'Karte',
+              icon: Icon(state.view == BoardView.map
+                  ? Icons.format_list_bulleted
+                  : Icons.map_outlined),
+              onPressed: () => notifier.setView(
+                state.view == BoardView.map ? BoardView.list : BoardView.map,
+              ),
+            ),
           if (state.station != null)
             IconButton(
               icon: const Icon(Icons.refresh),
@@ -99,9 +111,11 @@ class DepartureBoardScreen extends ConsumerWidget {
 
           const SizedBox(height: 8),
 
-          // Board
+          // Board — list or map.
           Expanded(
-            child: _buildBoard(context, ref, state),
+            child: state.view == BoardView.map
+                ? const DepartureMapView()
+                : _buildBoard(context, ref, state),
           ),
         ],
       ),
