@@ -233,8 +233,10 @@ class JourneyCard extends ConsumerWidget {
     );
   }
 
-  /// Horizontal bar split proportionally to each leg's travel time, labelled
-  /// with the line name and the % of the trip spent on it.
+  /// Visual length comparison that stays readable for any number of legs: a
+  /// thin proportional colour bar (each train's width ∝ time on it) plus a
+  /// wrapping row of readable chips (line · % + occupancy). Labels never live
+  /// *inside* the segments, so 4 trains don't shrink the text into mush.
   Widget _legLengthBar(BuildContext context, List<JourneyLeg> legs) {
     if (legs.isEmpty) return const SizedBox.shrink();
     int legMinutes(JourneyLeg l) {
@@ -250,68 +252,81 @@ class JourneyCard extends ConsumerWidget {
     final mins = legs.map(legMinutes).toList();
     final total = mins.fold<int>(0, (s, m) => s + m);
     if (total <= 0) return const SizedBox.shrink();
-    // Percent only makes sense across multiple legs; a single leg is the trip.
-    final showPercent = legs.length > 1;
-    // Keep every leg visible: a leg never gets less than ~10% of the bar width.
-    final minFlex = (total * 0.10).round().clamp(1, total);
+    final multi = legs.length > 1;
+    // Keep every leg visible: a leg never gets less than ~8% of the bar width.
+    final minFlex = (total * 0.08).round().clamp(1, total);
 
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (var i = 0; i < legs.length; i++) ...[
-          if (i > 0) const SizedBox(width: 3),
-          Expanded(
-            flex: mins[i] < minFlex ? minFlex : mins[i],
-            child: _legSegment(
-              context,
-              legs[i].line?.displayName ?? '',
-              showPercent ? (mins[i] / total * 100).round() : null,
-              _productColor(context, legs[i]),
-              legs[i].occupancy?.level,
-            ),
+        if (multi) ...[
+          Row(
+            children: [
+              for (var i = 0; i < legs.length; i++) ...[
+                if (i > 0) const SizedBox(width: 2),
+                Expanded(
+                  flex: mins[i] < minFlex ? minFlex : mins[i],
+                  child: Container(
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: _productColor(context, legs[i]),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
+          const SizedBox(height: 6),
         ],
+        // Readable, wrapping chips — never crushed however many trains there are.
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            for (var i = 0; i < legs.length; i++)
+              _legChip(
+                context,
+                legs[i].line?.displayName ?? '',
+                multi ? (mins[i] / total * 100).round() : null,
+                _productColor(context, legs[i]),
+                legs[i].occupancy?.level,
+              ),
+          ],
+        ),
       ],
     );
   }
 
-  Widget _legSegment(BuildContext context, String label, int? percent,
-      Color color, OccupancyLevel? occupancy) {
-    final text = label.isEmpty
-        ? (percent != null ? '$percent%' : '')
-        : (percent != null ? '$label · $percent%' : label);
+  Widget _legChip(BuildContext context, String label, int? percent, Color color,
+      OccupancyLevel? occupancy) {
+    if (label.isEmpty && percent == null) return const SizedBox.shrink();
+    final text = percent != null && label.isNotEmpty
+        ? '$label · $percent%'
+        : (label.isNotEmpty ? label : '$percent%');
     return Container(
-      height: 22,
-      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withAlpha(40),
-        border: Border.all(color: color.withAlpha(160)),
+        color: color.withAlpha(28),
+        border: Border.all(color: color.withAlpha(150)),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (text.isNotEmpty)
-                Text(
-                  text,
-                  maxLines: 1,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: color,
-                  ),
-                ),
-              if (occupancy != null &&
-                  occupancy != OccupancyLevel.unknown) ...[
-                if (text.isNotEmpty) const SizedBox(width: 4),
-                OccupancyIndicator(level: occupancy),
-              ],
-            ],
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
           ),
-        ),
+          if (occupancy != null && occupancy != OccupancyLevel.unknown) ...[
+            const SizedBox(width: 4),
+            OccupancyIndicator(level: occupancy),
+          ],
+        ],
       ),
     );
   }
