@@ -10,6 +10,7 @@ import '../../providers/split_ticket_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/db_api_service.dart';
 import '../../providers/service_providers.dart';
+import '../../widgets/traewelling_avatar_button.dart';
 import '../../core/constants.dart';
 import '../../theme/app_colors.dart';
 
@@ -262,6 +263,7 @@ class _SplitTicketScreenState extends ConsumerState<SplitTicketScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Split-Ticketing'),
+        actions: const [TraewellingAvatarButton()],
       ),
       body: ListView(
         padding: const EdgeInsets.only(bottom: 32),

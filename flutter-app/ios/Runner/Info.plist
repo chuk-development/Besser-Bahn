@@ -4,6 +4,10 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<!-- "Mein Standort" on the Bahnhofskarte: show the user's position and the
+	     direction toward their boarding Gleis. -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Zeigt deinen Standort auf der Bahnhofskarte, damit du siehst, wo du bist und in welche Richtung dein Gleis liegt.</string>
 	<key>CFBundleDisplayName</key>
 	<string>Besser Bahn</string>
 	<key>CFBundleExecutable</key>
@@ -45,5 +49,17 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- OAuth callback scheme for flutter_web_auth_2 (Träwelling login). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.chuk.betterbahn.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>besserbahn</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

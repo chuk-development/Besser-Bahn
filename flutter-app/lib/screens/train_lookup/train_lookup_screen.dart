@@ -10,6 +10,7 @@ import '../../providers/train_lookup_provider.dart';
 import '../../services/hafas_service.dart';
 import '../../core/extensions.dart';
 import '../../widgets/station_search_field.dart';
+import '../../widgets/traewelling_avatar_button.dart';
 import 'widgets/train_detail_view.dart';
 
 class TrainLookupScreen extends ConsumerStatefulWidget {
@@ -71,6 +72,7 @@ class _TrainLookupScreenState extends ConsumerState<TrainLookupScreen> {
       appBar: AppBar(
         title: const Text('Zugnummer'),
         actions: [
+          const TraewellingAvatarButton(),
           if (state.trip != null)
             Builder(builder: (context) {
               final train = _savedTrainFor(state);

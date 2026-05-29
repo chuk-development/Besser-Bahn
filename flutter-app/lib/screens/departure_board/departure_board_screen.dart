@@ -8,6 +8,7 @@ import '../../providers/train_lookup_provider.dart';
 import '../../widgets/station_search_field.dart';
 import '../../widgets/delay_badge.dart';
 import '../../widgets/platform_badge.dart';
+import '../../widgets/traewelling_avatar_button.dart';
 import '../../core/extensions.dart';
 
 class DepartureBoardScreen extends ConsumerWidget {
@@ -23,6 +24,7 @@ class DepartureBoardScreen extends ConsumerWidget {
       appBar: AppBar(
         title: Text(state.station?.name ?? 'Abfahrtstafel'),
         actions: [
+          const TraewellingAvatarButton(),
           if (state.station != null)
             IconButton(
               icon: const Icon(Icons.refresh),

@@ -15,11 +15,19 @@ class TrainDetailView extends StatelessWidget {
   final CoachSequence? coach;
   final void Function(Stopover stop)? onStopTap;
 
+  /// EVA / name of the stop you board at and alight at on this leg. When set,
+  /// the timeline collapses stops outside that segment (e.g. the train's run
+  /// before your boarding station). Null = standalone train, show all stops.
+  final String? boardingId;
+  final String? alightingId;
+
   const TrainDetailView({
     super.key,
     required this.trip,
     this.coach,
     this.onStopTap,
+    this.boardingId,
+    this.alightingId,
   });
 
   @override
@@ -30,7 +38,12 @@ class TrainDetailView extends StatelessWidget {
         TrainInfoHeader(trip: trip),
         TrainMapView(trip: trip),
         if (coach != null) CoachSequenceView(sequence: coach!),
-        StopTimeline(stopovers: trip.stopovers, onStopTap: onStopTap),
+        StopTimeline(
+          stopovers: trip.stopovers,
+          onStopTap: onStopTap,
+          boardingId: boardingId,
+          alightingId: alightingId,
+        ),
       ],
     );
   }

@@ -60,6 +60,26 @@ class MapPoi {
   }
 }
 
+/// A lift/escalator access point whose bahnhof.de description names the track
+/// pair it serves (e.g. "zu Gleis 7/8 Abschnitt E"). These are the ONLY places
+/// the data links a real position to specific Gleise, so we use them to learn
+/// which platform island a position belongs to (the sector cubes themselves
+/// carry no track reference).
+class PlatformAnchor {
+  /// The track numbers this access point serves, e.g. {"7", "8"}.
+  final Set<String> gleise;
+  final double latitude;
+  final double longitude;
+
+  const PlatformAnchor({
+    required this.gleise,
+    required this.latitude,
+    required this.longitude,
+  });
+
+  LatLng get latLng => LatLng(latitude, longitude);
+}
+
 /// Full indoor-map dataset for one station, scraped live from bahnhof.de.
 class StationMap {
   final String slug;
@@ -76,12 +96,17 @@ class StationMap {
   /// Every POI, flat. Filter by [level] / [type] in the UI.
   final List<MapPoi> pois;
 
+  /// Lift/escalator access points that name the Gleise they serve — used to
+  /// group tracks into platform islands and place section markers correctly.
+  final List<PlatformAnchor> platformAnchors;
+
   const StationMap({
     required this.slug,
     required this.center,
     required this.levels,
     required this.levelInit,
     required this.pois,
+    this.platformAnchors = const [],
   });
 
   /// POIs on a given floor.

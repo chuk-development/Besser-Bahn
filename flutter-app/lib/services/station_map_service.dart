@@ -115,7 +115,79 @@ class StationMapService {
       levels: levels,
       levelInit: lvl?.group(2) ?? (levels.isNotEmpty ? levels.first : ''),
       pois: pois,
+      platformAnchors: _extractAnchors(blob),
     );
+  }
+
+  /// Lift/escalator access points that name the Gleise they serve. bahnhof.de
+  /// ships a richer `elevator`/`escalator` array (separate from the simplified
+  /// `poi` GeoJSON) where each entry has a free-text `description`
+  /// ("zu Gleis 7/8 Abschnitt E", "von Gleis 11/12 zu Südsteg") and a
+  /// `position`. The track pair in that text is the only link in the data
+  /// between a real coordinate and specific Gleise, so we mine it to learn the
+  /// platform islands.
+  List<PlatformAnchor> _extractAnchors(String blob) {
+    final anchors = <PlatformAnchor>[];
+    final pair = RegExp(r'(?:Gleis|Gl\.|Bstg\.?\s*\d*\s*Gl\.?)\s*(\d+)\s*/\s*(\d+)');
+    for (final key in const ['"elevator":[', '"escalator":[']) {
+      final arr = _extractJsonArray(blob, key);
+      if (arr == null) continue;
+      for (final e in arr) {
+        if (e is! Map<String, dynamic>) continue;
+        final desc = e['description'];
+        final pos = e['position'];
+        if (desc is! String || pos is! Map) continue;
+        final m = pair.firstMatch(desc);
+        final lat = (pos['latitude'] as num?)?.toDouble();
+        final lon = (pos['longitude'] as num?)?.toDouble();
+        if (m == null || lat == null || lon == null) continue;
+        anchors.add(PlatformAnchor(
+          gleise: {m.group(1)!, m.group(2)!},
+          latitude: lat,
+          longitude: lon,
+        ));
+      }
+    }
+    return anchors;
+  }
+
+  /// Balance-parse a `"<key>":[ ... ]` array out of the blob (key includes the
+  /// trailing `[`).
+  List? _extractJsonArray(String blob, String keyWithBracket) {
+    final i = blob.indexOf(keyWithBracket);
+    if (i < 0) return null;
+    final open = blob.indexOf('[', i);
+    var depth = 0;
+    var inString = false;
+    var escaped = false;
+    for (var k = open; k < blob.length; k++) {
+      final c = blob[k];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (c == '\\') {
+          escaped = true;
+        } else if (c == '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (c == '"') {
+        inString = true;
+      } else if (c == '[') {
+        depth++;
+      } else if (c == ']') {
+        depth--;
+        if (depth == 0) {
+          try {
+            return json.decode(blob.substring(open, k + 1)) as List;
+          } catch (_) {
+            return null;
+          }
+        }
+      }
+    }
+    return null;
   }
 
   /// Reassemble the RSC payload by concatenating every

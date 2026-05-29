@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Add internet permission -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- "Mein Standort" on the Bahnhofskarte: show the user's position and the
+         direction toward their boarding Gleis. Coarse + fine; while-in-use. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     
     <application
         android:label="Besser Bahn"
@@ -26,6 +30,18 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <!-- OAuth callback for flutter_web_auth_2 (Träwelling login).
+             The bahn.chuk.dev bounce page redirects into besserbahn://. -->
+        <activity
+            android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+            android:exported="true">
+            <intent-filter android:label="flutter_web_auth_2">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="besserbahn" />
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.

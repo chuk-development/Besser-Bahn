@@ -222,10 +222,14 @@ class HafasService {
   Future<Trip> getTrip(String tripId) async {
     // bahn.de first — it's fast and reliable. HAFAS is only a last resort
     // (the public mirror is frequently down and would otherwise hang ~10s).
+    final sw = Stopwatch()..start();
     AppLog.log('getTrip via bahn.de fahrt…', tag: 'trip');
     try {
       final trip = await _getTripDbWeb(tripId);
-      AppLog.log('getTrip ok (${trip.stopovers.length} stops)', tag: 'trip');
+      AppLog.log(
+          'getTrip ok ${sw.elapsedMilliseconds}ms · ${trip.line.displayName} '
+          '(${trip.stopovers.length} stops)',
+          tag: 'trip');
       // bahn.de carries no track geometry. Attach the exact route geometry
       // *from the local cache only* here so the trip renders instantly — the
       // (possibly slow) HAFAS network fetch happens lazily from the map widget
@@ -235,8 +239,11 @@ class HafasService {
           ? trip.copyWith(polyline: cached)
           : trip;
     } catch (e) {
-      AppLog.log('bahn.de fahrt failed ($e) → trying HAFAS', tag: 'trip');
+      AppLog.log(
+          'bahn.de fahrt failed ${sw.elapsedMilliseconds}ms ($e) → trying HAFAS',
+          tag: 'trip');
       final trip = await _getTripHafas(tripId);
+      AppLog.log('getTrip via HAFAS ok ${sw.elapsedMilliseconds}ms', tag: 'trip');
       if (trip.polyline != null && trip.polyline!.isNotEmpty) {
         await PolylineCache.instance.put(trip.routeKey, trip.polyline!);
       }
@@ -306,7 +313,11 @@ class HafasService {
   Future<Trip> _getTripDbWeb(String journeyId) async {
     final encoded = Uri.encodeComponent(journeyId);
     final uri = Uri.parse('$_dbBase/reiseloesung/fahrt?journeyId=$encoded');
-    final response = await _client.get(uri, headers: _headers);
+    // Cap the wait: a hanging/slow bahn.de request must not block the UI
+    // forever — time out so getTrip can fall back to HAFAS quickly.
+    final response = await _client
+        .get(uri, headers: _headers)
+        .timeout(const Duration(seconds: 8));
     if (response.statusCode != 200) {
       throw Exception('bahn.de fahrt returned ${response.statusCode}');
     }

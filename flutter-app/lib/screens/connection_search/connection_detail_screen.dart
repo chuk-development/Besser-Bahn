@@ -203,7 +203,16 @@ class _LegSectionState extends ConsumerState<_LegSection>
     super.build(context); // required by AutomaticKeepAliveClientMixin
     final trip = _trip;
     if (trip != null) {
-      return TrainDetailView(trip: trip, coach: _coach, onStopTap: _openStopMap);
+      final leg = widget.leg;
+      return TrainDetailView(
+        trip: trip,
+        coach: _coach,
+        onStopTap: _openStopMap,
+        boardingId: leg.origin.id.isNotEmpty ? leg.origin.id : leg.origin.name,
+        alightingId: leg.destination.id.isNotEmpty
+            ? leg.destination.id
+            : leg.destination.name,
+      );
     }
     // Loading / fallback: still show the leg summary so the user sees the train.
     final leg = widget.leg;

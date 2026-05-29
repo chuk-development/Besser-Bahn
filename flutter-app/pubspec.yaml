@@ -17,6 +17,7 @@ dependencies:
   url_launcher: ^6.3.2
   flutter_map: ^8.3.0
   latlong2: ^0.9.1
+  geolocator: ^14.0.0           # device GPS for "Mein Standort" on the map
   intl: ^0.20.2
   shared_preferences: ^2.3.4
   flutter_svg: ^2.3.0

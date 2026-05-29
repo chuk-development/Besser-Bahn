@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../models/split_ticket.dart';
 import '../../providers/settings_provider.dart';
+import '../../widgets/traewelling_avatar_button.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -16,7 +17,10 @@ class SettingsScreen extends ConsumerWidget {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Einstellungen')),
+      appBar: AppBar(
+        title: const Text('Einstellungen'),
+        actions: const [TraewellingAvatarButton()],
+      ),
       body: ListView(
         padding: const EdgeInsets.only(bottom: 32),
         children: [

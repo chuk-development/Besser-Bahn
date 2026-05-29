@@ -11,7 +11,9 @@ import '../../models/station_map.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/station_map_provider.dart';
 import '../../providers/train_lookup_provider.dart';
+import '../../services/location_service.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/traewelling_avatar_button.dart';
 import '../../widgets/delay_badge.dart';
 import '../../widgets/station_search_field.dart';
 
@@ -56,10 +58,53 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
   /// POI tapped on the map; shown as an inline card, not a bottom sheet.
   MapPoi? _selectedPoi;
 
+  /// The user's last device fix (blue dot). Null until they tap "Mein Standort".
+  UserFix? _userFix;
+
+  /// True while a location request is in flight (spinner on the button).
+  bool _locating = false;
+
   @override
   void dispose() {
     _mapController.dispose();
     super.dispose();
+  }
+
+  /// Where the rider needs to get to: the highlighted boarding Gleis if we
+  /// came from a journey, otherwise the station centre.
+  LatLng _targetFor(StationMap map) =>
+      ref.read(stationMapProvider).highlightPoi?.latLng ?? map.center;
+
+  /// Request the device location and frame it together with the target so the
+  /// rider sees where they are and roughly which way to walk.
+  Future<void> _locateMe(StationMap map) async {
+    setState(() => _locating = true);
+    try {
+      final fix = await ref.read(locationServiceProvider).currentFix();
+      if (!mounted) return;
+      setState(() => _userFix = fix);
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints([fix.latLng, _targetFor(map)]),
+          padding: const EdgeInsets.all(72),
+          maxZoom: 18.5,
+        ),
+      );
+    } on LocationException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message)),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Standort konnte nicht ermittelt werden.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
   }
 
   void _recenter(StationMap map) {
@@ -104,6 +149,7 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
       appBar: AppBar(
         title: Text(state.station?.name ?? 'Bahnhofskarte'),
         actions: [
+          const TraewellingAvatarButton(),
           if (map != null)
             IconButton(
               tooltip: 'Zentrieren',
@@ -237,6 +283,33 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
                     _markers(context, state.visiblePois, state.station)),
             if (state.highlightSectionLine.isNotEmpty)
               MarkerLayer(markers: _sectionMarkers(state.highlightSectionLine)),
+            // "Mein Standort": the direction line to the target, the GPS
+            // accuracy circle, and the blue dot — drawn on top of the POIs.
+            if (_userFix != null) ...[
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: [_userFix!.latLng, _targetFor(map)],
+                    color: AppColors.dbBlue.withAlpha(180),
+                    strokeWidth: 4,
+                    pattern: StrokePattern.dotted(),
+                  ),
+                ],
+              ),
+              CircleLayer(
+                circles: [
+                  CircleMarker(
+                    point: _userFix!.latLng,
+                    radius: _userFix!.accuracy,
+                    useRadiusInMeter: true,
+                    color: AppColors.dbBlue.withAlpha(30),
+                    borderColor: AppColors.dbBlue.withAlpha(90),
+                    borderStrokeWidth: 1,
+                  ),
+                ],
+              ),
+              MarkerLayer(markers: [_userMarker(_userFix!.latLng)]),
+            ],
             const RichAttributionWidget(
               alignment: AttributionAlignment.bottomLeft,
               // The default flutter_map logo is a package asset that isn't
@@ -269,6 +342,31 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
             onToggle: notifier.toggleCategory,
           ),
         ),
+        // "Mein Standort" button — request GPS and frame you + your target.
+        Positioned(
+          right: 8,
+          top: 8,
+          child: FloatingActionButton.small(
+            heroTag: 'locate-me',
+            tooltip: 'Mein Standort',
+            onPressed: _locating ? null : () => _locateMe(map),
+            child: _locating
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.near_me),
+          ),
+        ),
+        // How far you still have to walk to the target.
+        if (_userFix != null)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 16,
+            child: Center(child: _DistanceChip(metres: _distanceToTarget(map))),
+          ),
         // Inline POI card — shown over the map (not a bottom sheet).
         if (_selectedPoi != null)
           Positioned(
@@ -346,6 +444,27 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
         ),
     ];
   }
+
+  /// Straight-line distance (metres) from the user's fix to the target.
+  double _distanceToTarget(StationMap map) =>
+      const Distance().as(LengthUnit.Meter, _userFix!.latLng, _targetFor(map));
+
+  /// The classic "blue dot" for the user's own position.
+  Marker _userMarker(LatLng pos) => Marker(
+        point: pos,
+        width: 22,
+        height: 22,
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppColors.dbBlue,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 3),
+            boxShadow: const [
+              BoxShadow(color: Colors.black26, blurRadius: 4, spreadRadius: 1),
+            ],
+          ),
+        ),
+      );
 
   void _showBayDepartures(MapPoi poi, Station station) {
     showModalBottomSheet(
@@ -1024,6 +1143,46 @@ class _LegendRow extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Small pill showing how far the user still is from the target, drawn over
+/// the map when "Mein Standort" is active.
+class _DistanceChip extends StatelessWidget {
+  final double metres;
+  const _DistanceChip({required this.metres});
+
+  String get _label {
+    if (metres >= 1000) {
+      return '≈ ${(metres / 1000).toStringAsFixed(1).replaceAll('.', ',')} km';
+    }
+    return '≈ ${metres.round()} m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: AppColors.dbBlue,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(color: Colors.black26, blurRadius: 6, spreadRadius: 1),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.directions_walk, color: Colors.white, size: 16),
+          const SizedBox(width: 6),
+          Text(
+            '$_label bis zum Ziel',
+            style: const TextStyle(
+                color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+          ),
+        ],
       ),
     );
   }
