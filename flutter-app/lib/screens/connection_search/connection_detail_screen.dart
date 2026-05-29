@@ -476,15 +476,18 @@ class _ConnectionDetailScreenState
 
   /// Warning banner above a leg listing its disruption notes (HIM messages,
   /// realtime notes) — e.g. "Aufzug in Elmshorn außer Betrieb".
+  /// Generic leg notices (lift out of service, construction, …). Deliberately
+  /// LOW-KEY grey — red is reserved for the wing-train split warning, the one
+  /// note where boarding wrong actually strands you. An out-of-order lift should
+  /// not shout in the same colour.
   Widget _disruptionBanner(BuildContext context, List<String> notes) {
     final theme = Theme.of(context);
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: theme.colorScheme.errorContainer.withAlpha(110),
+        color: theme.colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.colorScheme.error.withAlpha(110)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -495,14 +498,13 @@ class _ConnectionDetailScreenState
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.warning_amber_rounded,
-                      size: 16, color: theme.colorScheme.error),
+                  Icon(Icons.info_outline,
+                      size: 15, color: theme.colorScheme.onSurfaceVariant),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(n,
                         style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onErrorContainer,
-                            fontWeight: FontWeight.w500)),
+                            color: theme.colorScheme.onSurfaceVariant)),
                   ),
                 ],
               ),
