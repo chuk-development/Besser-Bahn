@@ -15,9 +15,11 @@ import 'train_map_view.dart';
 /// timeline. Used standalone on the train screen and stacked per leg in the
 /// connection view. Returns column children (no Scaffold) so it can be embedded.
 ///
-/// When the train has a reservable seat plan, the Wagenreihung doubles as the
-/// coach picker for the "Freie Sitzplätze" panel below — so coaches aren't
-/// drawn twice. Selection + class + expand state live here and feed both.
+/// For trains with a reservable seat plan, the free-seat view lives *inside*
+/// the Wagenreihung card: the train doubles as the coach picker (selectable
+/// cars + free-seat badges) and the selected coach's seat plan renders below
+/// it — no separate "Freie Sitzplätze" section. Selection + class state live
+/// here and feed both. When there's no Wagenreihung, the panel stands alone.
 class TrainDetailView extends ConsumerStatefulWidget {
   final Trip trip;
   final CoachSequence? coach;
@@ -43,21 +45,18 @@ class TrainDetailView extends ConsumerStatefulWidget {
 }
 
 class _TrainDetailViewState extends ConsumerState<TrainDetailView> {
-  bool _seatsExpanded = false;
   bool _firstClass = false;
   int? _selectedWagon; // explicit user pick; null → auto (first free)
 
   @override
   Widget build(BuildContext context) {
     final trip = widget.trip;
-    final reservable = SeatPlanSection.isAvailableFor(trip);
+    final reservable = SeatPlanBody.isAvailableFor(trip);
 
-    // Only fetch the seat map once the panel is open.
-    final req = (_seatsExpanded && reservable)
+    final req = reservable
         ? SeatMapRequest.fromTrip(trip, firstClass: _firstClass)
         : null;
-    final seatAsync =
-        req != null ? ref.watch(seatMapProvider(req)) : null;
+    final seatAsync = req != null ? ref.watch(seatMapProvider(req)) : null;
     final SeatMap? seatMap =
         seatAsync?.maybeWhen(data: (m) => m, orElse: () => null);
 
@@ -71,8 +70,22 @@ class _TrainDetailViewState extends ConsumerState<TrainDetailView> {
       }
     }
     final effectiveWagon = _effectiveWagon(seatMap);
-
     final hasWagenreihung = widget.coach != null;
+
+    final seatPlan = reservable
+        ? SeatPlanBody(
+            trip: trip,
+            firstClass: _firstClass,
+            onFirstClass: (v) => setState(() {
+              _firstClass = v;
+              _selectedWagon = null;
+            }),
+            seatAsync: seatAsync,
+            selectedWagon: effectiveWagon,
+            onSelectWagon: (nr) => setState(() => _selectedWagon = nr),
+            hasExternalSelector: hasWagenreihung,
+          )
+        : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -82,26 +95,21 @@ class _TrainDetailViewState extends ConsumerState<TrainDetailView> {
         if (widget.coach != null)
           CoachSequenceView(
             sequence: widget.coach!,
-            // Turn the train into the seat-plan picker once the panel is open.
-            selectable: _seatsExpanded && reservable,
+            selectable: reservable,
             freeByWagon: freeByWagon,
             selectedWagon: effectiveWagon,
             onCoachTap: (c) => setState(() => _selectedWagon = c.wagonNumber),
+            seatPlan: seatPlan,
+          )
+        else if (seatPlan != null)
+          Card(
+            margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: seatPlan,
+            ),
           ),
-        SeatPlanSection(
-          trip: trip,
-          expanded: _seatsExpanded,
-          onToggle: () => setState(() => _seatsExpanded = !_seatsExpanded),
-          firstClass: _firstClass,
-          onFirstClass: (v) => setState(() {
-            _firstClass = v;
-            _selectedWagon = null;
-          }),
-          seatAsync: seatAsync,
-          selectedWagon: effectiveWagon,
-          onSelectWagon: (nr) => setState(() => _selectedWagon = nr),
-          hasExternalSelector: hasWagenreihung,
-        ),
         StopTimeline(
           stopovers: trip.stopovers,
           onStopTap: widget.onStopTap,
