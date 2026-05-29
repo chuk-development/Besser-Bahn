@@ -250,7 +250,6 @@ class _StopTimelineState extends State<StopTimeline> {
         emphasize: isEndpoint,
         // Stops outside the ridden segment are visually muted.
         muted: !inSegment,
-        tappable: widget.onStopTap != null,
       ),
     );
   }
@@ -372,24 +371,16 @@ class _StopTimelineState extends State<StopTimeline> {
                       if (amenities.isNotEmpty) ...[
                         const SizedBox(height: 10),
                         Wrap(
-                          spacing: 14,
+                          spacing: 12,
                           runSpacing: 6,
                           children: [
                             for (final a in amenities)
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(a.icon,
-                                      size: 15,
-                                      color: theme.colorScheme.onSurfaceVariant),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    a.label,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                        color:
-                                            theme.colorScheme.onSurfaceVariant),
-                                  ),
-                                ],
+                              Tooltip(
+                                message: a.label,
+                                child: Icon(a.icon,
+                                    size: 17,
+                                    color:
+                                        theme.colorScheme.onSurfaceVariant),
                               ),
                           ],
                         ),
@@ -509,25 +500,16 @@ class _StopTimelineState extends State<StopTimeline> {
                       if (amenities.isNotEmpty) ...[
                         const SizedBox(height: 10),
                         Wrap(
-                          spacing: 14,
+                          spacing: 12,
                           runSpacing: 6,
                           children: [
                             for (final a in amenities)
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(a.icon,
-                                      size: 15,
-                                      color:
-                                          theme.colorScheme.onSurfaceVariant),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    a.label,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                        color: theme
-                                            .colorScheme.onSurfaceVariant),
-                                  ),
-                                ],
+                              Tooltip(
+                                message: a.label,
+                                child: Icon(a.icon,
+                                    size: 17,
+                                    color:
+                                        theme.colorScheme.onSurfaceVariant),
                               ),
                           ],
                         ),
@@ -550,7 +532,11 @@ class _StopRow extends StatelessWidget {
   final bool hasBottom;
   final bool emphasize;
   final bool muted;
-  final bool tappable;
+
+  /// Fixed height of the station-name row. The timeline dot targets its centre,
+  /// so every dot — endpoints (big Gleis chip) and intermediate stops alike —
+  /// sits at the same vertical offset and lines up with its name.
+  static const double _nameRowHeight = 26.0;
 
   const _StopRow({
     required this.stopover,
@@ -558,7 +544,6 @@ class _StopRow extends StatelessWidget {
     required this.hasBottom,
     this.emphasize = false,
     this.muted = false,
-    this.tappable = false,
   });
 
   @override
@@ -604,14 +589,15 @@ class _StopRow extends StatelessWidget {
             const SizedBox(width: 12),
 
             // Timeline line. The dot is pushed down by `topGap` so its centre
-            // lines up with the first line of the station name beside it,
-            // instead of floating above it.
+            // lines up with the vertical centre of the (fixed-height) station
+            // name row beside it — same offset on every row, big chip or not,
+            // so the first dot, last dot and every name align identically.
             Builder(builder: (context) {
               final lineColor = isPast || muted
                   ? theme.colorScheme.outlineVariant
                   : theme.colorScheme.primary.withAlpha(60);
               final dotSize = emphasize ? 14.0 : 10.0;
-              final topGap = 9.0 - dotSize / 2; // first-line centre − radius
+              final topGap = _nameRowHeight / 2 - dotSize / 2;
               return SizedBox(
                 width: 20,
                 child: Column(
@@ -651,39 +637,39 @@ class _StopRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            stopover.stop.name,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight:
-                                  emphasize ? FontWeight.bold : FontWeight.w500,
-                              color: cancelled ? Colors.red : textColor,
-                              decoration: cancelled
-                                  ? TextDecoration.lineThrough
-                                  : null,
+                    // Fixed-height name row, contents vertically centred, so the
+                    // taller endpoint Gleis chip never shifts the name relative
+                    // to the timeline dot (which targets this same centre).
+                    SizedBox(
+                      height: _nameRowHeight,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              stopover.stop.name,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: emphasize
+                                    ? FontWeight.bold
+                                    : FontWeight.w500,
+                                color: cancelled ? Colors.red : textColor,
+                                decoration: cancelled
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                              ),
                             ),
                           ),
-                        ),
-                        if (tappable) ...[
-                          const SizedBox(width: 6),
-                          Icon(Icons.map_outlined,
-                              size: 15,
-                              color: muted
-                                  ? theme.colorScheme.primary.withAlpha(130)
-                                  : theme.colorScheme.primary),
+                          // Gleis lives on the right, on the same line as the
+                          // station name: blue-bordered normally, red-bordered
+                          // (with struck-through old platform) when it changed.
+                          if (stopover.platform != null ||
+                              stopover.plannedPlatform != null) ...[
+                            const SizedBox(width: 8),
+                            _platformChip(context, big: emphasize),
+                          ],
                         ],
-                        // Gleis lives on the right, on the same line as the
-                        // station name: blue-bordered normally, red-bordered
-                        // (with struck-through old platform) when it changed.
-                        if (stopover.platform != null ||
-                            stopover.plannedPlatform != null) ...[
-                          const SizedBox(width: 8),
-                          _platformChip(context, big: emphasize),
-                        ],
-                      ],
+                      ),
                     ),
 
                     // an HH:MM / ab HH:MM with realtime + red delay.
@@ -755,40 +741,40 @@ class _StopRow extends StatelessWidget {
     final color = changed ? Colors.red : Colors.blue;
     return Container(
       padding: big
-          ? const EdgeInsets.symmetric(horizontal: 10, vertical: 6)
+          ? const EdgeInsets.symmetric(horizontal: 7, vertical: 3)
           : const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(big ? 8 : 6),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(
-            color: color.withAlpha(muted ? 120 : 200), width: big ? 1.5 : 1),
+            color: color.withAlpha(muted ? 120 : 200), width: big ? 1.2 : 1),
         color: color.withAlpha(20),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           TrackIcon(
-              size: big ? 18 : 13,
+              size: big ? 14 : 13,
               color: changed
                   ? Colors.red
                   : (muted
                       ? theme.colorScheme.onSurfaceVariant
                       : color)),
-          SizedBox(width: big ? 5 : 3),
+          SizedBox(width: big ? 4 : 3),
           if (changed && stopover.plannedPlatform != null) ...[
             Text(
               stopover.plannedPlatform!,
               style: TextStyle(
-                fontSize: big ? 13 : 11,
+                fontSize: big ? 12 : 11,
                 color: theme.colorScheme.onSurfaceVariant,
                 decoration: TextDecoration.lineThrough,
               ),
             ),
-            SizedBox(width: big ? 5 : 4),
+            SizedBox(width: big ? 4 : 4),
           ],
           Text(
             display,
             style: TextStyle(
-              fontSize: big ? 18 : 12,
+              fontSize: big ? 13 : 12,
               fontWeight: big ? FontWeight.w800 : FontWeight.w700,
               color: changed
                   ? Colors.red
