@@ -8,7 +8,6 @@ import '../screens/connection_search/connection_search_screen.dart';
 import '../screens/departure_board/departure_board_screen.dart';
 import '../screens/station_map/station_map_screen.dart';
 import '../screens/connection_search/connection_detail_screen.dart';
-import '../screens/connection_search/transfer_screen.dart';
 import '../models/journey.dart';
 import '../screens/split_ticket/split_ticket_screen.dart';
 import '../screens/settings/settings_screen.dart';
@@ -100,14 +99,6 @@ final appRouter = GoRouter(
       parentNavigatorKey: _rootNavigatorKey,
       builder: (context, state) =>
           SplitTicketScreen(journey: state.extra as Journey?),
-    ),
-    // A single change between two legs: Ausstieg → Fußweg → Einstieg, with a
-    // button to the platform-to-platform map.
-    GoRoute(
-      path: '/transfer',
-      parentNavigatorKey: _rootNavigatorKey,
-      builder: (context, state) =>
-          TransferScreen(info: state.extra as TransferInfo),
     ),
     // A single train's run, pushed (with back button) from a connection leg
     // or anywhere — renders the same train view as the tab.

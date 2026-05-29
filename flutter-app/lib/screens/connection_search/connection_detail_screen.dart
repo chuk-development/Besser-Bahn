@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../models/coach_sequence.dart';
 import '../../models/journey.dart';
 import '../../models/library_models.dart';
+import '../../models/station.dart';
 import '../../models/trip.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/service_providers.dart';
@@ -12,7 +13,6 @@ import '../../providers/split_ticket_provider.dart';
 import '../../providers/station_map_provider.dart';
 import '../../widgets/prediction_badge.dart';
 import '../train_lookup/widgets/train_detail_view.dart';
-import 'transfer_screen.dart';
 
 /// In-memory cache (app session) so a leg's train data is fetched once and
 /// reused — scrolling away and back never re-downloads or rebuilds from
@@ -187,18 +187,6 @@ class ConnectionDetailScreen extends ConsumerWidget {
         : null;
     final (color, warn) = _transferTone(context, avail);
 
-    final info = TransferInfo(
-      station: leg.origin,
-      arrGleis: prev?.arrivalPlatform,
-      depGleis: next?.departurePlatform,
-      arrival: arr,
-      departure: dep,
-      fromLine: prev?.line?.displayName,
-      toLine: next?.line?.displayName,
-      walkDistance: leg.walkingDistance,
-      toStation: leg.destination,
-    );
-
     final head = avail != null ? '$avail min zum Umsteigen' : 'Umstieg';
     final detail = leg.walkingDistance != null
         ? 'mit Fußweg · ${leg.walkingDistance} m'
@@ -211,8 +199,33 @@ class ConnectionDetailScreen extends ConsumerWidget {
       headColor: color,
       detail: detail,
       warn: warn,
-      onTap: () => context.push('/transfer', extra: info),
+      onTap: leg.origin.name.isEmpty
+          ? null
+          : () => _openTransferMap(context, ref, leg.origin,
+              prev?.arrivalPlatform, next?.departurePlatform),
     );
+  }
+
+  /// Open the platform-to-platform map straight away (no intermediate screen):
+  /// Einstieg Gleis green, Ausstieg Gleis red, both with their section bands.
+  void _openTransferMap(BuildContext context, WidgetRef ref, Station station,
+      String? arrGleis, String? depGleis) {
+    final note = (arrGleis != null && depGleis != null)
+        ? 'Ausstieg Gleis $arrGleis · Einstieg Gleis $depGleis'
+        : depGleis != null
+            ? 'Einstieg Gleis $depGleis'
+            : arrGleis != null
+                ? 'Ausstieg Gleis $arrGleis'
+                : 'Umstieg in ${station.name}';
+    ref.read(stationMapProvider.notifier).loadForStation(
+          station,
+          highlightGleis: depGleis, // Einstieg — primary, green
+          role: GleisRole.board,
+          secondaryGleis: arrGleis, // Ausstieg — secondary, red
+          secondaryRole: GleisRole.alight,
+          transferNote: note,
+        );
+    context.push('/station-map');
   }
 
   Widget _transfer(
@@ -232,16 +245,6 @@ class ConnectionDetailScreen extends ConsumerWidget {
         ? 'Gleis ${arrGleis ?? '?'} → Gleis ${depGleis ?? '?'}'
         : null;
 
-    final info = TransferInfo(
-      station: station,
-      arrGleis: arrGleis,
-      depGleis: depGleis,
-      arrival: prev.arrival,
-      departure: next.departure,
-      fromLine: prev.line?.displayName,
-      toLine: next.line?.displayName,
-    );
-
     return _transferTile(
       context,
       icon: Icons.swap_calls,
@@ -253,7 +256,7 @@ class ConnectionDetailScreen extends ConsumerWidget {
       warn: warn,
       onTap: station.name.isEmpty
           ? null
-          : () => context.push('/transfer', extra: info),
+          : () => _openTransferMap(context, ref, station, arrGleis, depGleis),
     );
   }
 
