@@ -2,7 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/station.dart';
 import '../core/app_log.dart';
 import '../models/journey.dart';
-import '../models/split_ticket.dart' show BahnCardType;
 import 'service_providers.dart';
 import 'settings_provider.dart';
 

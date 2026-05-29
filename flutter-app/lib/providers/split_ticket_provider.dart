@@ -103,6 +103,8 @@ class SplitTicketNotifier extends Notifier<SplitTicketState> {
             to: stops[j]['id'] as String,
             dateTime: DateTime.tryParse(dtIso),
             deutschlandTicket: settings.hasDeutschlandTicket,
+            firstClass: settings.bahnCard.isFirstClass,
+            ermaessigung: settings.bahnCard.vendoErmaessigung,
           );
           if (price.price == double.infinity && !price.isDTicketCovered) {
             price = await dbApi.getSegmentPrice(
