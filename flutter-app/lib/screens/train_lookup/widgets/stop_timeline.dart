@@ -274,6 +274,9 @@ class _StopTimelineState extends State<StopTimeline> {
         hasTop: hasTop,
         hasBottom: hasBottom,
         emphasize: isEndpoint,
+        // The alight endpoint shows YOUR arrival as its one time, not the
+        // train's onward departure; board/intermediate are departure-first.
+        arrivalPrimary: isEndpoint && i == alight,
         // Stops outside the ridden segment are visually muted.
         muted: !inSegment,
         // The boarding stop's per-stop occupancy duplicates the ride-wide one in
@@ -607,6 +610,12 @@ class _StopRow extends StatelessWidget {
   /// under the station name (the wing-train split banner on the boarding stop).
   final Widget? footer;
 
+  /// This stop is your alight endpoint: its single spine time is YOUR arrival,
+  /// not the train's onward departure. Board/intermediate stops are
+  /// departure-first. Endpoints never show the secondary "an/ab" dwell detail —
+  /// that belongs to (expanded) intermediate stops only.
+  final bool arrivalPrimary;
+
   /// Fixed height of the station-name row. The timeline dot targets its centre,
   /// so every dot — endpoints (big Gleis chip) and intermediate stops alike —
   /// sits at the same vertical offset and lines up with its name.
@@ -620,6 +629,7 @@ class _StopRow extends StatelessWidget {
     this.muted = false,
     this.hideOccupancy = false,
     this.footer,
+    this.arrivalPrimary = false,
   });
 
   @override
@@ -632,14 +642,23 @@ class _StopRow extends StatelessWidget {
         : theme.colorScheme.onSurface;
     if (muted) textColor = textColor.withAlpha(130);
 
-    // Spine time = the realtime departure, else arrival.
-    final spinePlanned = stopover.plannedDeparture ?? stopover.plannedArrival;
-    final spineReal = stopover.departure ?? stopover.arrival;
-    final spineDelay = stopover.departureDelay ?? stopover.arrivalDelay;
+    // Spine time: your alight endpoint shows ARRIVAL; board/intermediate stops
+    // show departure (falling back to the other when one is absent).
+    final spinePlanned = arrivalPrimary
+        ? (stopover.plannedArrival ?? stopover.plannedDeparture)
+        : (stopover.plannedDeparture ?? stopover.plannedArrival);
+    final spineReal = arrivalPrimary
+        ? (stopover.arrival ?? stopover.departure)
+        : (stopover.departure ?? stopover.arrival);
+    final spineDelay = arrivalPrimary
+        ? (stopover.arrivalDelay ?? stopover.departureDelay)
+        : (stopover.departureDelay ?? stopover.arrivalDelay);
 
-    // The expanded "an HH:MM / ab HH:MM" detail — only for intermediate stops
-    // that actually dwell (both an and ab, and they differ).
-    final showAnAb = stopover.plannedArrival != null &&
+    // The "an HH:MM / ab HH:MM" dwell detail — intermediate stops only (an
+    // endpoint shows just its one relevant time, DB-app style). Shown when the
+    // stop actually dwells (both times present and differing).
+    final showAnAb = !emphasize &&
+        stopover.plannedArrival != null &&
         stopover.plannedDeparture != null &&
         stopover.plannedArrival != stopover.plannedDeparture;
 
