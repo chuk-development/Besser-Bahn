@@ -90,7 +90,7 @@ class _DepartureMapViewState extends ConsumerState<DepartureMapView> {
             maxZoom: 19,
           ),
           children: [
-            TileCache.outdoorLayer(context),
+            TileCache.outdoorLayer(),
             if (level.isNotEmpty)
               TileLayer(
                 urlTemplate: StationMap.indoorTileUrl(level),
@@ -109,8 +109,7 @@ class _DepartureMapViewState extends ConsumerState<DepartureMapView> {
               alignment: AttributionAlignment.bottomLeft,
               showFlutterMapAttribution: false,
               attributions: [
-                TextSourceAttribution('© OpenStreetMap'),
-                TextSourceAttribution('© CARTO'),
+                TextSourceAttribution('© BKG (GeoBasis-DE)'),
                 TextSourceAttribution('Bahnhofsplan © DB InfraGO'),
               ],
             ),
