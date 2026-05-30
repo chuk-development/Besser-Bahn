@@ -177,6 +177,7 @@ class StationMapState {
     this.secondaryRole = GleisRole.none,
     this.secondarySection,
     this.coachSequence,
+    this.trainLabel,
     this.isLoading = false,
     this.error,
   });
@@ -194,11 +195,13 @@ class StationMapState {
     GleisRole? secondaryRole,
     ({String start, String end})? secondarySection,
     CoachSequence? coachSequence,
+    String? trainLabel,
     bool clearHighlight = false,
     bool clearSection = false,
     bool clearTransferNote = false,
     bool clearSecondary = false,
     bool clearCoachSequence = false,
+    bool clearTrainLabel = false,
     bool? isLoading,
     String? error,
     bool clearError = false,
@@ -230,6 +233,8 @@ class StationMapState {
       coachSequence: clearCoachSequence
           ? null
           : (coachSequence ?? this.coachSequence),
+      trainLabel:
+          clearTrainLabel ? null : (trainLabel ?? this.trainLabel),
       isLoading: isLoading ?? this.isLoading,
       error: clearError ? null : (error ?? this.error),
     );
@@ -602,6 +607,7 @@ class StationMapNotifier extends Notifier<StationMapState> {
       GleisRole secondaryRole = GleisRole.none,
       ({String start, String end})? sectionOverride,
       CoachSequence? coachSequence,
+      String? trainLabel,
       Set<String>? primaryTypes}) async {
     _primaryTypes = primaryTypes ?? kDefaultPrimaryTypes;
     final raw = highlightGleis?.trim() ?? '';
@@ -625,6 +631,8 @@ class StationMapNotifier extends Notifier<StationMapState> {
       secondarySection: secSection,
       coachSequence: coachSequence,
       clearCoachSequence: coachSequence == null,
+      trainLabel: trainLabel,
+      clearTrainLabel: trainLabel == null,
       clearHighlight: hl == null,
       // Without an explicit section, drop any stale one from a previous train
       // (else every train would keep showing the first train's "G–I").

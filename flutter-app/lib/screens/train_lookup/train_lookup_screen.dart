@@ -361,6 +361,7 @@ class _TrainLookupScreenState extends ConsumerState<TrainLookupScreen>
                             ? GleisRole.board
                             : GleisRole.none,
                     coachSequence: atSeqStop ? cs : null,
+                    trainLabel: trip.line.displayName,
                     primaryTypes:
                         primaryPoiTypesForProduct(trip.line.product),
                   );

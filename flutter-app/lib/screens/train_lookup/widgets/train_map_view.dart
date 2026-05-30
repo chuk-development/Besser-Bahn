@@ -243,56 +243,150 @@ class _LiveTrainState extends State<_LiveTrain>
     var noseM = dims.noseLenM;
     var bothNose = dims.noseBothEnds;
     final cs = widget.coachSequence;
+    final cars = cs?.allCoaches
+            .where((c) => c.platformPosition != null && c.platformPosition!.length > 0)
+            .toList() ??
+        const [];
+    final highSpeed = cs != null && isHighSpeedCoach(cs);
     if (cs != null) {
-      final cc = cs.allCoaches
-          .where((c) => c.platformPosition != null)
-          .map((c) => c.platformPosition!)
-          .toList();
-      if (cc.isNotEmpty) {
-        final s = cc.map((p) => p.start).reduce(math.min);
-        final e = cc.map((p) => p.end).reduce(math.max);
+      if (cars.isNotEmpty) {
+        final s = cars.map((c) => c.platformPosition!.start).reduce(math.min);
+        final e = cars.map((c) => c.platformPosition!.end).reduce(math.max);
         if (e - s > 10) lenM = e - s;
       }
-      final hs = isHighSpeedCoach(cs);
-      bothNose = hs;
-      noseM = hs ? 6 : 0;
-      halfWM = (hs ? 2.95 : 2.84) / 2;
+      bothNose = highSpeed;
+      noseM = highSpeed ? 6 : 0;
+      halfWM = (highSpeed ? 2.95 : 2.84) / 2;
     }
+
+    // ICE/IC ride in white-grey livery with a red waist stripe; regional &
+    // S-Bahn are DB red. Matches how the real trains look from above.
+    final whiteLivery = highSpeed ||
+        widget.trip.line.product == 'national' ||
+        widget.trip.line.product == 'nationalExpress';
+    final bodyColor =
+        whiteLivery ? const Color(0xFFEDEFF2) : AppColors.dbRed;
+    final borderColor =
+        whiteLivery ? const Color(0xFF8A929B) : Colors.white;
 
     // Floor the on-screen size so the train never shrinks to an invisible
     // speck; above the floor it's exactly to scale.
     final mpp = _metersPerPixel(MapCamera.of(context), head);
     final effLen = math.max(lenM, 30 * mpp);
     final effHalfW = math.max(halfWM, 4 * mpp);
-    final effNose = noseM > 0 ? math.min(effLen * 0.42, math.max(noseM, effLen * 0.28)) : 0.0;
+    final effNose = noseM > 0
+        ? math.min(effLen * 0.42, math.max(noseM, effLen * 0.28))
+        : 0.0;
 
-    // Carve the body out of the route polyline: tail → head, so it bends with
-    // every curve between. The head is the front (direction of travel).
+    // Carve the body out of the route polyline: tail (min arc) → head (front,
+    // direction of travel), so it bends with every curve between.
     final headArc = TrainGeometry.locate(widget.route, head);
-    final spine = TrainGeometry.slice(
-        widget.route, headArc - effLen, headArc);
+    final tailArc = headArc - effLen;
+    final spine = TrainGeometry.slice(widget.route, tailArc, headArc);
     if (spine.length < 2) return const SizedBox.shrink();
 
-    final outline = TrainGeometry.body(
-      spine,
-      halfWidthM: effHalfW,
-      noseStart: bothNose, // tail snout only on a symmetric EMU (ICE)
-      noseEnd: true, // the front always tapers
-      noseLenM: effNose,
-    );
-    if (outline.length < 3) return const SizedBox.shrink();
+    final polygons = <Polygon>[];
 
-    return PolygonLayer(
-      polygons: [
-        Polygon(
-          points: outline,
-          color: AppColors.dbRed,
-          borderColor: Colors.white,
-          borderStrokeWidth: 1.5,
-        ),
+    if (cars.isEmpty) {
+      // No Wagenreihung → one body.
+      final outline = TrainGeometry.body(spine,
+          halfWidthM: effHalfW,
+          noseStart: bothNose,
+          noseEnd: true,
+          noseLenM: effNose);
+      if (outline.length >= 3) {
+        polygons.add(_carPolygon(outline, bodyColor, borderColor));
+      }
+    } else {
+      // One polygon per Wagen so the cars/compartments read as divisions.
+      final start = cars.map((c) => c.platformPosition!.start).reduce(math.min);
+      final end = cars.map((c) => c.platformPosition!.end).reduce(math.max);
+      final span = (end - start).abs();
+      for (var i = 0; i < cars.length; i++) {
+        final pos = cars[i].platformPosition!;
+        final f0 = span > 0 ? (pos.start - start) / span : 0.0;
+        final f1 = span > 0 ? (pos.end - start) / span : 1.0;
+        final a0 = tailArc + f0 * effLen;
+        final a1 = tailArc + f1 * effLen;
+        final seg = TrainGeometry.slice(widget.route, a0, a1);
+        if (seg.length < 2) continue;
+        final outline = TrainGeometry.body(
+          seg,
+          halfWidthM: effHalfW,
+          noseStart: i == 0 && bothNose,
+          noseEnd: i == cars.length - 1,
+          noseLenM: effNose,
+        );
+        if (outline.length >= 3) {
+          polygons.add(_carPolygon(outline, bodyColor, borderColor));
+        }
+      }
+    }
+    if (polygons.isEmpty) return const SizedBox.shrink();
+
+    // Wagon-number labels, only once each car is large enough on screen to fit.
+    final carPx = (effLen / math.max(cars.length, 1)) / mpp;
+    final showNumbers = cars.isNotEmpty && carPx > 22;
+    final numberMarkers = <Marker>[];
+    if (showNumbers) {
+      final start = cars.map((c) => c.platformPosition!.start).reduce(math.min);
+      final end = cars.map((c) => c.platformPosition!.end).reduce(math.max);
+      final span = (end - start).abs();
+      for (final c in cars) {
+        if (c.wagonNumber <= 0) continue;
+        final pos = c.platformPosition!;
+        final fc = span > 0 ? (pos.center - start) / span : 0.5;
+        final at = TrainGeometry.pointAt(widget.route, tailArc + fc * effLen);
+        numberMarkers.add(Marker(
+          point: at,
+          width: 22,
+          height: 16,
+          child: Center(
+            child: Text(
+              '${c.wagonNumber}',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: whiteLivery ? const Color(0xFF20242A) : Colors.white,
+              ),
+            ),
+          ),
+        ));
+      }
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // simplificationTolerance: 0 is essential — the default snaps points to
+        // a ~½px grid, making a slowly-moving train twitch between quantised
+        // spots instead of gliding.
+        PolygonLayer(polygons: polygons, simplificationTolerance: 0),
+        // The ICE/IC red waist stripe down the spine.
+        if (whiteLivery)
+          PolylineLayer(
+            simplificationTolerance: 0,
+            polylines: [
+              Polyline(
+                points: spine,
+                color: AppColors.dbRed,
+                strokeWidth: math.max(1.5, effHalfW / mpp * 0.5),
+              ),
+            ],
+          ),
+        if (numberMarkers.isNotEmpty) MarkerLayer(markers: numberMarkers),
       ],
     );
   }
+
+  /// A single car body (smoothness comes from the layer's
+  /// `simplificationTolerance: 0`, set where the layer is built).
+  Polygon _carPolygon(List<LatLng> outline, Color fill, Color border) => Polygon(
+        points: outline,
+        color: fill,
+        borderColor: border,
+        borderStrokeWidth: 1.2,
+      );
 
   /// Ground metres per screen pixel near [at] — for flooring the on-screen size.
   double _metersPerPixel(MapCamera cam, LatLng at) {

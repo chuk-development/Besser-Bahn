@@ -216,6 +216,7 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
               section: state.highlightSection,
               role: state.highlightRole,
               note: state.transferNote,
+              trainLabel: state.trainLabel,
             ),
           Expanded(child: _buildBody(context, state, notifier)),
         ],
@@ -334,7 +335,7 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
             initialCenter: map.center,
             initialZoom: 17.5,
             minZoom: 13,
-            maxZoom: 19,
+            maxZoom: 21,
             // Tapping empty map dismisses the inline POI card.
             onTap: (_, __) {
               if (_selectedPoi != null) setState(() => _selectedPoi = null);
@@ -363,7 +364,7 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
                 tileSize: 256,
                 minNativeZoom: 14,
                 maxNativeZoom: 18,
-                maxZoom: 20,
+                maxZoom: 21,
                 tileProvider: TileCache.provider(
                   headers: {'Referer': 'https://www.bahnhof.de/'},
                 ),
@@ -404,8 +405,11 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
             // The boarding train drawn to scale, top-down, on the platform —
             // one filled car per Wagen (class colour), the rider's portion
             // bright and the rest dimmed, ICE/end cars with a rounded snout.
-            if (state.boardingTrainCars.isNotEmpty)
+            if (state.boardingTrainCars.isNotEmpty) ...[
               PolygonLayer(polygons: _trainCarPolygons(state.boardingTrainCars)),
+              MarkerLayer(
+                  markers: _trainNumberMarkers(state.boardingTrainCars)),
+            ],
             MarkerLayer(
                 markers:
                     _markers(context, state.visiblePois, state.station)),
@@ -615,6 +619,39 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
           borderStrokeWidth: 1,
         ),
     ];
+  }
+
+  /// Wagon-number labels centred on each car of the platform train, so the
+  /// rider can see which Wagen stops where.
+  List<Marker> _trainNumberMarkers(
+      List<({List<LatLng> outline, Coach coach, bool boarding})> cars) {
+    final out = <Marker>[];
+    for (final car in cars) {
+      if (car.coach.wagonNumber <= 0 || car.outline.isEmpty) continue;
+      var lat = 0.0, lng = 0.0;
+      for (final p in car.outline) {
+        lat += p.latitude;
+        lng += p.longitude;
+      }
+      final c = LatLng(lat / car.outline.length, lng / car.outline.length);
+      out.add(Marker(
+        point: c,
+        width: 22,
+        height: 16,
+        child: Center(
+          child: Text(
+            '${car.coach.wagonNumber}',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: AppColors.onClass(coachColor(car.coach))
+                  .withValues(alpha: car.boarding ? 1 : 0.6),
+            ),
+          ),
+        ),
+      ));
+    }
+    return out;
   }
 
   /// Floating "Ausstieg" (red) / "Einstieg" (green) labels above the two
@@ -1280,11 +1317,15 @@ class _BoardingBanner extends StatelessWidget {
   final ({String start, String end})? section;
   final GleisRole role;
   final String? note;
+
+  /// The train this map is for, e.g. "RE 7" — shown as a leading chip.
+  final String? trainLabel;
   const _BoardingBanner({
     required this.gleis,
     this.section,
     this.role = GleisRole.board,
     this.note,
+    this.trainLabel,
   });
 
   @override
@@ -1320,6 +1361,23 @@ class _BoardingBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
+          if (trainLabel != null && trainLabel!.isNotEmpty) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                trainLabel!,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
           Icon(icon, color: color, size: 20),
           const SizedBox(width: 8),
           Expanded(

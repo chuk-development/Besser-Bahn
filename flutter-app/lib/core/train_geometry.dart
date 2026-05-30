@@ -30,15 +30,36 @@ class TrainGeometry {
     final v = [for (final p in pts) f.xy(p)];
     final n = v.length;
 
-    // Unit normal at each vertex (perpendicular to the local tangent), kept on
-    // a consistent side so the body doesn't twist along gentle curves.
-    final normals = <math.Point<double>>[];
-    for (var i = 0; i < n; i++) {
-      final prev = v[i == 0 ? 0 : i - 1];
-      final next = v[i == n - 1 ? n - 1 : i + 1];
-      final t = _norm(next - prev);
-      normals.add(math.Point(-t.y, t.x));
+    // Per-segment unit directions (skip zero-length segments by carrying the
+    // last good one), then a per-vertex tangent = mean of its two adjacent
+    // segment dirs. This stays well-defined even where slice() drops an
+    // interpolated boundary point right next to a real vertex — a naive
+    // next-minus-prev there collapses to ~0 and kicks the body sideways.
+    final segDir = <math.Point<double>>[];
+    var lastDir = const math.Point<double>(1, 0);
+    for (var i = 0; i < n - 1; i++) {
+      final d = v[i + 1] - v[i];
+      if (d.magnitude > 1e-6) lastDir = _norm(d);
+      segDir.add(lastDir);
     }
+    // Back-fill any leading zero segments with the first good direction.
+    for (var i = segDir.length - 2; i >= 0; i--) {
+      if ((v[i + 1] - v[i]).magnitude <= 1e-6) segDir[i] = segDir[i + 1];
+    }
+
+    math.Point<double> tangentAt(int i) {
+      if (i == 0) return segDir.first;
+      if (i >= n - 1) return segDir.last;
+      return _norm(segDir[i - 1] + segDir[i]);
+    }
+
+    final normals = [
+      for (var i = 0; i < n; i++)
+        () {
+          final t = tangentAt(i);
+          return math.Point(-t.y, t.x);
+        }()
+    ];
 
     final left = [for (var i = 0; i < n; i++) v[i] + normals[i] * halfWidthM];
     final right = [for (var i = 0; i < n; i++) v[i] - normals[i] * halfWidthM];
@@ -46,14 +67,14 @@ class TrainGeometry {
     final ring = <math.Point<double>>[];
     ring.addAll(left); // start-left … end-left
     if (noseEnd && noseLenM > 0) {
-      final outward = _norm(v[n - 1] - v[n - 2]);
-      ring.addAll(_arc(v[n - 1], normals[n - 1], outward, halfWidthM, noseLenM,
+      ring.addAll(_arc(v[n - 1], normals[n - 1], segDir.last, halfWidthM,
+          noseLenM,
           plusToMinus: true));
     }
     ring.addAll(right.reversed); // end-right … start-right
     if (noseStart && noseLenM > 0) {
-      final outward = _norm(v[0] - v[1]);
-      ring.addAll(_arc(v[0], normals[0], outward, halfWidthM, noseLenM,
+      ring.addAll(_arc(v[0], normals[0], segDir.first * -1.0, halfWidthM,
+          noseLenM,
           plusToMinus: false));
     }
     return [for (final p in ring) f.ll(p)];
@@ -109,6 +130,26 @@ class TrainGeometry {
     }
     out.add(at(endM));
     return [for (final p in out) f.ll(p)];
+  }
+
+  /// The point at arc-length [distM] (clamped) along [path] — for placing a
+  /// label (e.g. a wagon number) at a car's centre on the route.
+  static LatLng pointAt(List<LatLng> path, double distM) {
+    final pts = _dedupe(path);
+    if (pts.isEmpty) return const LatLng(0, 0);
+    if (pts.length < 2) return pts.first;
+    final f = _Frame(pts.first.latitude);
+    final v = [for (final q in pts) f.xy(q)];
+    var cum = 0.0;
+    for (var i = 0; i < v.length - 1; i++) {
+      final len = (v[i + 1] - v[i]).magnitude;
+      if (distM <= cum + len) {
+        final t = len > 0 ? (distM - cum) / len : 0.0;
+        return f.ll(v[i] + (v[i + 1] - v[i]) * t.clamp(0.0, 1.0));
+      }
+      cum += len;
+    }
+    return pts.last;
   }
 
   /// Arc-length (metres from the path start) of the point on [path] nearest to
