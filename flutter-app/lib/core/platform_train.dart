@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:latlong2/latlong.dart';
 
+import '../core/app_log.dart';
 import '../models/coach_sequence.dart';
 import '../models/station_map.dart';
 import 'train_dimensions.dart';
@@ -316,17 +317,35 @@ List<({List<LatLng> outline, Coach coach, bool boarding})> platformTrainCars(
   ({String start, String end})? section,
   required CoachSequence cs,
 }) {
+  // Every early-out logs WHY there's no train at this Gleis — the diagnostic
+  // for "stop X shows no train": which guard rejected it (no matching platform
+  // POI / no coach positions / too few sector cubes / too few sector anchors).
+  String why(String r) {
+    AppLog.log('platformTrainCars "${map.slug}" Gleis $gleis: $r', tag: 'train');
+    return r;
+  }
+
   final plat = _platformForGleis(map, gleis);
-  if (plat == null) return const [];
+  if (plat == null) {
+    why('no PLATFORM poi matches Gleis '
+        '(have: ${map.platforms.map((p) => normalizeGleis(p.name)).toSet().join(",")})');
+    return const [];
+  }
 
   final coaches = cs.allCoaches
       .where(
           (c) => c.platformPosition != null && c.platformPosition!.length > 0)
       .toList();
-  if (coaches.isEmpty) return const [];
+  if (coaches.isEmpty) {
+    why('Wagenreihung has no coach platformPositions');
+    return const [];
+  }
 
   final island = resolveIsland(map, plat, gleis, 0, 8);
-  if (island.cubes.length < 2) return const [];
+  if (island.cubes.length < 2) {
+    why('island resolved <2 sector cubes (got ${island.cubes.length})');
+    return const [];
+  }
   final cubeByIdx = {for (final c in island.cubes) c.idx: c.pos};
 
   // (offset metres → LatLng) anchors from sectors present as real cubes.
@@ -338,7 +357,12 @@ List<({List<LatLng> outline, Coach coach, bool boarding})> platformTrainCars(
     if (pos == null) continue;
     anchors.add((off: (s.start + s.end) / 2, pos: pos));
   }
-  if (anchors.length < 2) return const [];
+  if (anchors.length < 2) {
+    why('<2 sector→cube anchors '
+        '(Wagenreihung sectors: ${cs.platform.sectors.map((s) => s.name).join(",")}; '
+        'resolved cube letters: ${island.cubes.map((c) => String.fromCharCode(65 + c.idx)).join(",")})');
+    return const [];
+  }
 
   final lat0 = anchors.map((a) => a.pos.latitude).reduce((x, y) => x + y) /
       anchors.length;

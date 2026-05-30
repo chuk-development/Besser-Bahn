@@ -114,5 +114,21 @@ class TileCache {
         userAgentPackageName: 'de.chuk.besserebahn',
         tileProvider: provider(),
         maxZoom: 20,
+        // A missing tile (cache miss + no/slow connection) makes FMTC throw a
+        // FMTCBrowsingError per tile. flutter_map's default handler dumps EACH
+        // one to the console → the endless red error block the user saw. Swallow
+        // it (log once, throttled) and drop the failed tile so it can retry.
+        evictErrorTileStrategy: EvictErrorTileStrategy.notVisible,
+        errorTileCallback: (_, error, _) => _logTileError(error),
       );
+
+  /// Last tile-error message + when, so a burst of identical FMTC misses logs
+  /// once instead of thousands of times (one line, not an endless block).
+  static String? _lastTileError;
+  static void _logTileError(Object error) {
+    final msg = error.toString().split('\n').first;
+    if (msg == _lastTileError) return;
+    _lastTileError = msg;
+    AppLog.log('tile load failed (suppressing repeats): $msg', tag: 'map');
+  }
 }

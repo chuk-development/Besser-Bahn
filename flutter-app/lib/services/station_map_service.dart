@@ -173,6 +173,7 @@ class StationMapService {
     // and a plain-data StationMap back, both isolate-sendable.
     try {
       final map = await compute(_parseInIsolate, _ParseInput(slug, res.body));
+      _logParsed(slug, 'rsc', map);
       _cache[slug] = map;
       return map;
     } on StationMapException {
@@ -194,9 +195,24 @@ class StationMapService {
             '(HTTP ${html.statusCode}).');
       }
       final map = await compute(_parseInIsolate, _ParseInput(slug, html.body));
+      _logParsed(slug, 'html', map);
       _cache[slug] = map;
       return map;
     }
+  }
+
+  /// One-line summary of what a parsed station map actually contains — the key
+  /// diagnostic when a stop "has no train": it tells you at a glance whether the
+  /// scrape found platforms (Gleise), sector cubes (A/B/C…) and lift/escalator
+  /// anchors, or came back empty. `platformTrainCars` needs platforms + ≥2
+  /// sector cubes; anchors only help disambiguate multi-island stations.
+  void _logParsed(String slug, String via, StationMap map) {
+    final cubes = map.pois.where((p) => p.isPlatformSector).length;
+    AppLog.log(
+        'map "$slug" parsed ($via): ${map.platforms.length} platforms, '
+        '$cubes sector-cubes, ${map.platformAnchors.length} anchors, '
+        '${map.levels.length} levels',
+        tag: 'map');
   }
 
   /// Resolve a DB station name to a bahnhof.de slug.
