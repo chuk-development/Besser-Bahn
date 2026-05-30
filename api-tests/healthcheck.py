@@ -568,15 +568,47 @@ def check_vendo_train_polyline() -> str:
 
 
 def check_bahnhof_map() -> str:
+    """Indoor station map, fetched the way the app now does it: ask bahnhof.de
+    for the RAW RSC flight stream (`RSC: 1` header → `text/x-component`) instead
+    of the full HTML page. That stream is ~15-20 % smaller AND not wrapped in
+    `self.__next_f.push([...])` chunks, so the app feeds it straight to the poi
+    parser (skipping the expensive chunk reassembly) on a background isolate.
+
+    We assert the stream still carries everything StationMapService parses:
+    the `poi` object, PLATFORM (Gleis) + PLATFORM_SECTOR_CUBE (A-I sectors)
+    categories, the elevator/escalator anchor arrays, and levels/levelInit.
+    The HTML document remains the app's fallback; we also confirm it still works.
+    """
+    rsc_headers = {**_browser_headers(), "Accept": "*/*", "RSC": "1"}
     r = requests.get("https://www.bahnhof.de/hamburg-hbf/karte",
-                     headers=_browser_headers(), timeout=TIMEOUT)
+                     headers=rsc_headers, timeout=TIMEOUT)
     r.raise_for_status()
-    html = r.text
-    if '"poi":{"' not in html and '"poi\\":{\\"' not in html:
-        raise CheckError("no embedded poi object in RSC stream")
-    if "PLATFORM" not in html:
-        raise CheckError("no PLATFORM (Gleis) category in map data")
-    return "RSC contains poi object with PLATFORM category"
+    ct = r.headers.get("content-type", "")
+    if "x-component" not in ct:
+        raise CheckError(f"RSC fetch did not return a flight stream (ct={ct})")
+    stream = r.text
+    # The flight stream must NOT be HTML-wrapped — that's the whole point.
+    if "self.__next_f.push" in stream:
+        raise CheckError("RSC fetch returned HTML-wrapped chunks, not a raw "
+                         "flight stream (app's fast path would no longer apply)")
+    if '"poi":{"' not in stream:
+        raise CheckError("no embedded poi object in RSC flight stream")
+    for cat in ('"PLATFORM"', "PLATFORM_SECTOR_CUBE"):
+        if cat not in stream:
+            raise CheckError(f"RSC stream missing {cat} category")
+    if '"elevator":[' not in stream and '"escalator":[' not in stream:
+        raise CheckError("RSC stream missing elevator/escalator anchor arrays")
+    if '"levelInit"' not in stream:
+        raise CheckError("RSC stream missing levelInit")
+
+    # HTML fallback must still embed the poi data too.
+    h = requests.get("https://www.bahnhof.de/hamburg-hbf/karte",
+                     headers=_browser_headers(), timeout=TIMEOUT)
+    h.raise_for_status()
+    if '"poi\\":{\\"' not in h.text and '"poi":{"' not in h.text:
+        raise CheckError("HTML fallback no longer embeds the poi object")
+    return (f"RSC flight stream ok ({len(stream)//1024} KB, "
+            f"poi+PLATFORM+SECTOR_CUBE+anchors); HTML fallback intact")
 
 
 def check_bay_departure_link() -> str:
