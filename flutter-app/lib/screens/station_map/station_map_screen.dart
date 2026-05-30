@@ -3,7 +3,6 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../../core/tile_cache.dart';
 import '../../core/train_dimensions.dart';
 import '../../models/coach_sequence.dart';
 import '../../models/station.dart';
@@ -12,6 +11,7 @@ import '../../providers/service_providers.dart';
 import '../../providers/station_map_provider.dart';
 import '../../services/location_service.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/app_map.dart';
 import '../../widgets/bay_departures_sheet.dart';
 import '../../widgets/app_menu_button.dart';
 import '../../widgets/embedded_action_bar.dart';
@@ -329,50 +329,21 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
 
     return Stack(
       children: [
-        FlutterMap(
-          mapController: _mapController,
-          options: MapOptions(
-            initialCenter: map.center,
-            initialZoom: 17.5,
-            minZoom: 13,
-            maxZoom: 20,
-            // Tapping empty map dismisses the inline POI card.
-            onTap: (_, __) {
-              if (_selectedPoi != null) setState(() => _selectedPoi = null);
-            },
-          ),
+        AppMap(
+          controller: _mapController,
+          initialCenter: map.center,
+          initialZoom: 17.5,
+          minZoom: 13,
+          maxZoom: 20,
+          // Indoor floor plan for the selected floor (building outline, platform
+          // halls, track geometry) — swapped in place when the floor changes.
+          indoorLevel: state.selectedLevel,
+          dbAttribution: true,
+          // Tapping empty map dismisses the inline POI card.
+          onTap: (_, _) {
+            if (_selectedPoi != null) setState(() => _selectedPoi = null);
+          },
           children: [
-            // Clean, low-clutter light base map (CartoDB Positron): streets
-            // and place labels only, no shop/restaurant POIs competing with
-            // our station markers. Free, no API key.
-            TileCache.outdoorLayer(),
-            // Real Deutsche Bahn indoor floor plan for the selected floor —
-            // the actual building outline, platform halls and track geometry,
-            // straight from the tile service bahnhof.de itself renders. The
-            // `ValueKey(level)` forces a fresh layer (and tile fetch) whenever
-            // the user switches floors. Tiles are 512px retina for a logical
-            // 256 tileSize, so we render at 256 and let flutter_map upscale.
-            if (state.selectedLevel != null &&
-                state.selectedLevel!.isNotEmpty)
-              TileLayer(
-                // No ValueKey on the level: keep ONE persistent layer and just
-                // swap urlTemplate when the floor changes. flutter_map updates
-                // the tiles in place and Flutter's image cache keeps already-
-                // fetched floors in memory, so re-visiting a floor is instant
-                // (no flash, no re-download) while the page stays open.
-                urlTemplate: StationMap.indoorTileUrl(state.selectedLevel!),
-                tileSize: 256,
-                minNativeZoom: 14,
-                maxNativeZoom: 18,
-                maxZoom: 20,
-                tileProvider: TileCache.provider(
-                  headers: {'Referer': 'https://www.bahnhof.de/'},
-                ),
-                userAgentPackageName: 'de.chuk.besserebahn',
-                // Indoor tiles only cover the station; missing tiles
-                // elsewhere should just be transparent, not error pins.
-                errorTileCallback: (_, __, ___) {},
-              ),
             // Section band stroke — ONLY as a fallback when we couldn't draw the
             // actual train (no Wagenreihung / no cubes). When the train is
             // drawn the thick stroke is redundant, so it's dropped.
@@ -436,46 +407,8 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
               MarkerLayer(markers: _roleTagMarkers(state)),
             // "Mein Standort": the direction line to the target, the GPS
             // accuracy circle, and the blue dot — drawn on top of the POIs.
-            if (_userFix != null) ...[
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: [_userFix!.latLng, _targetFor(map)],
-                    color: AppColors.dbBlue.withAlpha(180),
-                    strokeWidth: 4,
-                    pattern: StrokePattern.dotted(),
-                  ),
-                ],
-              ),
-              CircleLayer(
-                circles: [
-                  CircleMarker(
-                    point: _userFix!.latLng,
-                    radius: _userFix!.accuracy,
-                    useRadiusInMeter: true,
-                    color: AppColors.dbBlue.withAlpha(30),
-                    borderColor: AppColors.dbBlue.withAlpha(90),
-                    borderStrokeWidth: 1,
-                  ),
-                ],
-              ),
-              MarkerLayer(markers: [_userMarker(_userFix!.latLng)]),
-            ],
-            const Scalebar(
-              alignment: Alignment.bottomRight,
-              padding: EdgeInsets.only(right: 12, bottom: 20),
-            ),
-            const RichAttributionWidget(
-              alignment: AttributionAlignment.bottomLeft,
-              // The default flutter_map logo is a package asset that isn't
-              // bundled → it spams "Unable to load AssetManifest.bin". Disable.
-              showFlutterMapAttribution: false,
-              attributions: [
-                TextSourceAttribution('© OpenStreetMap'),
-                TextSourceAttribution('© OpenMapTiles'),
-                TextSourceAttribution('Bahnhofsplan © DB InfraGO'),
-              ],
-            ),
+            if (_userFix != null)
+              ...mapLocateLayers(fix: _userFix!, target: _targetFor(map)),
           ],
         ),
         Positioned(
@@ -506,17 +439,9 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
         Positioned(
           right: 8,
           top: 8,
-          child: FloatingActionButton.small(
-            heroTag: 'locate-me',
-            tooltip: 'Mein Standort',
-            onPressed: _locating ? null : () => _locateMe(map),
-            child: _locating
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.my_location),
+          child: MapLocateButton(
+            busy: _locating,
+            onPressed: () => _locateMe(map),
           ),
         ),
         // How far you still have to walk to the target.
@@ -710,22 +635,6 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
       const Distance().as(LengthUnit.Meter, _userFix!.latLng, _targetFor(map));
 
   /// The classic "blue dot" for the user's own position.
-  Marker _userMarker(LatLng pos) => Marker(
-        point: pos,
-        width: 22,
-        height: 22,
-        child: Container(
-          decoration: BoxDecoration(
-            color: AppColors.dbBlue,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 3),
-            boxShadow: const [
-              BoxShadow(color: Colors.black26, blurRadius: 4, spreadRadius: 1),
-            ],
-          ),
-        ),
-      );
-
   void _showBayDepartures(MapPoi poi, Station station) {
     showModalBottomSheet(
       context: context,
@@ -1480,40 +1389,12 @@ class _FallbackLocationMapState extends ConsumerState<_FallbackLocationMap> {
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        FlutterMap(
-          mapController: _mapController,
-          options: MapOptions(
-            initialCenter: _target,
-            initialZoom: 16.5,
-            minZoom: 10,
-            maxZoom: 19,
-          ),
+        AppMap(
+          controller: _mapController,
+          initialCenter: _target,
+          initialZoom: 16.5,
+          minZoom: 10,
           children: [
-            TileCache.outdoorLayer(),
-            if (_userFix != null) ...[
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: [_userFix!.latLng, _target],
-                    color: AppColors.dbBlue.withAlpha(180),
-                    strokeWidth: 4,
-                    pattern: StrokePattern.dotted(),
-                  ),
-                ],
-              ),
-              CircleLayer(
-                circles: [
-                  CircleMarker(
-                    point: _userFix!.latLng,
-                    radius: _userFix!.accuracy,
-                    useRadiusInMeter: true,
-                    color: AppColors.dbBlue.withAlpha(30),
-                    borderColor: AppColors.dbBlue.withAlpha(90),
-                    borderStrokeWidth: 1,
-                  ),
-                ],
-              ),
-            ],
             MarkerLayer(
               markers: [
                 // The stop itself — a labelled DB-red location pin.
@@ -1550,35 +1431,10 @@ class _FallbackLocationMapState extends ConsumerState<_FallbackLocationMap> {
                     ],
                   ),
                 ),
-                if (_userFix != null)
-                  Marker(
-                    point: _userFix!.latLng,
-                    width: 22,
-                    height: 22,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: AppColors.dbBlue,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 3),
-                        boxShadow: const [
-                          BoxShadow(
-                              color: Colors.black26,
-                              blurRadius: 4,
-                              spreadRadius: 1),
-                        ],
-                      ),
-                    ),
-                  ),
               ],
             ),
-            const RichAttributionWidget(
-              alignment: AttributionAlignment.bottomLeft,
-              showFlutterMapAttribution: false,
-              attributions: [
-                TextSourceAttribution('© OpenStreetMap'),
-                TextSourceAttribution('© OpenMapTiles'),
-              ],
-            ),
+            if (_userFix != null)
+              ...mapLocateLayers(fix: _userFix!, target: _target),
           ],
         ),
         // Tell the rider this is a location fallback, not the full plan.
@@ -1614,17 +1470,10 @@ class _FallbackLocationMapState extends ConsumerState<_FallbackLocationMap> {
         Positioned(
           right: 8,
           top: 60,
-          child: FloatingActionButton.small(
+          child: MapLocateButton(
+            busy: _locating,
+            onPressed: _locateMe,
             heroTag: 'locate-me-fallback',
-            tooltip: 'Mein Standort',
-            onPressed: _locating ? null : _locateMe,
-            child: _locating
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.my_location),
           ),
         ),
         if (_userFix != null)

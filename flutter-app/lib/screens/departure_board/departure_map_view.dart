@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/tile_cache.dart';
 import '../../models/departure.dart';
 import '../../models/station.dart';
 import '../../models/station_map.dart';
 import '../../providers/departure_board_provider.dart';
 import '../../providers/service_providers.dart';
+import '../../widgets/app_map.dart';
 import '../../widgets/bay_departures_sheet.dart';
 
 /// Live station map for one station name, fetched once and cached. Keyed by the
@@ -81,39 +81,16 @@ class _DepartureMapViewState extends ConsumerState<DepartureMapView> {
 
     return Stack(
       children: [
-        FlutterMap(
-          mapController: _mapController,
-          options: MapOptions(
-            initialCenter: map.center,
-            initialZoom: 17.5,
-            minZoom: 13,
-            maxZoom: 19,
-          ),
+        AppMap(
+          controller: _mapController,
+          initialCenter: map.center,
+          initialZoom: 17.5,
+          minZoom: 13,
+          maxZoom: 20,
+          indoorLevel: level,
+          dbAttribution: true,
           children: [
-            TileCache.outdoorLayer(),
-            if (level.isNotEmpty)
-              TileLayer(
-                urlTemplate: StationMap.indoorTileUrl(level),
-                tileSize: 256,
-                minNativeZoom: 14,
-                maxNativeZoom: 18,
-                maxZoom: 20,
-                tileProvider: TileCache.provider(
-                  headers: {'Referer': 'https://www.bahnhof.de/'},
-                ),
-                userAgentPackageName: 'de.chuk.besserebahn',
-                errorTileCallback: (_, __, ___) {},
-              ),
             MarkerLayer(markers: _markers(context, pois, station, departures)),
-            const RichAttributionWidget(
-              alignment: AttributionAlignment.bottomLeft,
-              showFlutterMapAttribution: false,
-              attributions: [
-                TextSourceAttribution('© OpenStreetMap'),
-                TextSourceAttribution('© OpenMapTiles'),
-                TextSourceAttribution('Bahnhofsplan © DB InfraGO'),
-              ],
-            ),
           ],
         ),
         Positioned(

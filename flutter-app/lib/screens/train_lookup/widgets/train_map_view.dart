@@ -6,13 +6,13 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../../../core/tile_cache.dart';
 import '../../../core/train_dimensions.dart';
 import '../../../core/train_geometry.dart';
 import '../../../models/coach_sequence.dart';
 import '../../../models/trip.dart';
 import '../../../providers/service_providers.dart';
 import '../../../theme/app_colors.dart';
+import '../../../widgets/app_map.dart';
 
 /// Open the full-screen, fully interactive route map for [trip]. Pass the
 /// [coachSequence] when known so the live train is drawn to its real length.
@@ -111,28 +111,13 @@ class TrainMap extends StatelessWidget {
         ? trip.polyline!.map((p) => LatLng(p['lat']!, p['lng']!)).toList()
         : points;
 
-    return FlutterMap(
-      options: MapOptions(
-        initialCameraFit: CameraFit.bounds(
-          bounds: LatLngBounds.fromPoints(points),
-          padding: const EdgeInsets.all(40),
-        ),
-        interactionOptions: InteractionOptions(
-          flags: interactive
-              ? (InteractiveFlag.all & ~InteractiveFlag.rotate)
-              : InteractiveFlag.none,
-        ),
+    return AppMap(
+      interactive: interactive,
+      initialCameraFit: CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(points),
+        padding: const EdgeInsets.all(40),
       ),
       children: [
-        TileCache.outdoorLayer(),
-        const RichAttributionWidget(
-          alignment: AttributionAlignment.bottomLeft,
-          showFlutterMapAttribution: false,
-          attributions: [
-            TextSourceAttribution('© OpenStreetMap'),
-            TextSourceAttribution('© OpenMapTiles'),
-          ],
-        ),
         PolylineLayer(
           polylines: [
             Polyline(
@@ -162,10 +147,6 @@ class TrainMap extends StatelessWidget {
         // The live train: a top-down body that hugs the rails and slides
         // continuously (its own per-frame ticker) instead of jumping.
         _LiveTrain(trip: trip, route: routePoints, coachSequence: coachSequence),
-        const Scalebar(
-          alignment: Alignment.bottomRight,
-          padding: EdgeInsets.only(right: 12, bottom: 20),
-        ),
       ],
     );
   }
