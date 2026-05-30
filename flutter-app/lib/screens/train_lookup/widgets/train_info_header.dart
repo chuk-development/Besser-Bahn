@@ -32,6 +32,12 @@ class TrainInfoHeader extends StatelessWidget {
   /// screen, where there's no journey context to score a single leg against.
   final Widget? predictionStrip;
 
+  /// EVA / name of the stop the rider boards/alights at on this leg, passed
+  /// through to the route map so it dims only the boarding stop's non-boarding
+  /// portion. Null on a standalone train lookup → the map dims nothing.
+  final String? boardingId;
+  final String? alightingId;
+
   const TrainInfoHeader({
     super.key,
     required this.trip,
@@ -40,6 +46,8 @@ class TrainInfoHeader extends StatelessWidget {
     this.embedded = false,
     this.padding,
     this.predictionStrip,
+    this.boardingId,
+    this.alightingId,
   });
 
   @override
@@ -86,8 +94,10 @@ class TrainInfoHeader extends StatelessWidget {
                     icon: const Icon(Icons.map_outlined),
                     tooltip: 'Streckenverlauf',
                     visualDensity: VisualDensity.compact,
-                    onPressed: () =>
-                        openTrainMap(context, trip, coachSequence: coachSequence),
+                    onPressed: () => openTrainMap(context, trip,
+                        coachSequence: coachSequence,
+                        boardingId: boardingId,
+                        alightingId: alightingId),
                   ),
                 if (action != null) ...[
                   const SizedBox(width: 4),

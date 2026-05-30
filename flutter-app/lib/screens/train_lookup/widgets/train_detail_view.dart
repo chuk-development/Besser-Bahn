@@ -101,6 +101,10 @@ class _TrainDetailViewState extends ConsumerState<TrainDetailView> {
             embedded: true,
             padding: isLeg ? EdgeInsets.zero : null,
             predictionStrip: isLeg ? widget.predictionStrip : null,
+            // Only a real leg passes board/alight, so the route map dims the
+            // boarding portion at the boarding stop; standalone lookup → null.
+            boardingId: widget.boardingId,
+            alightingId: widget.alightingId,
           ),
           trainExtra: trainExtra,
           boardingBanner: splitBanner,

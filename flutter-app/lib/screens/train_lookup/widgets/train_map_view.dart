@@ -17,12 +17,18 @@ import '../../../theme/app_colors.dart';
 import '../../../widgets/app_map.dart';
 
 /// Open the full-screen, fully interactive route map for [trip]. Pass the
-/// [coachSequence] when known so the live train is drawn to its real length.
+/// [coachSequence] when known so the live train is drawn to its real length,
+/// and [boardingId]/[alightingId] on a journey leg so the parked train at the
+/// boarding stop dims its non-boarding portion (standalone lookup → no dimming).
 void openTrainMap(BuildContext context, Trip trip,
-    {CoachSequence? coachSequence}) {
+    {CoachSequence? coachSequence, String? boardingId, String? alightingId}) {
   Navigator.of(context).push(
     MaterialPageRoute(
-        builder: (_) => TrainMapView(trip: trip, coachSequence: coachSequence)),
+        builder: (_) => TrainMapView(
+            trip: trip,
+            coachSequence: coachSequence,
+            boardingId: boardingId,
+            alightingId: alightingId)),
   );
 }
 
@@ -32,7 +38,17 @@ class TrainMapView extends ConsumerStatefulWidget {
   final Trip trip;
   final CoachSequence? coachSequence;
 
-  const TrainMapView({super.key, required this.trip, this.coachSequence});
+  /// EVA / name of the stop the rider boards/alights at on this leg. Null on a
+  /// standalone train lookup — then no parked train dims its boarding portion.
+  final String? boardingId;
+  final String? alightingId;
+
+  const TrainMapView(
+      {super.key,
+      required this.trip,
+      this.coachSequence,
+      this.boardingId,
+      this.alightingId});
 
   @override
   ConsumerState<TrainMapView> createState() => _TrainMapViewState();
@@ -104,6 +120,8 @@ class _TrainMapViewState extends ConsumerState<TrainMapView> {
           ? TrainMap(
               trip: _trip,
               coachSequence: widget.coachSequence,
+              boardingId: widget.boardingId,
+              alightingId: widget.alightingId,
               interactive: true)
           : const Center(child: Text('Keine Streckendaten verfügbar.')),
     );
@@ -129,10 +147,17 @@ class TrainMap extends ConsumerStatefulWidget {
   final CoachSequence? coachSequence;
   final bool interactive;
 
+  /// EVA / name of the rider's boarding/alighting stop on this leg. Null on a
+  /// standalone train lookup — then no parked train dims its boarding portion.
+  final String? boardingId;
+  final String? alightingId;
+
   const TrainMap({
     super.key,
     required this.trip,
     this.coachSequence,
+    this.boardingId,
+    this.alightingId,
     this.interactive = true,
   });
 
@@ -149,18 +174,31 @@ class _TrainMapState extends ConsumerState<TrainMap> {
   final Set<int> _done = {};
 
   Timer? _poll;
+  int _pollAttempts = 0;
+
+  /// Hard ceiling on poll attempts (× 800 ms ≈ 2 min). The prefetch streams the
+  /// StationMaps in bounded windows (≤12 s each) plus the Wagenreihungen, so a
+  /// long route is warm well inside this. Without a ceiling, a stop whose map or
+  /// Wagenreihung never resolves (small stations often have neither) would keep
+  /// the timer polling forever while the screen is open — bounded to the screen
+  /// lifetime, but wasteful. We stop once everything resolved OR this ceiling.
+  static const _maxPollAttempts = 150;
 
   @override
   void initState() {
     super.initState();
     // The prefetch streams the per-stop StationMaps + Wagenreihungen in over a
-    // few seconds; poll the warm caches a handful of times and build each stop's
-    // static parked train as its data arrives, then stop. This is the ONLY
-    // place the parked geometry is computed — it never runs per frame.
+    // few seconds; poll the warm caches and build each stop's static parked
+    // train as its data arrives, then stop. This is the ONLY place the parked
+    // geometry is computed — it never runs per frame.
     _refreshParked();
     _poll = Timer.periodic(const Duration(milliseconds: 800), (t) {
       _refreshParked();
-      if (_done.length >= widget.trip.stopovers.length) t.cancel();
+      _pollAttempts++;
+      if (_done.length >= widget.trip.stopovers.length ||
+          _pollAttempts >= _maxPollAttempts) {
+        t.cancel();
+      }
     });
   }
 
@@ -215,13 +253,18 @@ class _TrainMapState extends ConsumerState<TrainMap> {
     if (changed && mounted) setState(() {});
   }
 
-  /// The stop the rider boards at (first stop with a departure), or -1.
+  /// The stop the rider boards at, resolved from the leg's [boardingId] (EVA,
+  /// then name). -1 on a standalone train lookup (no boardingId) — so no stop's
+  /// parked train dims; the whole standing train is shown lit at every stop.
   int get _boardingIndex {
+    final id = widget.boardingId;
+    if (id == null || id.isEmpty) return -1;
     final stops = widget.trip.stopovers;
     for (var i = 0; i < stops.length; i++) {
-      if (stops[i].departure != null || stops[i].plannedDeparture != null) {
-        return i;
-      }
+      if (stops[i].stop.id == id) return i;
+    }
+    for (var i = 0; i < stops.length; i++) {
+      if (stops[i].stop.name == id) return i;
     }
     return -1;
   }
@@ -316,11 +359,15 @@ class _TrainMapState extends ConsumerState<TrainMap> {
         // live train), so they don't clutter the overview.
         if (parkedCars.isNotEmpty) _ParkedNumbers(cars: parkedCars),
         // The live train: a top-down body that hugs the rails and slides
-        // continuously (its own throttled ticker) instead of jumping.
+        // continuously (its own throttled ticker) instead of jumping. While it
+        // dwells at a stop that already has a parked train standing on its
+        // platform, it hides — the parked train IS the train there, so the two
+        // don't stack/flicker on the same spot.
         _LiveTrain(
             trip: trip,
             route: routePoints,
-            coachSequence: widget.coachSequence),
+            coachSequence: widget.coachSequence,
+            parkedStops: _parked.keys.toSet()),
       ],
     );
   }
@@ -342,9 +389,19 @@ class _ParkedNumbers extends StatelessWidget {
     final markers = <Marker>[];
     for (final car in cars) {
       if (car.coach.wagonNumber <= 0 || car.outline.length < 3) continue;
+      // Cheap early-out for the overview zoom (where every car is a speck and
+      // all of these get rejected): the body's two long ends sit at the start
+      // of the ring and just past its half — project only those and skip the
+      // full O(n²) span scan unless that one span is already near the
+      // threshold. Avoids projecting every ring point of every car per camera
+      // frame across a whole multi-stop route.
+      final ring = car.outline;
+      final a = cam.latLngToScreenOffset(ring.first);
+      final b = cam.latLngToScreenOffset(ring[ring.length ~/ 2]);
+      if ((a - b).distance < 18) continue;
       // Car width on screen: the longest screen span between ring points. Show
       // the number only when it comfortably fits (≈ a zoomed-in platform).
-      final pts = [for (final p in car.outline) cam.latLngToScreenOffset(p)];
+      final pts = [for (final p in ring) cam.latLngToScreenOffset(p)];
       var maxSpan = 0.0;
       for (var i = 0; i < pts.length; i++) {
         for (var j = i + 1; j < pts.length; j++) {
@@ -408,8 +465,16 @@ class _LiveTrain extends StatefulWidget {
   final List<LatLng> route;
   final CoachSequence? coachSequence;
 
+  /// Stop indices (into [trip].stopovers) that have a parked train drawn on
+  /// their platform. The live train hides while dwelling at one of these, so it
+  /// doesn't stack on top of the identical parked train.
+  final Set<int> parkedStops;
+
   const _LiveTrain(
-      {required this.trip, required this.route, this.coachSequence});
+      {required this.trip,
+      required this.route,
+      this.coachSequence,
+      this.parkedStops = const {}});
 
   @override
   State<_LiveTrain> createState() => _LiveTrainState();
@@ -476,20 +541,32 @@ class _LiveTrainState extends State<_LiveTrain>
 
   /// Where the train's head is right now: the live-interpolated position while
   /// running, else the platform it's dwelling at, else nothing.
+  ///
+  /// While dwelling at a stop that already has a parked train on its platform,
+  /// this returns null: the parked train shows the train there, so the live
+  /// body steps aside instead of stacking on the exact same spot (which would
+  /// double-draw / flicker as the throttle toggles it).
   LatLng? _head() {
     final pos = widget.trip.estimatedPosition;
     if (pos != null) return LatLng(pos.latitude, pos.longitude);
     // Dwelling at a stop (arrived, not yet departed) → sit on that platform.
     final now = DateTime.now();
     Stopover? at;
-    for (final s in widget.trip.stopovers) {
+    var atIndex = -1;
+    final stops = widget.trip.stopovers;
+    for (var i = 0; i < stops.length; i++) {
+      final s = stops[i];
       final arr = s.arrival ?? s.departure;
       if (arr != null && !arr.isAfter(now)) {
         final dep = s.departure ?? s.arrival;
-        if (dep == null || dep.isAfter(now)) at = s;
+        if (dep == null || dep.isAfter(now)) {
+          at = s;
+          atIndex = i;
+        }
       }
     }
-    if (at != null && at.stop.hasLocation) {
+    if (at != null && !widget.parkedStops.contains(atIndex) &&
+        at.stop.hasLocation) {
       return LatLng(at.stop.latitude!, at.stop.longitude!);
     }
     return null;
