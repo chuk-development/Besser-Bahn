@@ -14,6 +14,7 @@ import '../../../core/train_geometry.dart';
 import '../../../models/coach_sequence.dart';
 import '../../../models/trip.dart';
 import '../../../providers/service_providers.dart';
+import '../../../services/station_map_service.dart' show StationMapException;
 import '../../../theme/app_colors.dart';
 import '../../../widgets/app_map.dart';
 
@@ -176,18 +177,9 @@ class _TrainMapState extends ConsumerState<TrainMap> {
   @override
   void initState() {
     super.initState();
-    // Warm just the rider's boarding stop (ONE request, deferred so it doesn't
-    // race the initial tiles) so their own platform train is ready the moment
-    // they zoom in. Every other stop loads lazily, only when zoomed into view.
-    final b = _boardingIndex;
-    if (b >= 0) {
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted && _requested.add(b)) {
-          _queue.add(b);
-          _drainQueue();
-        }
-      });
-    }
+    // Pure lazy: NOTHING is fetched at open. A stop's platform map loads only
+    // when the rider zooms it into view (see _onCamera), so opening the route
+    // map fires zero scrapes and never competes with the initial tile load.
   }
 
   @override
@@ -245,18 +237,26 @@ class _TrainMapState extends ConsumerState<TrainMap> {
       }
       if (!mounted) break;
       var failed = false;
+      var permanent = false;
       try {
         await mapSvc.fetchByStationName(s.stop.name, background: true);
+      } on StationMapException catch (e) {
+        failed = true;
+        permanent = !e.transient; // 404 / no map data → never retry
       } catch (_) {
         failed = true;
       }
       if (!mounted) break;
-      AppLog.log('${failed ? "✗" : "✓"} ${s.stop.name} ${sw.elapsedMilliseconds}ms',
+      AppLog.log(
+          '${failed ? (permanent ? "∅" : "✗") : "✓"} ${s.stop.name} '
+          '${sw.elapsedMilliseconds}ms',
           tag: 'route');
-      if (failed) {
-        _requested.remove(i); // allow a retry if the rider re-visits this stop
-      } else {
+      if (!failed) {
         _buildParked(i);
+      } else if (permanent) {
+        _done.add(i); // this station has no map — settled, don't ever retry
+      } else {
+        _requested.remove(i); // transient (timeout) → retry if revisited
       }
     }
     _draining = false;

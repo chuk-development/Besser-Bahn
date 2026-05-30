@@ -130,9 +130,24 @@ PlatformLine? fitLine(List<math.Point<double>> pts) {
   );
 
   final level = plat.level ?? '';
-  final cubes =
-      map.poisOnLevel(level).where((p) => p.isPlatformSector).toList();
-  if (cubes.isEmpty) return empty;
+  var cubes = map.poisOnLevel(level).where((p) => p.isPlatformSector).toList();
+  // Some stations (e.g. Neumünster) carry the Gleis label on a concourse level
+  // while the actual platform SECTOR_CUBE markers live on the track level — so
+  // the platform's own level has no cubes. Fall back to wherever the cubes
+  // actually are (the level with the most of them = the track level), so we
+  // still place the train instead of giving up with "<2 cubes".
+  if (cubes.length < 2) {
+    final byLevel = <String, List<MapPoi>>{};
+    for (final p in map.pois.where((p) => p.isPlatformSector)) {
+      (byLevel[p.level ?? ''] ??= []).add(p);
+    }
+    if (byLevel.isNotEmpty) {
+      final best = byLevel.entries
+          .reduce((a, b) => b.value.length > a.value.length ? b : a);
+      cubes = best.value;
+    }
+  }
+  if (cubes.length < 2) return empty;
 
   // Planar metres around the floor (equirectangular).
   final lat0 =

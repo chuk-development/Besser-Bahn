@@ -61,18 +61,47 @@ class TileCache {
     }
   }
 
-  /// A caching tile provider when the cache is up, else a plain network one.
+  /// A caching tile provider when the cache is up, else a plain network one,
+  /// wrapped in a circuit breaker (see [_BreakerTileProvider]).
   /// [headers] is forwarded (e.g. the `Referer` the indoor tiles require).
   static TileProvider provider({Map<String, String>? headers}) {
-    if (_ready) {
-      return FMTCTileProvider(
-        stores: const {_store: BrowseStoreStrategy.readUpdateCreate},
-        loadingStrategy: BrowseLoadingStrategy.cacheFirst,
-        cachedValidDuration: const Duration(days: 30),
-        headers: headers,
-      );
+    final TileProvider inner = _ready
+        ? FMTCTileProvider(
+            stores: const {_store: BrowseStoreStrategy.readUpdateCreate},
+            loadingStrategy: BrowseLoadingStrategy.cacheFirst,
+            cachedValidDuration: const Duration(days: 30),
+            headers: headers,
+          )
+        : NetworkTileProvider(headers: headers ?? const {});
+    return _BreakerTileProvider(inner);
+  }
+
+  // --- Circuit breaker -------------------------------------------------------
+  // When a tile host goes unreachable, flutter_map/FMTC re-request the missing
+  // tiles relentlessly (thousands/sec was observed), saturating the connection
+  // and janking the whole app — even starving unrelated API calls. The breaker
+  // trips after a short burst of failures and then serves a transparent tile
+  // instantly (no network) for a cooldown, so the storm can't form. It probes
+  // again after the cooldown, so the map recovers on its own once the host is
+  // back.
+  static int _failCount = 0;
+  static DateTime _windowStart = DateTime.fromMillisecondsSinceEpoch(0);
+  static DateTime _blockUntil = DateTime.fromMillisecondsSinceEpoch(0);
+
+  static bool get tilesBlocked => DateTime.now().isBefore(_blockUntil);
+
+  static void noteTileFailure() {
+    final now = DateTime.now();
+    if (now.difference(_windowStart).inSeconds >= 2) {
+      _windowStart = now;
+      _failCount = 0;
     }
-    return NetworkTileProvider(headers: headers ?? const {});
+    _failCount++;
+    if (_failCount >= 24) {
+      _blockUntil = now.add(const Duration(seconds: 8));
+      _failCount = 0;
+      AppLog.log('tile host unreachable → pausing tile fetches 8s', tag: 'tiles');
+    }
   }
 
   /// OpenFreeMap "Positron" — the clean light-grey Positron look the user likes,
@@ -152,9 +181,27 @@ class TileCache {
         // Show a transparent tile on failure so the error never reaches the
         // console at all (no red FMTCBrowsingError dump).
         errorImage: MemoryImage(_transparentTile),
-        // Counted-collapse: identical failures fold into "… (×N)" instead of an
-        // endless wall (see AppLog.logCollapsed). The global FlutterError filter
-        // catches the framework-reported variant too.
-        errorTileCallback: (_, error, _) => AppLog.tileError(error.toString()),
+        // Feed the circuit breaker + the quiet [tiles] timeline.
+        errorTileCallback: (_, error, _) {
+          noteTileFailure();
+          AppLog.tileError(error.toString());
+        },
       );
+}
+
+/// Wraps a tile provider with [TileCache]'s circuit breaker: while tripped
+/// (a tile host is hammering-unreachable) it serves a transparent tile instantly
+/// instead of hitting the network, so a dead host can't saturate the connection.
+class _BreakerTileProvider extends TileProvider {
+  final TileProvider _inner;
+  _BreakerTileProvider(this._inner);
+
+  @override
+  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
+    if (TileCache.tilesBlocked) return MemoryImage(_transparentTile);
+    return _inner.getImage(coordinates, options);
+  }
+
+  @override
+  void dispose() => _inner.dispose();
 }

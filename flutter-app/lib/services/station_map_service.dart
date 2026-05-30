@@ -143,9 +143,20 @@ class StationMapService {
   /// Fetch the indoor map for a bahnhof.de slug (e.g. `hamburg-hbf`).
   /// [background] = a best-effort prefetch: shorter timeout so a slow stop
   /// fails fast instead of holding a connection for the full foreground budget.
+  /// Slugs known to have NO usable map (404 or no poi data). Static so the
+  /// verdict survives across map opens this session — once we learn a small
+  /// halt has no platform plan, we never scrape it again (instant fail, no
+  /// network), instead of retrying it every time the rider pans over it.
+  static final Set<String> _noMap = {};
+
   Future<StationMap> fetchBySlug(String slug, {bool background = false}) async {
     final hit = _cache[slug];
     if (hit != null) return hit;
+    if (_noMap.contains(slug)) {
+      // Already known to have no map — fail instantly, no network.
+      throw StationMapException('Bahnhof "$slug" hat keine Karte.',
+          transient: false);
+    }
     final uri = Uri.parse('https://www.bahnhof.de/$slug/karte');
     // 8s in background: a slow-but-reachable stop (Kiel needed ~8s on a
     // congested connection) should still succeed, not get cut at 5s and show no
@@ -161,8 +172,11 @@ class StationMapService {
               'Zeitüberschreitung beim Laden der Karte für "$slug".'),
         );
     if (res.statusCode != 200) {
-      throw StationMapException('Bahnhof "$slug" nicht gefunden '
-          '(HTTP ${res.statusCode}).');
+      // 404 etc. = this station has no /karte page. Permanent, remember it.
+      _noMap.add(slug);
+      throw StationMapException(
+          'Bahnhof "$slug" nicht gefunden (HTTP ${res.statusCode}).',
+          transient: false);
     }
 
     // Parse off the UI isolate — a ~190 KB blob's regex/balance scan would
@@ -188,15 +202,26 @@ class StationMapService {
                 'Zeitüberschreitung beim Laden der Karte für "$slug".'),
           );
       if (html.statusCode != 200) {
-        throw StationMapException('Bahnhof "$slug" nicht gefunden '
-            '(HTTP ${html.statusCode}).');
+        _noMap.add(slug);
+        throw StationMapException(
+            'Bahnhof "$slug" nicht gefunden (HTTP ${html.statusCode}).',
+            transient: false);
       }
-      final map = await compute(_parseInIsolate, _ParseInput(slug, html.body));
-      if (!background) {
-        _logParsed(slug, 'html', map, sw.elapsedMilliseconds, html.bodyBytes.length);
+      try {
+        final map = await compute(_parseInIsolate, _ParseInput(slug, html.body));
+        if (!background) {
+          _logParsed(
+              slug, 'html', map, sw.elapsedMilliseconds, html.bodyBytes.length);
+        }
+        _cache[slug] = map;
+        return map;
+      } on StationMapException {
+        // No poi in the HTML either → this station genuinely has no map data.
+        _noMap.add(slug);
+        throw StationMapException(
+            'Für "$slug" sind keine Kartendaten verfügbar.',
+            transient: false);
       }
-      _cache[slug] = map;
-      return map;
     }
   }
 
@@ -462,7 +487,14 @@ Map<String, dynamic>? _extractPoiObject(String blob) {
 
 class StationMapException implements Exception {
   final String message;
-  StationMapException(this.message);
+
+  /// Whether retrying could help. `true` for timeout / network blips (worth a
+  /// retry when the rider revisits the stop); `false` for a permanent verdict —
+  /// the station simply has no map (404 / no poi data), so we must NOT keep
+  /// trying to fetch it forever.
+  final bool transient;
+
+  StationMapException(this.message, {this.transient = true});
   @override
   String toString() => message;
 }
