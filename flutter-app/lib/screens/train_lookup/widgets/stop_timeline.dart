@@ -260,65 +260,41 @@ class _StopTimelineState extends State<StopTimeline> {
     );
   }
 
-  /// Continuous position of the live train as an index into the stop list:
-  /// `i + f` means it's a fraction `f` along the segment leaving stop `i`; a
-  /// whole `i` means it's standing at stop `i`. Drives the progress line.
-  ///
-  /// Anchored to the REAL (delayed) times and, crucially, robust to missing
-  /// intermediate times: if no single segment matches (a late stop often has a
-  /// null departure), we map the overall elapsed-time fraction of the whole ride
-  /// onto the stop axis instead of snapping to 100%. So 2 minutes before a
-  /// 1h39 arrival reads as ~98% — a tiny sliver left — not a full bar.
-  double _trainPos() {
-    final stops = widget.stopovers;
-    if (stops.length < 2) return 0;
-    final now = DateTime.now();
-    final firstDep = stops.first.departure ??
-        stops.first.plannedDeparture ??
-        stops.first.arrival;
-    final lastArr = stops.last.arrival ??
-        stops.last.plannedArrival ??
-        stops.last.departure;
-    if (firstDep != null && now.isBefore(firstDep)) return 0;
-    if (lastArr != null && !now.isBefore(lastArr)) {
-      return (stops.length - 1).toDouble(); // genuinely arrived
-    }
-    DateTime? dep(Stopover s) =>
-        s.departure ?? s.plannedDeparture ?? s.arrival ?? s.plannedArrival;
-    DateTime? arr(Stopover s) =>
-        s.arrival ?? s.plannedArrival ?? s.departure ?? s.plannedDeparture;
-    for (var i = 0; i < stops.length - 1; i++) {
-      final d = dep(stops[i]);
-      final a = arr(stops[i + 1]);
-      if (d == null || a == null) continue;
-      if (now.isBefore(d)) return i.toDouble(); // dwelling at stop i
-      if (now.isBefore(a)) {
-        final total = a.difference(d).inSeconds;
-        final el = now.difference(d).inSeconds;
-        return i + (total > 0 ? (el / total).clamp(0.0, 1.0) : 0.0);
-      }
-    }
-    // No segment matched (missing intermediate times): map the whole-ride
-    // elapsed-time fraction onto the stop axis — robust and time-proportional.
-    if (firstDep != null && lastArr != null) {
-      final total = lastArr.difference(firstDep).inSeconds;
-      if (total > 0) {
-        final f = (now.difference(firstDep).inSeconds / total).clamp(0.0, 1.0);
-        return f * (stops.length - 1);
-      }
-    }
-    return (stops.length - 1).toDouble();
+  // Real-or-planned times at a stop (departure-biased / arrival-biased).
+  DateTime? _depAt(int i) {
+    final s = widget.stopovers[i];
+    return s.departure ?? s.plannedDeparture ?? s.arrival ?? s.plannedArrival;
+  }
+
+  DateTime? _arrAt(int i) {
+    final s = widget.stopovers[i];
+    return s.arrival ?? s.plannedArrival ?? s.departure ?? s.plannedDeparture;
+  }
+
+  /// True once the live train has reached stop [i] (by its real/planned time).
+  bool _reachedStop(int i) {
+    final t = _arrAt(i);
+    return t != null && !DateTime.now().isBefore(t);
+  }
+
+  /// Elapsed-time fill (0…1) of the segment LEAVING stop [i] → fully filled once
+  /// the train is past stop i+1, partial while in it, empty before. Time-based,
+  /// so a row's fill and the surrounding elements line up into one rail.
+  double _segFill(int i) {
+    final a = _depAt(i), b = _arrAt(i + 1);
+    if (a == null || b == null) return 0;
+    final total = b.difference(a).inSeconds;
+    if (total <= 0) return DateTime.now().isBefore(b) ? 0 : 1;
+    return (DateTime.now().difference(a).inSeconds / total).clamp(0.0, 1.0);
   }
 
   /// Progress fill (0…1) for the leg's middle block. Collapsed, the block is
   /// ONE fixed-height element standing for the whole board→alight ride, so it
   /// fills by the ride's elapsed-TIME fraction — 2 min before a 1h39 arrival is
   /// a ~2% sliver, exactly what the rider expects. Expanded, it's only the
-  /// board→first-intermediate connector (the per-stop rows carry the rest).
-  double _blockFill(int board, int alight) {
-    if (_expandedMiddle) return (_trainPos() - board).clamp(0.0, 1.0);
-    return _rideTimeFraction(board, alight);
-  }
+  /// board→first-intermediate connector, so it fills by that one segment.
+  double _blockFill(int board, int alight) =>
+      _expandedMiddle ? _segFill(board) : _rideTimeFraction(board, alight);
 
   /// Elapsed-time fraction of the board→alight ride (real times, planned
   /// fallback), independent of how many stops lie between.
@@ -360,15 +336,17 @@ class _StopTimelineState extends State<StopTimeline> {
     final isEndpoint = i == board || i == alight;
     final isLeg = widget.boardingId != null || widget.alightingId != null;
     final isBoard = isLeg && i == board;
-    final pos = _trainPos();
     return InkWell(
       onTap: widget.onStopTap == null ? null : () => widget.onStopTap!(s),
       child: _StopRow(
         stopover: s,
         hasTop: hasTop,
         hasBottom: hasBottom,
-        dotReached: pos >= i - 1e-6,
-        belowFill: (pos - i).clamp(0.0, 1.0),
+        // Time-based, so every stacked element (this row, the train-card block,
+        // the next row) shares ONE basis and the fill flows continuously
+        // through all of them instead of stopping at each boundary.
+        dotReached: _reachedStop(i),
+        belowFill: _segFill(i),
         emphasize: isEndpoint,
         // The alight endpoint shows YOUR arrival as its one time, not the
         // train's onward departure; board/intermediate are departure-first.

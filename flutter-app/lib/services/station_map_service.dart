@@ -43,12 +43,16 @@ class StationMapService {
   /// ("Köln Hbf" -> `koeln-hbf`), but a few are irregular ("Berlin Hbf" ->
   /// `berlin-hauptbahnhof`, not `berlin-hbf`). We try the obvious slug first,
   /// then swap `hbf` <-> `hauptbahnhof` as a fallback.
-  Future<StationMap> fetchByStationName(String name) async {
+  Future<StationMap> fetchByStationName(String name,
+      {bool background = false}) async {
     final slug = slugify(name);
     AppLog.log('fetchByStationName "$name" → slug "$slug"', tag: 'map');
     try {
-      return await fetchBySlug(slug);
+      return await fetchBySlug(slug, background: background);
     } on StationMapException catch (e) {
+      // Background prefetch is best-effort: don't pay a SECOND timeout on the
+      // alt slug (that's what turned one slow stop into a ~30 s hang).
+      if (background) rethrow;
       final alt = _altSlug(slug);
       if (alt != null) {
         AppLog.log('slug "$slug" failed ($e) → retry alt slug "$alt"',
@@ -79,25 +83,19 @@ class StationMapService {
       final slug = slugify(s);
       if (seen.add(slug)) todo.add(s);
     }
-    const window = 4; // concurrent in-flight fetches
-    for (var i = 0; i < todo.length; i += window) {
-      final batch = todo.skip(i).take(window);
-      await Future.wait([
-        for (final name in batch)
-          fetchByStationName(name).catchError((_) => _emptyMap(name)),
-      ]);
+    // SEQUENTIAL, one ~230 KB scrape at a time with a gentle gap — firing a
+    // burst (the old window of 4) janked the UI and made bahnhof.de time out en
+    // masse on a long route. Background mode uses a short timeout and skips the
+    // alt-slug retry, so a dead stop costs ~7 s once, not ~30 s, and never
+    // blocks the map (this whole method is fire-and-forget).
+    for (final name in todo) {
+      if (_cache.containsKey(slugify(name))) continue;
+      try {
+        await fetchByStationName(name, background: true);
+      } catch (_) {/* missing map → just no parked train there */}
+      await Future.delayed(const Duration(milliseconds: 150));
     }
   }
-
-  /// A placeholder map used only so a failed prefetch resolves instead of
-  /// throwing — never cached, so a real load can still succeed later.
-  StationMap _emptyMap(String name) => StationMap(
-        slug: slugify(name),
-        center: const LatLng(51.0, 10.0),
-        levels: const [],
-        levelInit: '',
-        pois: const [],
-      );
 
   /// hbf <-> hauptbahnhof slug variant, or null if not applicable.
   static String? _altSlug(String slug) {
@@ -111,7 +109,9 @@ class StationMapService {
   }
 
   /// Fetch the indoor map for a bahnhof.de slug (e.g. `hamburg-hbf`).
-  Future<StationMap> fetchBySlug(String slug) async {
+  /// [background] = a best-effort prefetch: shorter timeout so a slow stop
+  /// fails fast instead of holding a connection for the full foreground budget.
+  Future<StationMap> fetchBySlug(String slug, {bool background = false}) async {
     final hit = _cache[slug];
     if (hit != null) {
       AppLog.log('map cache hit "$slug" (instant)', tag: 'map');
@@ -123,7 +123,7 @@ class StationMapService {
     final res = await AppLog.timed(
       'GET $uri',
       () => _client.get(uri, headers: _headers).timeout(
-            const Duration(seconds: 12),
+            Duration(seconds: background ? 7 : 12),
             onTimeout: () => throw StationMapException(
                 'Zeitüberschreitung beim Laden der Karte für "$slug".'),
           ),
