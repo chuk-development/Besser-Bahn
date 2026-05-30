@@ -7,6 +7,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../../core/app_log.dart';
 import '../../../core/platform_train.dart' as pt;
 import '../../../core/train_dimensions.dart';
 import '../../../core/train_geometry.dart';
@@ -110,10 +111,15 @@ class _TrainMapViewState extends ConsumerState<TrainMapView> {
       });
     }
 
-    var done = 0;
+    AppLog.log('route prefetch start: ${order.length} stops '
+        '($eager priority)', tag: 'route');
+    final overall = Stopwatch()..start();
+    var done = 0, ok = 0, slowest = 0;
+    String slowStop = '';
     for (final i in order) {
       if (!mounted) return;
       final s = stops[i];
+      final sw = Stopwatch()..start();
       // 1) Wagenreihung for this stop (cheap JSON; null on S-Bahn/bus etc.).
       if (line.fahrtNr.isNotEmpty) {
         await coachSvc.getCoachSequenceForDeparture(
@@ -126,10 +132,25 @@ class _TrainMapViewState extends ConsumerState<TrainMapView> {
       if (!mounted) return;
       // 2) Station map for this stop (heavy ~230 KB scrape) — background mode:
       // short timeout, no alt-slug retry, failures swallowed.
+      var failed = false;
       try {
         await mapSvc.fetchByStationName(s.stop.name, background: true);
-      } catch (_) {/* missing map → just no parked train there */}
+        ok++;
+      } catch (_) {
+        failed = true; // missing map → just no parked train there
+      }
       if (!mounted) return;
+      final ms = sw.elapsedMilliseconds;
+      if (ms > slowest) {
+        slowest = ms;
+        slowStop = s.stop.name;
+      }
+      // Surface only the SLOW or failed stops individually — that's the "why is
+      // it lahm" signal — without a line per stop flooding the log.
+      if (ms > 1500 || failed) {
+        AppLog.log('  ${failed ? "✗" : "slow"} ${s.stop.name}: ${ms}ms',
+            tag: 'route');
+      }
       done++;
       // Drive the bar through the priority window, then hide it and keep going.
       if (done <= eager) {
@@ -137,6 +158,9 @@ class _TrainMapViewState extends ConsumerState<TrainMapView> {
         if (done == eager) setState(() => _prefetching = false);
       }
     }
+    AppLog.log('route prefetch done: $ok/${order.length} maps in '
+        '${overall.elapsedMilliseconds}ms, slowest "$slowStop" ${slowest}ms',
+        tag: 'route');
     if (mounted && _prefetching) setState(() => _prefetching = false);
   }
 
@@ -173,13 +197,19 @@ class _TrainMapViewState extends ConsumerState<TrainMapView> {
 
   Future<void> _loadPolyline() async {
     if (_trip.polyline != null && _trip.polyline!.isNotEmpty) return;
+    final sw = Stopwatch()..start();
     try {
       final poly =
           await ref.read(hafasServiceProvider).fetchRoutePolyline(_trip);
+      AppLog.log('route polyline ${poly?.length ?? 0} pts in '
+          '${sw.elapsedMilliseconds}ms', tag: 'route');
       if (poly != null && poly.isNotEmpty && mounted) {
         setState(() => _trip = _trip.copyWith(polyline: poly));
       }
-    } catch (_) {/* keep straight-line fallback */}
+    } catch (e) {
+      AppLog.log('route polyline FAILED after ${sw.elapsedMilliseconds}ms ($e)',
+          tag: 'route');
+    }
   }
 
   @override

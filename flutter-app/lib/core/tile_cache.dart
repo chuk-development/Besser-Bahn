@@ -1,9 +1,23 @@
+import 'dart:typed_data';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'package:vector_map_tiles/vector_map_tiles.dart';
 
 import 'app_log.dart';
+
+/// A 1×1 fully transparent PNG, shown in place of a tile that fails to load so
+/// flutter_map renders it silently instead of bubbling the error up to the
+/// console (belt-and-suspenders with the errorTileCallback + global filter).
+final Uint8List _transparentTile = Uint8List.fromList(const [
+  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, //
+  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+  0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+  0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+  0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+]);
 
 /// Persistent on-disk cache for map tiles (FMTC / ObjectBox backend).
 ///
@@ -76,12 +90,22 @@ class TileCache {
   static Future<Style>? _styleFuture;
   static Style? _style; // resolved style, cached so later maps skip the fetch
 
-  static Future<Style> _loadStyle() =>
-      _styleFuture ??= StyleReader(uri: _styleUri).read().then((s) {
-        _style = s;
-        AppLog.log('vector basemap style loaded ($_styleUri)', tag: 'map');
-        return s;
-      });
+  static Future<Style> _loadStyle() {
+    final sw = Stopwatch()..start();
+    return _styleFuture ??= StyleReader(uri: _styleUri).read().then((s) {
+      _style = s;
+      AppLog.log('vector basemap style loaded in ${sw.elapsedMilliseconds}ms',
+          tag: 'map');
+      return s;
+    }).catchError((e) {
+      // The vector style failing = the map shows the CARTO raster fallback (or
+      // nothing offline). A frequent cause of "the map is blank / lahm", so log
+      // it loudly instead of swallowing.
+      AppLog.log('vector basemap style FAILED after ${sw.elapsedMilliseconds}ms '
+          '($e) → raster fallback', tag: 'map');
+      throw e;
+    });
+  }
 
   /// The shared outdoor base layer. Used by every outdoor map (route, departures,
   /// station fallback) so the style/source lives in one place. Renders the
@@ -119,6 +143,9 @@ class TileCache {
         // one to the console → the endless red error block the user saw. Swallow
         // it (log once, throttled) and drop the failed tile so it can retry.
         evictErrorTileStrategy: EvictErrorTileStrategy.notVisible,
+        // Show a transparent tile on failure so the error never reaches the
+        // console at all (no red FMTCBrowsingError dump).
+        errorImage: MemoryImage(_transparentTile),
         // Counted-collapse: identical failures fold into "… (×N)" instead of an
         // endless wall (see AppLog.logCollapsed). The global FlutterError filter
         // catches the framework-reported variant too.

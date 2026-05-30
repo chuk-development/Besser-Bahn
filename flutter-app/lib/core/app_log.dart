@@ -51,7 +51,11 @@ class AppLog {
   /// our per-layer `errorTileCallback`), so the only place to catch them all is
   /// here. Without this a flaky/offline connection floods the console with the
   /// identical FMTCBrowsingError, drowning out everything useful.
+  static bool _installed = false;
   static void installErrorCollapsing() {
+    if (_installed) return;
+    _installed = true;
+
     final prev = FlutterError.onError;
     FlutterError.onError = (details) {
       final ex = details.exceptionAsString();
@@ -63,6 +67,36 @@ class AppLog {
         return;
       }
       (prev ?? FlutterError.presentError)(details);
+    };
+
+    // Catch-all for the CONSOLE: anything printed (flutter_map tile errors,
+    // framework dumps, plugins) goes through `debugPrint`. We wrap it so a run
+    // of the IDENTICAL line collapses into the first print + a periodic count,
+    // instead of an endless identical wall that buries everything and can't be
+    // scrolled past. AppLog's own lines carry a millisecond timestamp so they're
+    // never identical back-to-back → they print normally.
+    final original = debugPrint;
+    String? last;
+    var count = 0;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message == null) {
+        original(null, wrapWidth: wrapWidth);
+        return;
+      }
+      if (message == last) {
+        count++;
+        if (count == 3 || count == 10 || count == 50 || count % 200 == 0) {
+          original('  ⤷ (same line ×$count)', wrapWidth: wrapWidth);
+        }
+        return;
+      }
+      if (count > 1) {
+        original('  ⤷ previous line repeated ×$count total',
+            wrapWidth: wrapWidth);
+      }
+      last = message;
+      count = 1;
+      original(message, wrapWidth: wrapWidth);
     };
   }
 
