@@ -316,23 +316,6 @@ class _NosePainter extends CustomPainter {
         ..strokeWidth = 1.4
         ..color = Colors.black.withValues(alpha: 0.30),
     );
-
-    // Slanted windscreen following the nose sweep.
-    final windscreen = Path()
-      ..moveTo(0.30 * w, 0.14 * h)
-      ..lineTo(0.44 * w, 0.14 * h)
-      ..lineTo(0.20 * w, 0.46 * h)
-      ..lineTo(0.12 * w, 0.42 * h)
-      ..close();
-    canvas.drawPath(
-        windscreen, Paint()..color = Colors.black.withValues(alpha: 0.42));
-
-    // A thin side window band along the body.
-    final band = RRect.fromRectAndRadius(
-      Rect.fromLTWH(0.50 * w, 0.30 * h, 0.40 * w, 0.20 * h),
-      const Radius.circular(2),
-    );
-    canvas.drawRRect(band, Paint()..color = Colors.black.withValues(alpha: 0.28));
   }
 
   @override
