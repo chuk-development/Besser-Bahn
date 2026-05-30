@@ -101,7 +101,7 @@ class PlatformTrackView extends StatelessWidget {
     // overhang their platform slot on the outer side. A high-speed train (ICE)
     // gets a long aerodynamic nose; a regional train a short, blunt cab.
     final highSpeed = _isHighSpeed(sequence);
-    final overhang = carHeight * (highSpeed ? 0.75 : 0.32);
+    final overhang = carHeight * (highSpeed ? 0.95 : 0.7);
     final leadPad = overhang + 2;
 
     double px(double u) => (u - ds) * scale + leadPad;
@@ -309,36 +309,41 @@ bool _isHighSpeed(CoachSequence s) {
   return false;
 }
 
-/// Fraction of an end car's width taken by the snout (rest is the full-height
-/// body that carries the number). ICE = long nose, regional = short blunt cab.
-double _noseFracFor(bool highSpeed) => highSpeed ? 0.60 : 0.34;
+/// Horizontal length (px) of the snout part of an end car; the rest is the
+/// full-height body that carries the number.
+double _snoutPx(double w, double h, bool highSpeed) =>
+    highSpeed ? 0.62 * w : math.min(h, 0.6 * w);
 
 /// Outline of an end car, built with the nose at the LEFT (front); the rear car
-/// mirrors it. ICE: a long, smooth convex nose dropping to a low rounded tip
-/// (like the ICE 4). Regional: a blunt cab — short rounded top corner, then a
-/// near-vertical front straight down.
+/// mirrors it. ICE: a long nose converging to a SHARP but rounded point at mid
+/// height. Regional: the front is a single quarter-circle from the roof down to
+/// the underframe.
 Path _endCarPath(Size size, {required bool front, required bool highSpeed}) {
   final w = size.width, h = size.height;
-  final nf = _noseFracFor(highSpeed) * w; // snout length in px
+  final nf = _snoutPx(w, h, highSpeed); // snout length in px
   final Path p;
   if (highSpeed) {
     p = Path()
-      ..moveTo(0.10 * nf, h) // bottom, just behind the tip
+      ..moveTo(0.16 * nf, h) // belly base behind the tip
       ..lineTo(w, h) // flat underframe to the inner end
       ..lineTo(w, 0) // full-height inner (coupling) edge
-      ..lineTo(0.80 * nf, 0) // short flat roof, then the long convex sweep…
-      ..cubicTo(0.46 * nf, 0, 0.16 * nf, 0.12 * h, 0.05 * nf, 0.44 * h)
-      // …down to a low, rounded nose tip and belly
-      ..cubicTo(0, 0.58 * h, 0, 0.78 * h, 0.10 * nf, h)
+      ..lineTo(0.82 * nf, 0) // short flat roof, then the long sweep…
+      ..cubicTo(0.40 * nf, 0, 0.06 * nf, 0.24 * h, 0, 0.46 * h)
+      // …to a sharp but rounded tip at the very front, mid height
+      ..quadraticBezierTo(0, 0.50 * h, 0, 0.54 * h)
+      ..cubicTo(0.06 * nf, 0.76 * h, 0.16 * nf, 0.94 * h, 0.16 * nf, h)
       ..close();
   } else {
+    // A quarter-circle front: flat roof to (r,0), then a 90° arc (cubic with
+    // kappa) bulging out to the bottom-front (0,h).
+    final r = nf;
+    const k = 0.5523;
     p = Path()
-      ..moveTo(0.06 * nf, h) // bottom front (near-vertical face)
-      ..lineTo(w, h) // flat underframe to the inner end
-      ..lineTo(w, 0) // full-height inner (coupling) edge
-      ..lineTo(0.34 * nf, 0) // roof to the front-top
-      ..quadraticBezierTo(0.02 * nf, 0, 0, 0.26 * h) // short rounded top corner
-      ..lineTo(0.06 * nf, h) // straight near-vertical front to the bottom
+      ..moveTo(0, h) // bottom-front
+      ..lineTo(w, h) // underframe to the inner end
+      ..lineTo(w, 0) // full-height inner edge
+      ..lineTo(r, 0) // roof to the top of the arc
+      ..cubicTo(r * (1 - k), 0, 0, h * (1 - k), 0, h) // quarter circle
       ..close();
   }
   if (front) return p;
@@ -385,7 +390,7 @@ class _TrackEndCar extends StatelessWidget {
     final fg = AppColors.onClass(accent);
     final canSelect = selectable && !coach.isLocomotive && coach.wagonNumber > 0;
     final compact = height < 50;
-    final bodyW = width * (1 - _noseFracFor(highSpeed)) * 0.96;
+    final bodyW = (width - _snoutPx(width, height, highSpeed)) * 0.96;
 
     final content = Align(
       alignment: front ? Alignment.centerRight : Alignment.centerLeft,
