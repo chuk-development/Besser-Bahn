@@ -45,6 +45,7 @@ class LiveTripTracker extends Notifier<LiveTripState>
   Timer? _timer;
   bool _foreground = true;
   bool _polling = false;
+  bool _disposed = false;
 
   /// Last value we alerted per category, so a steady delay doesn't re-ping
   /// every 30 s — only a *change* does.
@@ -54,6 +55,7 @@ class LiveTripTracker extends Notifier<LiveTripState>
   LiveTripState build() {
     WidgetsBinding.instance.addObserver(this);
     ref.onDispose(() {
+      _disposed = true;
       WidgetsBinding.instance.removeObserver(this);
       _timer?.cancel();
     });
@@ -62,7 +64,13 @@ class LiveTripTracker extends Notifier<LiveTripState>
     ref.listen(libraryProvider, (prev, next) => _evaluate());
     ref.listen(settingsProvider.select((s) => s.remindersEnabled),
         (prev, next) => _evaluate());
-    _evaluate();
+    // Defer the first evaluation: it reads `state`, which isn't valid until
+    // this build() returns the initial value. Running it in a microtask lets
+    // the provider finish initialising first (else Riverpod throws "tried to
+    // read the state of an uninitialized provider" and the whole app crashes).
+    Future.microtask(() {
+      if (!_disposed) _evaluate();
+    });
     return const LiveTripState();
   }
 
