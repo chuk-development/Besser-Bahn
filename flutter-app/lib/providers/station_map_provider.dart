@@ -157,6 +157,10 @@ class StationMapState {
   /// platform. Null for a plain station lookup or an intermediate/transfer stop.
   final CoachSequence? coachSequence;
 
+  /// The train this map was opened for, e.g. "RE 7" — shown in the banner so
+  /// the map says which train it is. Null for a plain station lookup.
+  final String? trainLabel;
+
   final bool isLoading;
   final String? error;
 

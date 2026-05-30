@@ -101,7 +101,7 @@ class PlatformTrackView extends StatelessWidget {
     // overhang their platform slot on the outer side. A high-speed train (ICE)
     // gets a long aerodynamic nose; a regional train a short, blunt cab.
     final highSpeed = _isHighSpeed(sequence);
-    final overhang = carHeight * (highSpeed ? 0.95 : 0.7);
+    final overhang = carHeight * (highSpeed ? 1.15 : 0.7);
     final leadPad = overhang + 2;
 
     double px(double u) => (u - ds) * scale + leadPad;
@@ -312,7 +312,7 @@ bool _isHighSpeed(CoachSequence s) {
 /// Horizontal length (px) of the snout part of an end car; the rest is the
 /// full-height body that carries the number.
 double _snoutPx(double w, double h, bool highSpeed) =>
-    highSpeed ? 0.62 * w : math.min(h, 0.6 * w);
+    highSpeed ? 0.66 * w : math.min(h, 0.6 * w);
 
 /// Outline of an end car, built with the nose at the LEFT (front); the rear car
 /// mirrors it. ICE: a long nose converging to a SHARP but rounded point at mid
@@ -323,15 +323,16 @@ Path _endCarPath(Size size, {required bool front, required bool highSpeed}) {
   final nf = _snoutPx(w, h, highSpeed); // snout length in px
   final Path p;
   if (highSpeed) {
+    // No flat top: from where the nose starts it rounds off IMMEDIATELY,
+    // bowing far forward and well down the front, then a quick steep round at
+    // the bottom into the underframe — one continuous sweep top→front→bottom.
     p = Path()
-      ..moveTo(0.16 * nf, h) // belly base behind the tip
+      ..moveTo(0.30 * nf, h) // bottom, behind the rounded bottom
       ..lineTo(w, h) // flat underframe to the inner end
       ..lineTo(w, 0) // full-height inner (coupling) edge
-      ..lineTo(0.82 * nf, 0) // short flat roof, then the long sweep…
-      ..cubicTo(0.40 * nf, 0, 0.06 * nf, 0.24 * h, 0, 0.46 * h)
-      // …to a sharp but rounded tip at the very front, mid height
-      ..quadraticBezierTo(0, 0.50 * h, 0, 0.54 * h)
-      ..cubicTo(0.06 * nf, 0.76 * h, 0.16 * nf, 0.94 * h, 0.16 * nf, h)
+      ..lineTo(nf, 0) // body roof to where the NOSE starts
+      ..cubicTo(0.48 * nf, 0, 0, 0.16 * h, 0, 0.60 * h) // immediate round fwd+down
+      ..cubicTo(0, 0.85 * h, 0.12 * nf, h, 0.30 * nf, h) // quick steep bottom round
       ..close();
   } else {
     // A quarter-circle front: flat roof to (r,0), then a 90° arc (cubic with
