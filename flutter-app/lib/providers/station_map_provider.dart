@@ -327,8 +327,14 @@ class StationMapState {
     List<({int idx, LatLng pos})> cubes,
     double dLat,
     double dLon,
+    _Line? axis,
   }) _resolveIsland(MapPoi plat, String g, int startIdx, int endIdx) {
-    const empty = (cubes: <({int idx, LatLng pos})>[], dLat: 0.0, dLon: 0.0);
+    const empty = (
+      cubes: <({int idx, LatLng pos})>[],
+      dLat: 0.0,
+      dLon: 0.0,
+      axis: null,
+    );
     final m = map;
     if (m == null) return empty;
 
@@ -439,7 +445,13 @@ class StationMapState {
         dLat = ey / norm * shift / mlat;
       }
     }
-    return (cubes: out, dLat: dLat, dLon: dLon);
+    // The island's robust axis (fit through the lift/escalator anchors + this
+    // island's Gleis markers) is the platform's true direction — far steadier
+    // than fitting through the few resolved cubes, which can sit slightly off
+    // and tilt the train. Fall back to the cube fit only when no island axis.
+    final axis = (ourKey != null ? lines[ourKey] : null) ??
+        _fitLine([for (final c in out) xy(c.pos.latitude, c.pos.longitude)]);
+    return (cubes: out, dLat: dLat, dLon: dLon, axis: axis);
   }
 
   /// The boarding (Einstieg) train drawn to scale, top-down, on its platform.
@@ -501,9 +513,11 @@ class StationMapState {
         math.Point(a.pos.longitude * mlon, a.pos.latitude * mlat)
     ];
 
-    // Fit the platform's principal axis, then least-squares fit the anchors'
-    // metre offset → position-along-axis. Car offsets map straight onto it.
-    final line = _fitLine(ax);
+    // Use the platform island's robust axis (from anchors + Gleis markers); it
+    // gives the true platform direction so the train sits parallel to the track
+    // instead of tilting to the scatter of a few cubes. Then least-squares fit
+    // the anchors' metre offset → position-along-axis; cars map straight onto it.
+    final line = island.axis ?? _fitLine(ax);
     if (line == null) return const [];
     var sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
     final n = anchors.length;

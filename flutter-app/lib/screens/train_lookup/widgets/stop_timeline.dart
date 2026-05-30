@@ -363,7 +363,7 @@ class _StopTimelineState extends State<StopTimeline> {
       required VoidCallback onTap}) {
     final theme = Theme.of(context);
     final primary = theme.colorScheme.primary;
-    final lineColor = primary.withAlpha(60);
+    final lineColor = theme.colorScheme.outlineVariant;
     final amenities = widget.legAmenities;
     return InkWell(
       onTap: onTap,
@@ -481,7 +481,7 @@ class _StopTimelineState extends State<StopTimeline> {
       Widget? extra}) {
     final theme = Theme.of(context);
     final primary = theme.colorScheme.primary;
-    final lineColor = primary.withAlpha(60);
+    final lineColor = theme.colorScheme.outlineVariant;
     final amenities = widget.legAmenities;
     final expanded = _expandedMiddle;
 
@@ -704,9 +704,10 @@ class _StopRow extends StatelessWidget {
             // name row beside it — same offset on every row, big chip or not,
             // so the first dot, last dot and every name align identically.
             Builder(builder: (context) {
-              final faint = muted
-                  ? theme.colorScheme.outlineVariant
-                  : theme.colorScheme.primary.withAlpha(60);
+              // The not-yet-reached line must stay clearly visible (a solid
+              // muted track), not a near-invisible tint — otherwise the rail
+              // looks broken between a reached stop and the next.
+              final faint = theme.colorScheme.outlineVariant;
               final dotSize = emphasize ? 14.0 : 10.0;
               final topGap = _nameRowHeight / 2 - dotSize / 2;
               // The line ABOVE the dot belongs to the segment that arrives here;
