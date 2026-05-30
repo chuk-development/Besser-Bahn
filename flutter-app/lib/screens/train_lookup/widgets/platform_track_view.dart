@@ -98,7 +98,7 @@ class PlatformTrackView extends StatelessWidget {
 
     // A rounded loco-style snout sits at each end of the train, so leave room
     // for it on both sides and shift the whole layout right by one nose width.
-    final noseW = carHeight * 0.85;
+    final noseW = carHeight * 1.05;
     final leadPad = noseW + 2;
 
     double px(double u) => (u - ds) * scale + leadPad;
@@ -270,49 +270,73 @@ class _TrackPainter extends CustomPainter {
   bool shouldRepaint(covariant _TrackPainter old) => old.color != color;
 }
 
-/// A rounded loco snout for the end of the train — heavily rounded on the
-/// outer side (the "Schnauze"), flat against the first/last car.
+/// The ICE snout drawn as a SIDE-VIEW silhouette: a low, rounded nose tip up
+/// front, the roof sweeping up to full body height, a flat underframe and a
+/// small notch at the coupling (car) end — a wedge, like the sketch.
+/// [front] = nose points left (head of train); false mirrors it for the rear.
 class _TrackNose extends StatelessWidget {
   final bool front;
   const _TrackNose({required this.front});
 
   @override
-  Widget build(BuildContext context) {
-    const outer = Radius.circular(40);
-    const inner = Radius.circular(5);
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.locomotive,
-        borderRadius: front
-            ? BorderRadius.horizontal(left: outer, right: inner)
-            : BorderRadius.horizontal(left: inner, right: outer),
-        border: Border.all(
-            color: Colors.black.withValues(alpha: 0.25), width: 1.4),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // A slanted dark windscreen near the tip.
-          Align(
-            alignment: front ? Alignment.centerLeft : Alignment.centerRight,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Container(
-                width: 7,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.38),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-          ),
-          const Icon(Icons.train, color: Colors.white, size: 15),
-        ],
-      ),
+  Widget build(BuildContext context) => CustomPaint(painter: _NosePainter(front));
+}
+
+class _NosePainter extends CustomPainter {
+  final bool front;
+  const _NosePainter(this.front);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Built nose-left; mirror for the rear car so its tip points right.
+    if (!front) {
+      canvas.translate(size.width, 0);
+      canvas.scale(-1, 1);
+    }
+    final w = size.width, h = size.height;
+
+    final body = Path()
+      ..moveTo(0.12 * w, h) // bottom, just behind the nose tip
+      ..lineTo(w, h) // flat underframe to the car end
+      ..lineTo(w, 0.24 * h) // up the car-end edge (stop short for the notch)
+      ..lineTo(0.86 * w, 0.24 * h) // notch in…
+      ..lineTo(0.86 * w, 0.05 * h) // …and up to the roof
+      ..lineTo(0.72 * w, 0) // roof corner
+      // roof sweeps down to the low, rounded nose tip
+      ..cubicTo(0.42 * w, 0, 0.15 * w, 0.16 * h, 0.06 * w, 0.42 * h)
+      // belly curves back under the nose to the underframe
+      ..cubicTo(0, 0.56 * h, 0, 0.82 * h, 0.12 * w, h)
+      ..close();
+
+    canvas.drawPath(body, Paint()..color = AppColors.locomotive);
+    canvas.drawPath(
+      body,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4
+        ..color = Colors.black.withValues(alpha: 0.30),
     );
+
+    // Slanted windscreen following the nose sweep.
+    final windscreen = Path()
+      ..moveTo(0.30 * w, 0.14 * h)
+      ..lineTo(0.44 * w, 0.14 * h)
+      ..lineTo(0.20 * w, 0.46 * h)
+      ..lineTo(0.12 * w, 0.42 * h)
+      ..close();
+    canvas.drawPath(
+        windscreen, Paint()..color = Colors.black.withValues(alpha: 0.42));
+
+    // A thin side window band along the body.
+    final band = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0.50 * w, 0.30 * h, 0.40 * w, 0.20 * h),
+      const Radius.circular(2),
+    );
+    canvas.drawRRect(band, Paint()..color = Colors.black.withValues(alpha: 0.28));
   }
+
+  @override
+  bool shouldRepaint(covariant _NosePainter old) => old.front != front;
 }
 
 /// One car sized to fill its platform slot: class stripe, wagon number and a
