@@ -51,6 +51,19 @@ class AppLog {
   /// our per-layer `errorTileCallback`), so the only place to catch them all is
   /// here. Without this a flaky/offline connection floods the console with the
   /// identical FMTCBrowsingError, drowning out everything useful.
+  /// True for the noisy map-tile / tile-network errors we collapse (FMTC misses
+  /// plus the raw socket/host-lookup failures vector_map_tiles throws when a
+  /// tile host is unreachable). Kept narrow so real errors still surface.
+  static bool _isTileNoise(String s) =>
+      s.contains('FMTCBrowsingError') ||
+      s.contains('Failed to load the tile') ||
+      s.contains('openfreemap') ||
+      s.contains('cartocdn') ||
+      s.contains('Failed host lookup') ||
+      s.contains('Network is unreachable') ||
+      (s.contains('SocketException') && s.contains('tiles')) ||
+      s.contains('Connection failed');
+
   static bool _installed = false;
   static void installErrorCollapsing() {
     if (_installed) return;
@@ -59,14 +72,27 @@ class AppLog {
     final prev = FlutterError.onError;
     FlutterError.onError = (details) {
       final ex = details.exceptionAsString();
-      final isTile = details.library == 'image resource service' ||
-          ex.contains('FMTCBrowsingError') ||
-          ex.contains('Failed to load the tile');
-      if (isTile) {
+      if (_isTileNoise(ex)) {
         logCollapsed(ex.split('\n').first.trim(), tag: 'tiles');
         return;
       }
       (prev ?? FlutterError.presentError)(details);
+    };
+
+    // vector_map_tiles fetches its tiles in async gaps and lets network errors
+    // (Connection failed / Failed host lookup / Network unreachable) escape as
+    // UNHANDLED zone errors — they bypass FlutterError.onError AND debugPrint,
+    // so the Dart VM dumps each one with a full stack trace (the remaining
+    // wall). Catch them here, collapse to one counted line, and mark handled.
+    // Anything that isn't tile/network noise is passed through untouched.
+    final prevPlatform = PlatformDispatcher.instance.onError;
+    PlatformDispatcher.instance.onError = (error, stack) {
+      final s = error.toString();
+      if (_isTileNoise(s)) {
+        logCollapsed(s.split('\n').first.trim(), tag: 'tiles');
+        return true; // handled — don't dump the stack
+      }
+      return prevPlatform?.call(error, stack) ?? false;
     };
 
     // Catch-all for the CONSOLE: anything printed (flutter_map tile errors,

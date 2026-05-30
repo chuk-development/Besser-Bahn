@@ -92,7 +92,13 @@ class TileCache {
 
   static Future<Style> _loadStyle() {
     final sw = Stopwatch()..start();
-    return _styleFuture ??= StyleReader(uri: _styleUri).read().then((s) {
+    return _styleFuture ??= StyleReader(uri: _styleUri)
+        .read()
+        // Fail fast to the raster fallback if the vector style host is slow /
+        // unreachable, instead of blocking the map for 10 s+ (a normal device
+        // resolves this in 1-2 s, so the timeout only bites when offline).
+        .timeout(const Duration(seconds: 6))
+        .then((s) {
       _style = s;
       AppLog.log('vector basemap style loaded in ${sw.elapsedMilliseconds}ms',
           tag: 'map');
