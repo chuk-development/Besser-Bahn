@@ -258,6 +258,29 @@ class _StopTimelineState extends State<StopTimeline> {
     );
   }
 
+  /// Continuous position of the live train as an index into the stop list:
+  /// `i + f` means it's a fraction `f` along the segment leaving stop `i`; a
+  /// whole `i` means it's standing at stop `i`. Drives the progress line.
+  double _trainPos() {
+    final stops = widget.stopovers;
+    if (stops.length < 2) return 0;
+    final now = DateTime.now();
+    final firstDep = stops.first.departure ?? stops.first.arrival;
+    if (firstDep != null && now.isBefore(firstDep)) return 0;
+    for (var i = 0; i < stops.length - 1; i++) {
+      final dep = stops[i].departure ?? stops[i].arrival;
+      final arr = stops[i + 1].arrival ?? stops[i + 1].departure;
+      if (dep == null || arr == null) continue;
+      if (now.isBefore(dep)) return i.toDouble(); // dwelling at stop i
+      if (now.isBefore(arr)) {
+        final total = arr.difference(dep).inSeconds;
+        final el = now.difference(dep).inSeconds;
+        return i + (total > 0 ? (el / total).clamp(0.0, 1.0) : 0.0);
+      }
+    }
+    return (stops.length - 1).toDouble();
+  }
+
   /// One real stop row, wired into the timeline.
   Widget _stopRow(int i, int board, int alight,
       {required bool hasTop, required bool hasBottom}) {
@@ -266,12 +289,15 @@ class _StopTimelineState extends State<StopTimeline> {
     final isEndpoint = i == board || i == alight;
     final isLeg = widget.boardingId != null || widget.alightingId != null;
     final isBoard = isLeg && i == board;
+    final pos = _trainPos();
     return InkWell(
       onTap: widget.onStopTap == null ? null : () => widget.onStopTap!(s),
       child: _StopRow(
         stopover: s,
         hasTop: hasTop,
         hasBottom: hasBottom,
+        dotReached: pos >= i - 1e-6,
+        belowFill: (pos - i).clamp(0.0, 1.0),
         emphasize: isEndpoint,
         // The alight endpoint shows YOUR arrival as its one time, not the
         // train's onward departure; board/intermediate are departure-first.
@@ -590,6 +616,14 @@ class _StopRow extends StatelessWidget {
   /// that belongs to (expanded) intermediate stops only.
   final bool arrivalPrimary;
 
+  /// The live train has reached/passed this stop → its dot and the line above
+  /// it are drawn solid (done), not faint.
+  final bool dotReached;
+
+  /// How far the train is through the segment that LEAVES this stop (0…1) →
+  /// fills that fraction of the line below the dot solid, the rest faint.
+  final double belowFill;
+
   /// Fixed height of the station-name row. The timeline dot targets its centre,
   /// so every dot — endpoints (big Gleis chip) and intermediate stops alike —
   /// sits at the same vertical offset and lines up with its name.
@@ -604,6 +638,8 @@ class _StopRow extends StatelessWidget {
     this.hideOccupancy = false,
     this.footer,
     this.arrivalPrimary = false,
+    this.dotReached = false,
+    this.belowFill = 0,
   });
 
   @override
@@ -636,11 +672,17 @@ class _StopRow extends StatelessWidget {
         stopover.plannedDeparture != null &&
         stopover.plannedArrival != stopover.plannedDeparture;
 
+    // Progress colouring: a stop/segment the live train has reached is drawn
+    // solid in the brand colour; what's still ahead is faint.
+    final reached = dotReached && !muted;
+    final doneColor = theme.colorScheme.primary;
     final dotColor = cancelled
         ? Colors.red
-        : (muted || isPast)
+        : muted
             ? theme.colorScheme.outlineVariant
-            : theme.colorScheme.primary;
+            : reached
+                ? doneColor
+                : theme.colorScheme.primary.withAlpha(90);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 0, 16, 0),
@@ -662,11 +704,18 @@ class _StopRow extends StatelessWidget {
             // name row beside it — same offset on every row, big chip or not,
             // so the first dot, last dot and every name align identically.
             Builder(builder: (context) {
-              final lineColor = isPast || muted
+              final faint = muted
                   ? theme.colorScheme.outlineVariant
                   : theme.colorScheme.primary.withAlpha(60);
               final dotSize = emphasize ? 14.0 : 10.0;
               final topGap = _nameRowHeight / 2 - dotSize / 2;
+              // The line ABOVE the dot belongs to the segment that arrives here;
+              // it's done once the train has reached this stop.
+              final topDone = reached;
+              // The line BELOW splits into a solid "done" part (belowFill) and a
+              // faint "ahead" part.
+              final fill = muted ? 0.0 : belowFill.clamp(0.0, 1.0);
+              final fillFlex = (fill * 1000).round();
               return SizedBox(
                 width: 20,
                 child: Column(
@@ -674,7 +723,9 @@ class _StopRow extends StatelessWidget {
                     SizedBox(
                       height: topGap,
                       child: hasTop
-                          ? Container(width: 2, color: lineColor)
+                          ? Container(
+                              width: topDone ? 4 : 2,
+                              color: topDone ? doneColor : faint)
                           : null,
                     ),
                     Container(
@@ -691,7 +742,22 @@ class _StopRow extends StatelessWidget {
                       ),
                     ),
                     if (hasBottom)
-                      Expanded(child: Container(width: 2, color: lineColor)),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            if (fillFlex > 0)
+                              Expanded(
+                                flex: fillFlex,
+                                child: Container(width: 4, color: doneColor),
+                              ),
+                            if (fillFlex < 1000)
+                              Expanded(
+                                flex: 1000 - fillFlex,
+                                child: Container(width: 2, color: faint),
+                              ),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
               );
