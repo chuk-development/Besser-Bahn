@@ -150,17 +150,23 @@ class TileCache {
     });
   }
 
-  /// The shared outdoor base layer. Used by every outdoor map (route, departures,
-  /// station fallback) so the style/source lives in one place. Renders the
-  /// German OpenFreeMap Positron vector style; falls back to the CARTO raster
-  /// while the style loads and if it can't be fetched.
+  /// The shared outdoor base layer. Renders the German OpenFreeMap Positron
+  /// vector style (warmed at startup, so usually ready instantly). While the
+  /// style is still loading we show a PLAIN background — NOT the CARTO raster —
+  /// because hitting a second tile host during the load window just doubles the
+  /// request load (and storms when that host is unreachable). Only if the vector
+  /// style permanently FAILS do we fall back to the CARTO raster as a last
+  /// resort.
   static Widget outdoorLayer() {
     final ready = _style;
     if (ready != null) return _vectorLayer(ready);
     return FutureBuilder<Style>(
       future: _loadStyle(),
-      builder: (context, snap) =>
-          snap.data != null ? _vectorLayer(snap.data!) : _rasterFallback(),
+      builder: (context, snap) {
+        if (snap.data != null) return _vectorLayer(snap.data!);
+        if (snap.hasError) return _rasterFallback(); // vector dead → raster
+        return const SizedBox.shrink(); // still loading → plain bg, no storm
+      },
     );
   }
 
