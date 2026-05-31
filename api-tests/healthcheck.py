@@ -1049,6 +1049,59 @@ def check_traewelling_api() -> str:
     return f"trains/station/autocomplete reachable (status={r.status_code})"
 
 
+def check_db_account_token_endpoint() -> str:
+    """DB account login rides DB's Keycloak realm `db`
+    (`accounts.bahn.de/.../openid-connect/token`, public client `kf_mobile`,
+    Authorization Code + PKCE). We can't exercise a real login from CI, but a
+    *live* token endpoint rejects a bogus grant with 400/401, while a
+    removed/renamed realm path answers 404. Assert it still exists and refuses
+    bad input — that pins the realm + client shape the Profile login builds.
+    Soft: auth-only feature, no credentials in CI."""
+    url = ("https://accounts.bahn.de/auth/realms/db/protocol/"
+           "openid-connect/token")
+    r = requests.post(
+        url,
+        headers={"Accept": "application/json"},
+        data={
+            "grant_type": "refresh_token",
+            "client_id": "kf_mobile",
+            "refresh_token": "healthcheck-invalid",
+        },
+        timeout=TIMEOUT,
+    )
+    if r.status_code in (404, 410):
+        raise CheckError(f"token path gone (status={r.status_code})")
+    # A live realm rejects the bogus grant with an OAuth 4xx; some Keycloak
+    # builds answer 500 to a malformed refresh token. Either way the realm +
+    # client path exists, which is all this reachability probe asserts.
+    if r.status_code not in (400, 401, 403, 500):
+        raise CheckError(f"unexpected status {r.status_code}")
+    # Keycloak returns an OAuth error JSON for a bad grant.
+    try:
+        err = r.json().get("error", "")
+    except Exception:  # noqa: BLE001
+        err = ""
+    return f"realm db token endpoint live (status={r.status_code} {err})"
+
+
+def check_db_account_endpoints_require_auth() -> str:
+    """The Profile tab reads the signed-in user's data from the DB Navigator
+    backend (`app.services-bahn.de/mob`): emobilebahncards, kundenkonten,
+    bbStatus, reisenuebersicht, auftrag detail. All require a Bearer token, so
+    unauthenticated a *live* path answers 401/403 while a gone path is 404. We
+    probe `emobilebahncards` (no path params) to confirm the route + media
+    type still exist. Soft: can't carry a real token in CI."""
+    url = "https://app.services-bahn.de/mob/emobilebahncards"
+    media = "application/x.db.vendo.mob.emobilebahncards.v2+json"
+    r = requests.get(url, headers=_vendo_headers(media), timeout=TIMEOUT)
+    if r.status_code in (404, 410):
+        raise CheckError(f"emobilebahncards path gone (status={r.status_code})")
+    if r.status_code not in (401, 403):
+        # 200 would mean it stopped requiring auth (very unexpected) — flag it.
+        raise CheckError(f"unexpected status {r.status_code} (expected 401/403)")
+    return f"mob/emobilebahncards reachable, auth-gated (status={r.status_code})"
+
+
 # (name, callable, soft) — soft checks warn instead of fail.
 CHECKS = [
     ("bahn.de autocomplete (orte)", check_bahn_autocomplete, False),
@@ -1072,6 +1125,8 @@ CHECKS = [
     ("map Gleis ↔ departures (normalised)", check_gleis_departure_link, False),
     ("bahnhof.de sitemap", check_bahnhof_sitemap, False),
     ("traewelling check-in API", check_traewelling_api, True),
+    ("DB account token endpoint (kf_mobile)", check_db_account_token_endpoint, True),
+    ("DB account mob endpoints (auth-gated)", check_db_account_endpoints_require_auth, True),
     ("HAFAS rest mirror (flaky)", check_hafas_rest, True),
     ("website journey blocked check", check_website_journey_still_blocked, True),
 ]

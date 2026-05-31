@@ -13,6 +13,7 @@ class HomeScreen extends StatelessWidget {
     if (location.startsWith('/search')) return 0;
     if (location.startsWith('/journeys')) return 1;
     if (location.startsWith('/nearby')) return 2;
+    if (location.startsWith('/profile')) return 3;
     return 0;
   }
 
@@ -40,6 +41,8 @@ class HomeScreen extends StatelessWidget {
               context.go('/journeys');
             case 2:
               context.go('/nearby');
+            case 3:
+              context.go('/profile');
           }
         },
         destinations: const [
@@ -57,6 +60,11 @@ class HomeScreen extends StatelessWidget {
             icon: Icon(Icons.train_outlined),
             selectedIcon: Icon(Icons.train),
             label: 'Bahnhof',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.account_circle_outlined),
+            selectedIcon: Icon(Icons.account_circle),
+            label: 'Profil',
           ),
         ],
       ),

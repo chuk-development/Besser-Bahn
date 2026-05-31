@@ -46,8 +46,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- OAuth callback for flutter_web_auth_2 (Träwelling login).
-             The bahn.chuk.dev bounce page redirects into besserbahn://. -->
+        <!-- OAuth callbacks for flutter_web_auth_2:
+             - besserbahn:// — Träwelling login (bahn.chuk.dev bounce page).
+             - dbnav://     — Deutsche-Bahn account login; DB's Keycloak
+                              redirects straight into the DB Navigator app
+                              scheme, which we capture here. -->
         <activity
             android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
             android:exported="true">
@@ -56,6 +59,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="besserbahn" />
+                <data android:scheme="dbnav" />
             </intent-filter>
         </activity>
         <!-- flutter_local_notifications: deliver scheduled reminders and re-arm

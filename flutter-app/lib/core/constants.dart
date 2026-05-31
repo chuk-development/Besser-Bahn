@@ -52,6 +52,54 @@ class TraewellingConstants {
   static const scopes = '*';
 }
 
+/// Deutsche Bahn account login (the same OAuth the DB Navigator app uses).
+///
+/// Authorization Code + PKCE against DB's Keycloak realm `db`. The client
+/// `kf_mobile` is the **public** DB Navigator mobile client — no secret, safe
+/// to ship. The redirect is the app-scheme `dbnav://…/login/success` that the
+/// real app registers; `flutter_web_auth_2` captures it via the `dbnav`
+/// scheme (registered in AndroidManifest). `offline_access` yields a
+/// long-lived (~180 day) refresh token; the access token lives only 5 min.
+///
+/// All personal data (profile, BahnCards, BahnBonus, booked tickets) is read
+/// from the authenticated DB Navigator backend `app.services-bahn.de/mob`
+/// with `Authorization: Bearer <access_token>`.
+class DbAccountConstants {
+  DbAccountConstants._();
+
+  static const realmBase =
+      'https://accounts.bahn.de/auth/realms/db/protocol/openid-connect';
+  static const authorizeUrl = '$realmBase/auth';
+  static const tokenUrl = '$realmBase/token';
+  static const logoutUrl = '$realmBase/logout';
+
+  /// Public DB Navigator mobile client id (not a secret).
+  static const clientId = 'kf_mobile';
+
+  /// App-scheme redirects the DB login bounces into (success / cancel).
+  static const redirectUrl = 'dbnav://dbnavigator.bahn.de/login/success';
+  static const cancelUrl = 'dbnav://dbnavigator.bahn.de/login/back';
+
+  /// Custom scheme `flutter_web_auth_2` listens on (AndroidManifest).
+  static const callbackScheme = 'dbnav';
+
+  /// `offline_access` → refresh token; rest mirror the DB Navigator app.
+  static const scope = 'offline_access';
+
+  /// Mobile backend base (same as VendoService, but authenticated here).
+  static const mobBase = 'https://app.services-bahn.de/mob';
+
+  // Per-endpoint vendo media types (exact-matched by the DB edge).
+  static const profileMedia = 'application/x.db.vendo.mob.kundenkonto.v7+json';
+  static const bahnbonusMedia = 'application/x.db.vendo.mob.bahnbonus.v1+json';
+  static const bahncardsMedia =
+      'application/x.db.vendo.mob.emobilebahncards.v2+json';
+  static const reisenMedia =
+      'application/x.db.vendo.mob.reisenuebersicht.v7+json';
+  static const auftragMedia = 'application/x.db.vendo.mob.auftraege.v11+json';
+  static const kciMedia = 'application/x.db.vendo.mob.kci.v3+json';
+}
+
 class AppConstants {
   AppConstants._();
 

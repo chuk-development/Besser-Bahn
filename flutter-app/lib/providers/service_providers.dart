@@ -8,6 +8,7 @@ import '../services/vendo_service.dart';
 import '../services/traewelling_service.dart';
 import '../services/prediction_service.dart';
 import '../services/seat_map_service.dart';
+import '../services/db_account_service.dart';
 
 final hafasServiceProvider = Provider<HafasService>((ref) => HafasService());
 
@@ -36,3 +37,9 @@ final traewellingServiceProvider =
 
 final predictionServiceProvider =
     Provider<PredictionService>((ref) => PredictionService());
+
+final dbAccountServiceProvider = Provider<DbAccountService>((ref) {
+  final service = DbAccountService();
+  ref.onDispose(service.dispose);
+  return service;
+});

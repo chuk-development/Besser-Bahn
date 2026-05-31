@@ -8,6 +8,8 @@ import '../screens/onboarding/onboarding_screen.dart';
 import '../screens/journeys/journeys_screen.dart';
 import '../screens/nearby/nearby_screen.dart';
 import '../screens/train_lookup/train_lookup_screen.dart';
+import '../screens/profile/profile_screen.dart';
+import '../screens/profile/ticket_detail_screen.dart';
 import '../screens/connection_search/connection_search_screen.dart';
 import '../screens/station_map/station_map_screen.dart';
 import '../screens/connection_search/connection_detail_screen.dart';
@@ -75,7 +77,24 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             pageBuilder: (context, state) =>
                 const NoTransitionPage(child: NearbyScreen()),
           ),
+          GoRoute(
+            path: '/profile',
+            pageBuilder: (context, state) =>
+                const NoTransitionPage(child: ProfileScreen()),
+          ),
         ],
+      ),
+      // A single booked ticket (barcode + facts), pushed from the Profile tab.
+      GoRoute(
+        path: '/ticket',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) {
+          final args = state.extra as Map<String, dynamic>? ?? const {};
+          return TicketDetailScreen(
+            auftragsnummer: args['auftragsnummer'] as String? ?? '',
+            kundenwunschId: args['kundenwunschId'] as String? ?? '',
+          );
+        },
       ),
       // Secondary destinations moved out of the bottom bar into the AppBar
       // overflow menu — pushed on the root navigator so they get a back button.
