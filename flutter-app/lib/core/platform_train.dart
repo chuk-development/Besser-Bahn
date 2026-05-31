@@ -512,22 +512,49 @@ List<LatLng> _cubeCurvePts(
   final line = fitLine([for (final c in cubes) xy(c.pos)]);
   if (line == null) return [for (final c in cubes) nud(c.pos)];
 
+  // Order cubes physically along the platform (by projection onto its axis),
+  // not by letter — letters can be slightly out of order.
   final entries = [
     for (final c in cubes)
       (
         pos: nud(c.pos),
+        mp: xy(c.pos),
         t: (xy(c.pos).x - line.cx) * line.dx + (xy(c.pos).y - line.cy) * line.dy,
-        perp: line.perpDistance(xy(c.pos)),
       )
-  ];
-  // Drop strays: a cube whose perpendicular offset from the platform axis is
-  // far above the median (cubes on other tracks sit ~10 m+ off). Keep ≥2.
-  final perps = [for (final e in entries) e.perp]..sort();
-  final med = perps[perps.length ~/ 2];
-  var kept = entries.where((e) => e.perp <= med + 6.0).toList();
-  if (kept.length < 2) kept = entries.toList();
-  kept.sort((a, b) => a.t.compareTo(b.t));
+  ]..sort((a, b) => a.t.compareTo(b.t));
+
+  // Drop strays LOCALLY, not against the straight axis: a cube assigned to a
+  // neighbouring track makes a sharp KINK relative to its two ordered
+  // neighbours, whereas honest platform curvature is smooth (every cube sits
+  // close to the chord of its neighbours). A global axis-distance filter would
+  // instead delete the cubes at a curved end (e.g. the last B), straightening
+  // the train — which is exactly the bug. So we iteratively remove the single
+  // worst kink while it exceeds the threshold; gentle curves (sagitta < ~3 m)
+  // survive untouched, a 90° stray (≫ track spacing) is dropped.
+  final kept = entries.toList();
+  while (kept.length > 2) {
+    var worst = -1;
+    var worstD = 0.0;
+    for (var i = 1; i < kept.length - 1; i++) {
+      final d = _distToChord(kept[i - 1].mp, kept[i].mp, kept[i + 1].mp);
+      if (d > worstD) {
+        worstD = d;
+        worst = i;
+      }
+    }
+    if (worst < 0 || worstD <= 7.0) break;
+    kept.removeAt(worst);
+  }
   return _extendEnds([for (final e in kept) e.pos], 60.0);
+}
+
+/// Perpendicular distance from [p] to the infinite line through [a] and [b].
+double _distToChord(
+    math.Point<double> a, math.Point<double> p, math.Point<double> b) {
+  final abx = b.x - a.x, aby = b.y - a.y;
+  final len = math.sqrt(abx * abx + aby * aby);
+  if (len < 1e-6) return (p - a).magnitude;
+  return ((p.x - a.x) * aby - (p.y - a.y) * abx).abs() / len;
 }
 
 /// Extend a polyline by [byM] metres beyond each end along its end tangents, so
