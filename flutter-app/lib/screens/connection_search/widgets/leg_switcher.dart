@@ -72,6 +72,11 @@ class LegAlternativeSwitcherState
     // A live delay just turned a comfortable transfer into a tight one → load
     // the alternatives now so the offer can appear.
     if (_tight && !_loaded && !_loading) _ensureLoaded();
+    // The shown train just changed (a swipe/step swapped the leg) → warm the
+    // NEW neighbours so the next swipe in either direction is instant too.
+    if (_loaded && oldWidget.leg.tripId != widget.leg.tripId) {
+      _prefetchNeighbors();
+    }
   }
 
   DateTime? get _currentDep =>
@@ -105,6 +110,7 @@ class LegAlternativeSwitcherState
         _laterRef = res.laterRef;
         _loaded = true;
       });
+      _prefetchNeighbors();
     } catch (_) {
       if (mounted) setState(() => _error = 'Konnte nicht laden.');
     } finally {
@@ -132,10 +138,44 @@ class LegAlternativeSwitcherState
         _merge(res.journeys);
         _laterRef = res.laterRef;
       });
+      _prefetchNeighbors();
     } catch (_) {
       /* keep what we have */
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Warm the per-train data for the immediately adjacent departures — the one
+  /// you'd reach swiping right (earlier, "davor") and left (later, "danach") —
+  /// so the swipe shows the neighbour's train instantly instead of fetching on
+  /// arrival. Best-effort, fire-and-forget; the Wagenreihung lands in the shared
+  /// session cache the platform train + route map read.
+  void _prefetchNeighbors() {
+    if (_alts.isEmpty) return;
+    final curId = widget.leg.tripId;
+    var idx = _alts.indexWhere((j) => j.legs.firstOrNull?.tripId == curId);
+    if (idx < 0) {
+      final curDep = _currentDep;
+      if (curDep != null) {
+        idx = _alts
+            .indexWhere((a) => !((_depOf(a) ?? curDep).isBefore(curDep)));
+      }
+      if (idx < 0) idx = 0;
+    }
+    for (final n in [idx - 1, idx + 1]) {
+      if (n < 0 || n >= _alts.length) continue;
+      final l = _alts[n].legs.firstOrNull;
+      final line = l?.line;
+      if (l == null || line == null || line.fahrtNr.isEmpty) continue;
+      // Fire-and-forget: caches by train+stop+time, so the swiped-to detail
+      // draws its platform train immediately.
+      ref.read(coachSequenceServiceProvider).getCoachSequenceForDeparture(
+            category: line.productName,
+            trainNumber: line.fahrtNr,
+            stationEva: l.origin.id,
+            departureTime: l.departure ?? l.plannedDeparture,
+          );
     }
   }
 
