@@ -214,10 +214,97 @@ List<LatLng> osmRailForGleis({
     // rail and keep only the span between them — the train then never shows a
     // spurious bend beyond where the platform actually is.
     final path = RoutePath.build(edge.length >= 2 ? rail : const []);
-    if (path == null) return rail;
+    if (path == null) return _straightenThroatEnds(rail);
     final a = path.locate(edge.first), b = path.locate(edge.last);
     final clipped = path.slice(math.min(a, b), math.max(a, b));
-    return clipped.length >= 2 ? clipped : rail;
+    return _straightenThroatEnds(clipped.length >= 2 ? clipped : rail);
   }
   return const [];
+}
+
+/// A station throat — a Kopfbahnhof's stub end, or a switch sitting right under
+/// the platform end — makes the recovered rail swing sharply sideways where the
+/// platform stops, while the platform track itself stays smooth. The clip can't
+/// remove a switch that lives WITHIN the platform extent (München Gleis 20: a
+/// ~9° spike at the end where coaches 1–2 stand, past the last sector cube),
+/// which kinks those coaches off the line.
+///
+/// Detect a LOCALIZED heading spike in the outer quarter of either end — a real
+/// curve bends gently and evenly, so its small per-segment deltas stay under the
+/// threshold and it is left completely untouched — then drop those throat
+/// vertices and extend the spine straight along the clean interior tangent, so
+/// the train keeps its full length but rides one clean line.
+List<LatLng> _straightenThroatEnds(List<LatLng> spine) {
+  if (spine.length < 8) return spine;
+  final mlon = 111320.0 * math.cos(spine.first.latitude * math.pi / 180);
+  double heading(int i) {
+    final dx = (spine[i + 1].longitude - spine[i].longitude) * mlon;
+    final dy = (spine[i + 1].latitude - spine[i].latitude) * 111320.0;
+    return math.atan2(dy, dx);
+  }
+
+  double angDiff(double a, double b) {
+    var d = a - b;
+    while (d > math.pi) {
+      d -= 2 * math.pi;
+    }
+    while (d < -math.pi) {
+      d += 2 * math.pi;
+    }
+    return d.abs();
+  }
+
+  final n = spine.length - 1; // segment count
+  final h = [for (var i = 0; i < n; i++) heading(i)];
+  const thresh = 5 * math.pi / 180; // a switch spike; gentle curves stay under
+  final q = math.max(1, (n * 0.25).floor());
+  var lo = 0;
+  for (var i = 0; i < q && i < n - 1; i++) {
+    if (angDiff(h[i + 1], h[i]) > thresh) lo = i + 1;
+  }
+  var hi = spine.length - 1; // keep vertices [lo..hi]
+  for (var i = n - 2; i >= n - 1 - q && i >= 0; i--) {
+    if (angDiff(h[i + 1], h[i]) > thresh) {
+      hi = i + 1;
+      break;
+    }
+  }
+  if (lo == 0 && hi == spine.length - 1) return spine; // clean — leave it
+  final core = spine.sublist(lo, hi + 1);
+  if (core.length < 2) return spine;
+
+  double segLen(LatLng a, LatLng b) {
+    final dx = (a.longitude - b.longitude) * mlon;
+    final dy = (a.latitude - b.latitude) * 111320.0;
+    return math.sqrt(dx * dx + dy * dy);
+  }
+
+  // Straight continuation of [b] away from [a], [need] metres long.
+  LatLng extend(LatLng a, LatLng b, double need) {
+    final dx = (b.longitude - a.longitude) * mlon;
+    final dy = (b.latitude - a.latitude) * 111320.0;
+    final m = math.sqrt(dx * dx + dy * dy);
+    if (m == 0) return b;
+    return LatLng(
+        b.latitude + dy / m * need / 111320.0, b.longitude + dx / m * need / mlon);
+  }
+
+  final out = <LatLng>[...core];
+  if (lo > 0) {
+    var need = 0.0;
+    for (var i = 0; i < lo; i++) {
+      need += segLen(spine[i], spine[i + 1]);
+    }
+    if (need > 0) out.insert(0, extend(core[1], core[0], need));
+  }
+  if (hi < spine.length - 1) {
+    var need = 0.0;
+    for (var i = hi; i < n; i++) {
+      need += segLen(spine[i], spine[i + 1]);
+    }
+    if (need > 0) {
+      out.add(extend(core[core.length - 2], core[core.length - 1], need));
+    }
+  }
+  return _resample(out, 60);
 }

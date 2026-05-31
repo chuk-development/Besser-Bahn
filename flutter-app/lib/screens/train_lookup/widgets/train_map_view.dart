@@ -363,13 +363,27 @@ class _TrainMapState extends ConsumerState<TrainMap> {
 
     final cars = <({List<LatLng> outline, Coach? coach, bool boarding})>[];
     if (cs != null) {
-      // Real coaches: cube-anchored where cubes exist (exact sector alignment),
-      // else composition-on-rail (right track, centred on the platform).
+      // Real coaches at EXACT, DB-given positions: cube-anchored where cubes
+      // exist (exact sector alignment), else composition-on-rail.
       cars.addAll(pt.platformTrainCars(
         map,
         gleis: gleis,
         section: section,
         cs: cs,
+        osmRail: osmRail,
+      ));
+    }
+    if (cars.isEmpty && widget.coachSequence != null) {
+      // No per-stop Wagenreihung (DB publishes it per DEPARTURE; at a terminus
+      // arrival like Hamburg it 404s). Reuse the composition we DID fetch for
+      // the rider's own leg — same train, real car order + lengths — and place
+      // it on THIS stop's OSM rail, centred on the platform. The car order is
+      // exact; the absolute spot is best-effort (DB gave none here).
+      cars.addAll(pt.platformTrainFromComposition(
+        map,
+        gleis: gleis,
+        section: section,
+        cs: widget.coachSequence!,
         osmRail: osmRail,
       ));
     }

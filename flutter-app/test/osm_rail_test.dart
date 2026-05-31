@@ -146,4 +146,72 @@ void main() {
     );
     expect(rail, isEmpty);
   });
+
+  test('München Gleis 20: throat switch is straightened (no end kink)', () {
+    // München Hbf is a Kopfbahnhof: a switch sits right under Gleis 20's stub
+    // end, where coaches 1–2 stand past the last sector cube. The raw rail
+    // recovery picks up that ~9° spike and kinks those coaches off the line —
+    // the recovered spine must come back smooth end-to-end.
+    final osm = json.decode(
+        File('test/fixtures/munich-osm.json').readAsStringSync()) as Map;
+    final platforms = [
+      for (final p in (osm['platforms'] as List))
+        (
+          ref: p['ref'] as String,
+          pts: [
+            for (final q in (p['pts'] as List))
+              LatLng((q['lat'] as num).toDouble(), (q['lng'] as num).toDouble())
+          ],
+        ),
+    ];
+    final rails = [
+      for (final r in (osm['rails'] as List))
+        [
+          for (final q in (r['pts'] as List))
+            LatLng((q['lat'] as num).toDouble(), (q['lng'] as num).toDouble())
+        ],
+    ];
+    // The "20;21" island stands in for the cube side reference here.
+    final ring = platforms.first;
+    final rail = osmRailForGleis(
+      platforms: platforms,
+      rails: rails,
+      gleis: '20',
+      cubeSide: ring.pts,
+    );
+    expect(rail.length, greaterThanOrEqualTo(2));
+
+    // No sharp per-segment heading spike anywhere — a switch would be ≥9°.
+    final mlon = 111320.0 * math.cos(rail.first.latitude * math.pi / 180);
+    double heading(int i) {
+      final dx = (rail[i + 1].longitude - rail[i].longitude) * mlon;
+      final dy = (rail[i + 1].latitude - rail[i].latitude) * 111320.0;
+      return math.atan2(dy, dx);
+    }
+
+    var maxBendDeg = 0.0;
+    for (var i = 0; i < rail.length - 2; i++) {
+      var d = heading(i + 1) - heading(i);
+      while (d > math.pi) {
+        d -= 2 * math.pi;
+      }
+      while (d < -math.pi) {
+        d += 2 * math.pi;
+      }
+      maxBendDeg = math.max(maxBendDeg, d.abs() * 180 / math.pi);
+    }
+    expect(maxBendDeg, lessThan(5.0),
+        reason: 'the throat spike must be straightened out of the spine');
+
+    // And it still spans most of the platform (length preserved, not trimmed
+    // down to the smooth core).
+    var len = 0.0;
+    for (var i = 0; i < rail.length - 1; i++) {
+      final dx = (rail[i + 1].longitude - rail[i].longitude) * mlon;
+      final dy = (rail[i + 1].latitude - rail[i].latitude) * 111320.0;
+      len += math.sqrt(dx * dx + dy * dy);
+    }
+    expect(len, greaterThan(250.0),
+        reason: 'straightening must keep the full platform length, not trim it');
+  });
 }
