@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 import 'app.dart';
 import 'core/app_log.dart';
@@ -8,6 +9,9 @@ import 'services/notification_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // German date symbols for locale-aware formatting (e.g. "Mai 2026" in the
+  // Reisestatistik). Number symbols are bundled and need no init.
+  await initializeDateFormatting('de');
   // Collapse the endless identical map-tile error dumps into one counted line
   // so the console/debug-log stays readable (must run before the first map).
   AppLog.installErrorCollapsing();

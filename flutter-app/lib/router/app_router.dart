@@ -11,6 +11,7 @@ import '../screens/connection_search/connection_detail_screen.dart';
 import '../models/journey.dart';
 import '../screens/split_ticket/split_ticket_screen.dart';
 import '../screens/settings/settings_screen.dart';
+import '../screens/stats/travel_stats_screen.dart';
 import '../screens/debug_log/debug_log_screen.dart';
 import '../screens/traewelling/traewelling_hub_screen.dart';
 import '../screens/traewelling/traewelling_feed_screen.dart';
@@ -60,6 +61,11 @@ final appRouter = GoRouter(
       path: '/settings',
       parentNavigatorKey: _rootNavigatorKey,
       builder: (context, state) => const SettingsScreen(),
+    ),
+    GoRoute(
+      path: '/stats',
+      parentNavigatorKey: _rootNavigatorKey,
+      builder: (context, state) => const TravelStatsScreen(),
     ),
     GoRoute(
       path: '/debug-log',

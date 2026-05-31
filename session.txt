@@ -1,3 +1,4 @@
 claude --resume 4515a747-60e5-4738-8b5a-6c8ef304e5d4  # Improve train car ordering dropdown and seat visualization
-claude --resume 9bbf009b-8b78-47fd-9de7-790c39bc7e70
 claude --resume c004fd04-3fe2-4692-813b-5c422467de1c  # Draw train composition on platform map
+claude --resume 9bbf009b-8b78-47fd-9de7-790c39bc7e70
+claude --resume 340831c6-dc0e-4534-bf31-0d9eb917099c  # Implement notification system with vibration and ringtone

@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/extensions.dart';
 import '../../models/library_models.dart';
+import '../../models/travel_stats.dart';
 import '../../providers/library_provider.dart';
+import '../../providers/travel_stats_provider.dart';
 import '../../widgets/app_menu_button.dart';
 import '../connection_search/widgets/journey_card.dart';
 
@@ -18,17 +22,26 @@ class JourneysScreen extends ConsumerWidget {
     final lib = ref.watch(libraryProvider);
     final upcoming = lib.upcomingJourneys;
     final past = lib.pastJourneys;
+    final stats = ref.watch(travelStatsProvider);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Reisen'),
-        actions: const [AppMenuButton()],
+        actions: [
+          IconButton(
+            tooltip: 'Reisestatistik',
+            icon: const Icon(Icons.insights),
+            onPressed: () => context.push('/stats'),
+          ),
+          const AppMenuButton(),
+        ],
       ),
       body: upcoming.isEmpty && past.isEmpty
           ? _empty(context)
           : ListView(
               padding: const EdgeInsets.only(top: 8, bottom: 32),
               children: [
+                if (!stats.isEmpty) _statsTeaser(context, stats),
                 if (upcoming.isNotEmpty) ...[
                   _sectionHeader(context, 'Anstehende Reisen', upcoming.length),
                   for (final j in upcoming) _entry(context, ref, j),
@@ -39,6 +52,55 @@ class JourneysScreen extends ConsumerWidget {
                 ],
               ],
             ),
+    );
+  }
+
+  /// Compact lifetime-stats banner that taps through to the full screen.
+  Widget _statsTeaser(BuildContext context, TravelStats stats) {
+    final theme = Theme.of(context);
+    final km = stats.totalKm >= 100
+        ? NumberFormat('#,##0', 'de').format(stats.totalKm.round())
+        : NumberFormat('#,##0.0', 'de').format(stats.totalKm);
+    final pct = (stats.onTimeRate * 100).round();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Card(
+        color: theme.colorScheme.primaryContainer,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => context.push('/stats'),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Icon(Icons.insights,
+                    color: theme.colorScheme.onPrimaryContainer),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('$km km · ${stats.tripCount} '
+                          '${stats.tripCount == 1 ? 'Fahrt' : 'Fahrten'}',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            color: theme.colorScheme.onPrimaryContainer,
+                            fontWeight: FontWeight.bold,
+                          )),
+                      Text('$pct % pünktlich · deine Reisestatistik',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onPrimaryContainer
+                                .withValues(alpha: 0.8),
+                          )),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right,
+                    color: theme.colorScheme.onPrimaryContainer),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
