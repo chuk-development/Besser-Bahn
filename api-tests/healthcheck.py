@@ -24,6 +24,7 @@ Endpoint map (see app code in flutter-app/lib/services/):
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 import time
@@ -934,6 +935,71 @@ def check_wagenreihung_split() -> str:
     return f"{leg['langtext']}: {len(groups)} portion(s){tag}"
 
 
+def check_osm_platform_geometry() -> str:
+    """OpenStreetMap platform + rail geometry via Overpass — the accurate track
+    centre-line the platform train rides (services/osm_platform_service.dart →
+    core/osm_rail.dart). The app POSTs the SAME Overpass QL around a station's
+    centre: `public_transport=platform` AREA ways carrying a `ref` (the Gleis
+    pair, e.g. "7;8") + every `railway=rail` way, asking `out geom;` so each way
+    inlines its node coordinates. Assert both shapes survive near Hamburg Hbf.
+
+    Soft: the app soft-fails to the bahnhof.de cube placement if Overpass is
+    down, so a missing Overpass degrades gracefully rather than breaking.
+    """
+    # ~600 m bbox around Hamburg Hbf (10.006909, 53.552733), matching the app.
+    lat, lon, r = 53.552733, 10.006909, 600.0
+    d_lat = r / 111320.0
+    d_lon = r / (111320.0 * math.cos(math.radians(lat)))
+    bbox = f"{lat - d_lat},{lon - d_lon},{lat + d_lat},{lon + d_lon}"
+    ql = ("[out:json][timeout:25];("
+          f'way["public_transport"="platform"]["ref"]({bbox});'
+          f'way["railway"="rail"]({bbox});'
+          ");out geom;")
+    # Same mirror fallthrough as the app (services/osm_platform_service.dart):
+    # the main instance 504s under load, so try mirrors before failing.
+    endpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    ]
+    resp = None
+    last = None
+    for endpoint in endpoints:
+        try:
+            r = requests.post(endpoint, data={"data": ql},
+                              headers={"User-Agent": DBNAV_UA}, timeout=TIMEOUT)
+            if r.status_code == 200:
+                resp = r
+                break
+            last = f"{endpoint} HTTP {r.status_code}"
+        except requests.RequestException as e:
+            last = f"{endpoint} {type(e).__name__}"
+    if resp is None:
+        raise CheckError(f"all Overpass mirrors unavailable (last: {last})")
+    elements = resp.json().get("elements", [])
+    if not elements:
+        raise CheckError("Overpass returned no elements near Hamburg Hbf")
+    platforms, rails = [], 0
+    for el in elements:
+        geom = el.get("geometry") or []
+        if len(geom) < 2 or "lat" not in geom[0] or "lon" not in geom[0]:
+            continue
+        tags = el.get("tags") or {}
+        if tags.get("public_transport") == "platform" and tags.get("ref"):
+            platforms.append(tags["ref"])
+        elif tags.get("railway") == "rail":
+            rails += 1
+    if not platforms:
+        raise CheckError("no public_transport=platform ways with a ref (Gleis)")
+    if rails < 1:
+        raise CheckError("no railway=rail ways with inlined geometry")
+    # The Gleis-7 island ("7;8") is what the preview/port is verified against.
+    if not any("7" in p.split(";") for p in platforms):
+        raise CheckError(f"no platform ref includes Gleis 7 (got {platforms[:6]})")
+    return (f"{len(platforms)} platform refs (e.g. {sorted(set(platforms))[:5]}), "
+            f"{rails} rail ways")
+
+
 def check_basemap_tiles() -> str:
     """Outdoor base map: OpenFreeMap "Positron" VECTOR tiles — the German-labelled
     (local names), keyless, light basemap the app renders under every outdoor map
@@ -989,6 +1055,7 @@ CHECKS = [
     ("vendo train polyline (zuglauf)", check_vendo_train_polyline, False),
     ("vendo seat map (gsd free seats)", check_vendo_seat_map, False),
     ("wagenreihung wing-train split (RE)", check_wagenreihung_split, True),
+    ("osm platform geometry (overpass)", check_osm_platform_geometry, False),
     ("basemap (OpenFreeMap Positron vector)", check_basemap_tiles, True),
     ("bahnhof.de station map (karte)", check_bahnhof_map, False),
     ("map bay ↔ departures link", check_bay_departure_link, True),

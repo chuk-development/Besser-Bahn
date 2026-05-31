@@ -1,11 +1,13 @@
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/app_log.dart';
+import '../core/osm_rail.dart';
 import '../core/platform_train.dart' as pt;
 import '../core/train_dimensions.dart';
 import '../models/coach_sequence.dart';
 import '../models/station.dart';
 import '../models/station_map.dart';
+import '../services/osm_platform_service.dart';
 import '../services/station_map_service.dart';
 import 'service_providers.dart';
 
@@ -102,6 +104,12 @@ class StationMapState {
   /// the map says which train it is. Null for a plain station lookup.
   final String? trainLabel;
 
+  /// This station's OpenStreetMap platform/rail geometry, once Overpass has
+  /// answered — the accurate track centre-line the platform train rides. Null
+  /// while the (async, best-effort) fetch is pending or it failed/unavailable;
+  /// the train then falls back to the bahnhof.de cube-straight placement.
+  final OsmPlatformGeometry? osmGeometry;
+
   final bool isLoading;
   final String? error;
 
@@ -124,6 +132,7 @@ class StationMapState {
     this.product,
     this.secondaryProduct,
     this.trainLabel,
+    this.osmGeometry,
     this.isLoading = false,
     this.error,
   });
@@ -147,6 +156,8 @@ class StationMapState {
     String? product,
     String? secondaryProduct,
     String? trainLabel,
+    OsmPlatformGeometry? osmGeometry,
+    bool clearOsmGeometry = false,
     bool clearHighlight = false,
     bool clearSection = false,
     bool clearTransferNote = false,
@@ -201,6 +212,8 @@ class StationMapState {
           : (secondaryProduct ?? this.secondaryProduct),
       trainLabel:
           clearTrainLabel ? null : (trainLabel ?? this.trainLabel),
+      osmGeometry:
+          clearOsmGeometry ? null : (osmGeometry ?? this.osmGeometry),
       isLoading: isLoading ?? this.isLoading,
       error: clearError ? null : (error ?? this.error),
     );
@@ -251,6 +264,27 @@ class StationMapState {
   List<({String letter, LatLng pos})> get secondarySectionLine =>
       _sectionLineFor(secondaryHighlightPoi, secondarySection, secondaryGleis);
 
+  /// The real OSM rail spine the train at [g] rides, derived from this station's
+  /// fetched Overpass geometry (the accurate track centre-line — see
+  /// core/osm_rail.dart). Null while the fetch is pending/failed or the Gleis
+  /// can't be resolved, in which case every caller falls back to the existing
+  /// bahnhof.de cube-straight placement. Threaded into the pure platform_train
+  /// functions as `osmRail:`.
+  List<LatLng>? _osmRailFor(String? g) {
+    final m = map;
+    final osm = osmGeometry;
+    if (m == null || g == null || osm == null) return null;
+    final cubeSide = pt.platformCubeSide(m, g);
+    if (cubeSide.length < 2) return null;
+    final rail = osmRailForGleis(
+      platforms: osm.platforms,
+      rails: osm.rails,
+      gleis: g,
+      cubeSide: cubeSide,
+    );
+    return rail.length >= 2 ? rail : null;
+  }
+
   // The section line and platform-train placement both delegate to the pure
   // `core/platform_train.dart` module — the SAME implementation the route map's
   // parked trains use, so the Bahnhofskarte and Streckenverlauf can never drift.
@@ -258,7 +292,7 @@ class StationMapState {
       MapPoi? plat, ({String start, String end})? range, String? g) {
     final m = map;
     if (m == null || plat == null || g == null) return const [];
-    return pt.platformSectionLine(m, plat, range, g);
+    return pt.platformSectionLine(m, plat, range, g, osmRail: _osmRailFor(g));
   }
 
   /// The boarding (Einstieg) train drawn to scale, top-down, on its platform.
@@ -282,12 +316,14 @@ class StationMapState {
       CoachSequence? fallback) {
     final m = map;
     if (m == null || g == null) return const [];
+    final osmRail = _osmRailFor(g);
     if (cs != null) {
-      return pt.platformTrainCars(m, gleis: g, section: section, cs: cs);
+      return pt.platformTrainCars(
+          m, gleis: g, section: section, cs: cs, osmRail: osmRail);
     }
     if (fallback != null) {
       return pt.platformTrainFromComposition(
-          m, gleis: g, section: section, cs: fallback);
+          m, gleis: g, section: section, cs: fallback, osmRail: osmRail);
     }
     return const [];
   }
@@ -315,6 +351,7 @@ class StationMapState {
       section: section,
       lengthM: dims.totalLengthM,
       highSpeed: _highSpeedLabel,
+      osmRail: _osmRailFor(g),
     );
   }
 
@@ -517,7 +554,10 @@ class StationMapNotifier extends Notifier<StationMapState> {
   }
 
   Future<void> _load(Future<StationMap> Function() fetch) async {
-    state = state.copyWith(isLoading: true, clearError: true);
+    // A new station's map → drop the previous station's OSM geometry so the
+    // train never rides the wrong station's rail while the new fetch is pending.
+    state = state.copyWith(
+        isLoading: true, clearError: true, clearOsmGeometry: true);
     try {
       final map = await fetch();
       final level = _levelForLoad(map);
@@ -535,6 +575,11 @@ class StationMapNotifier extends Notifier<StationMapState> {
             map.pois.map((p) => p.type).toSet().difference(_primaryTypes),
         isLoading: false,
       );
+      // Fetch this station's OSM platform/rail geometry (Overpass) so the
+      // platform train rides the real, accurate track curve instead of the
+      // straight cube fallback. Best-effort and non-blocking: if it never
+      // arrives or fails, the train still draws from the cubes.
+      _loadOsmGeometry(map);
       // Then attach the platform train(s) for this stop (non-blocking visually).
       final st = state.station;
       if (st != null) await _loadCoachSequences(st);
@@ -552,6 +597,27 @@ class StationMapNotifier extends Notifier<StationMapState> {
         isLoading: false,
         error: 'Karte konnte nicht geladen werden ($e).',
       );
+    }
+  }
+
+  /// Fetch [map]'s OSM platform/rail geometry and attach it once it lands,
+  /// triggering a rebuild so the platform train re-renders on the real rail.
+  /// Reads the in-memory cache synchronously if it's already warm. Guards
+  /// against a stale arrival: if the user has since loaded another station, the
+  /// result is dropped.
+  Future<void> _loadOsmGeometry(StationMap map) async {
+    final svc = OsmPlatformService.instance;
+    if (svc.isResolved(map.slug)) {
+      final cached = svc.cached(map.slug);
+      if (cached != null && identical(state.map, map)) {
+        state = state.copyWith(osmGeometry: cached);
+      }
+      return;
+    }
+    final geom = await svc.fetch(map.slug, map.center);
+    // Only apply if this is still the station on screen.
+    if (geom != null && identical(state.map, map)) {
+      state = state.copyWith(osmGeometry: geom);
     }
   }
 

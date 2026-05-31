@@ -72,6 +72,11 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
   /// True while a location request is in flight (spinner on the button).
   bool _locating = false;
 
+  /// Whether the DB indoor floor-plan overlay is shown. Defaults to on (the
+  /// existing behaviour); the rider can turn it off to compare against the bare
+  /// OSM base map + our own Gleis/sector markers and to-scale train.
+  bool _showIndoor = true;
+
   @override
   void dispose() {
     _mapController.dispose();
@@ -337,8 +342,10 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
           maxZoom: 20,
           // Indoor floor plan for the selected floor (building outline, platform
           // halls, track geometry) — swapped in place when the floor changes.
-          indoorLevel: state.selectedLevel,
-          dbAttribution: true,
+          // Passing null hides it (the user toggle below), leaving the OSM base
+          // map, our Gleis/sector markers and the to-scale train.
+          indoorLevel: _showIndoor ? state.selectedLevel : null,
+          dbAttribution: _showIndoor,
           // Tapping empty map dismisses the inline POI card.
           onTap: (_, _) {
             if (_selectedPoi != null) setState(() => _selectedPoi = null);
@@ -403,10 +410,23 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
         Positioned(
           right: 8,
           bottom: 8,
-          child: _Legend(
-            categories: map.categoriesOnLevel(state.selectedLevel ?? ''),
-            hidden: state.hiddenCategories,
-            onToggle: notifier.toggleCategory,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Toggle the DB indoor floor plan; the OSM base map, Gleis numbers
+              // and A–I sectors stay regardless.
+              _IndoorToggle(
+                on: _showIndoor,
+                onTap: () => setState(() => _showIndoor = !_showIndoor),
+              ),
+              const SizedBox(height: 8),
+              _Legend(
+                categories: map.categoriesOnLevel(state.selectedLevel ?? ''),
+                hidden: state.hiddenCategories,
+                onToggle: notifier.toggleCategory,
+              ),
+            ],
           ),
         ),
         // "Mein Standort" button — request GPS and frame you + your target.
@@ -896,6 +916,47 @@ class _LevelButton extends StatelessWidget {
 String _levelLong(String shortLabel) {
   if (shortLabel == 'EG') return 'Erdgeschoss';
   return 'Ebene $shortLabel';
+}
+
+/// Compact pill that toggles the DB indoor floor-plan overlay on/off — styled
+/// like the collapsed [_Legend]. Active = filled DB-red (overlay shown), off =
+/// surface card (only OSM + our markers/train).
+class _IndoorToggle extends StatelessWidget {
+  final bool on;
+  final VoidCallback onTap;
+
+  const _IndoorToggle({required this.on, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final fg = on ? Colors.white : theme.iconTheme.color;
+    return Material(
+      elevation: 3,
+      color: on ? AppColors.dbRed : theme.cardColor,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Tooltip(
+          message: on ? 'DB-Bahnsteigplan ausblenden' : 'DB-Bahnsteigplan einblenden',
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(on ? Icons.map : Icons.map_outlined, size: 15, color: fg),
+                const SizedBox(width: 5),
+                Text('Bahnsteigplan',
+                    style: TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w600, color: fg)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Tappable category legend / filter. Collapsed to a small pill by default so

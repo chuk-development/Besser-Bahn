@@ -300,18 +300,27 @@ List<({String letter, LatLng pos})> platformSectionLine(
   StationMap map,
   MapPoi plat,
   ({String start, String end})? range,
-  String g,
-) {
+  String g, {
+  List<LatLng>? osmRail,
+}) {
   if (range == null) return const [];
   final start = letterIdx(range.start);
   final end = letterIdx(range.end);
   if (start == null || end == null) return const [];
   final island = resolveIsland(map, plat, g, start, end);
+  // With OSM rail geometry, snap each sector's nudged cube onto the real track
+  // so the band sits exactly on the rail; without it, keep the cube positions
+  // unchanged (the existing behaviour).
+  final curve =
+      (osmRail != null && osmRail.length >= 2) ? RoutePath.build(osmRail) : null;
   return [
     for (final c in island.cubes)
       (
         letter: String.fromCharCode(65 + c.idx),
-        pos: LatLng(c.pos.latitude + island.dLat, c.pos.longitude + island.dLon),
+        pos: curve == null
+            ? LatLng(c.pos.latitude + island.dLat,
+                c.pos.longitude + island.dLon)
+            : curve.pointAt(curve.locate(_nudgedCube(island, c.pos))),
       ),
   ];
 }
@@ -367,6 +376,7 @@ List<({List<LatLng> outline, Coach coach, bool boarding})> platformTrainCars(
   required String gleis,
   ({String start, String end})? section,
   required CoachSequence cs,
+  List<LatLng>? osmRail,
 }) {
   // Every early-out logs WHY there's no train at this Gleis — the diagnostic
   // for "stop X shows no train": which guard rejected it (no matching platform
@@ -402,15 +412,14 @@ List<({List<LatLng> outline, Coach coach, bool boarding})> platformTrainCars(
     return const [];
   }
 
-  // The platform's real SHAPE: an ordered, arc-length-indexed curve through its
-  // sector cubes A→I (nudged onto the boarding rail). Placing cars along THIS
-  // curve — not a straight principal-axis fit — makes the train bend exactly
-  // like the platform (Hamburg's tracks curve hard toward the throat), instead
-  // of a stiff straight body cutting across the bend.
-  final curvePts = _cubeCurvePts(island);
-  final curve = RoutePath.build(curvePts);
+  // The platform's real SHAPE the cars ride. When OSM rail geometry is supplied
+  // (the accurate track centre-line — see core/osm_rail.dart) it IS the curve,
+  // so the train bends exactly like the real track (Hamburg's tracks curve hard
+  // toward the throat). Without it we fall back BYTE-FOR-BYTE to the old
+  // straight cube-axis line — the only stable thing the mis-assigned cubes give.
+  final curve = _platformCurve(island, osmRail);
   if (curve == null) {
-    why('cube curve degenerate (${curvePts.length} pts)');
+    why('platform curve degenerate');
     return const [];
   }
 
@@ -480,6 +489,23 @@ List<({List<LatLng> outline, Coach coach, bool boarding})> platformTrainCars(
     }
   }
   return out;
+}
+
+/// The arc-length-indexed curve the train rides at the platform. When [osmRail]
+/// is non-null with ≥2 points it's the real OSM track centre-line (accurate, see
+/// core/osm_rail.dart); otherwise it's the straight cube-axis line — the exact
+/// pre-OSM fallback, so behaviour is byte-for-byte identical when OSM is
+/// unavailable. Returns null when neither yields a buildable path.
+RoutePath? _platformCurve(
+  ({List<({int idx, LatLng pos})> cubes, double dLat, double dLon, PlatformLine? axis})
+      island,
+  List<LatLng>? osmRail,
+) {
+  if (osmRail != null && osmRail.length >= 2) {
+    final c = RoutePath.build(osmRail);
+    if (c != null) return c;
+  }
+  return RoutePath.build(_cubeCurvePts(island));
 }
 
 /// Ordered points down a platform island's sector cubes — each nudged onto the
@@ -563,6 +589,7 @@ List<({List<LatLng> outline, Coach coach, bool boarding})>
   required String gleis,
   ({String start, String end})? section,
   required CoachSequence cs,
+  List<LatLng>? osmRail,
 }) {
   final coaches = cs.allCoaches
       .where((c) => c.platformPosition != null && c.platformPosition!.length > 0)
@@ -572,8 +599,7 @@ List<({List<LatLng> outline, Coach coach, bool boarding})>
   if (plat == null) return const [];
   final island = resolveIsland(map, plat, gleis, 0, 8);
   if (island.cubes.length < 2) return const [];
-  final curvePts = _cubeCurvePts(island);
-  final curve = RoutePath.build(curvePts);
+  final curve = _platformCurve(island, osmRail);
   if (curve == null) return const [];
 
   final lens = [for (final c in coaches) c.platformPosition!.length];
@@ -616,13 +642,13 @@ List<LatLng> platformGenericBody(
   ({String start, String end})? section,
   required double lengthM,
   bool highSpeed = false,
+  List<LatLng>? osmRail,
 }) {
   final plat = _platformForGleis(map, gleis);
   if (plat == null) return const [];
   final island = resolveIsland(map, plat, gleis, 0, 8);
   if (island.cubes.length < 2) return const [];
-  final curvePts = _cubeCurvePts(island);
-  final curve = RoutePath.build(curvePts);
+  final curve = _platformCurve(island, osmRail);
   if (curve == null) return const [];
   final len = lengthM <= 0 ? curve.length : math.min(lengthM, curve.length);
   final startArc = _anchorStartArc(curve, island, section, len);
@@ -665,6 +691,17 @@ double _anchorStartArc(
   final maxStart = curve.length - lengthM;
   if (maxStart > 0) start = start.clamp(0.0, maxStart);
   return start;
+}
+
+/// The resolved sector-cube chain (A→I order) for [gleis], nudged onto the
+/// boarding rail — the trusted "which side of the platform" reference fed to
+/// `osmRailForGleis` to pick the Gleis-side edge of the OSM platform area.
+/// Empty when the Gleis/island can't be resolved.
+List<LatLng> platformCubeSide(StationMap map, String gleis) {
+  final plat = _platformForGleis(map, gleis);
+  if (plat == null) return const [];
+  final island = resolveIsland(map, plat, gleis, 0, 8);
+  return [for (final c in island.cubes) _nudgedCube(island, c.pos)];
 }
 
 /// The platform POI whose normalised name matches [gleis], or null.
