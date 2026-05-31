@@ -962,8 +962,8 @@ def check_osm_platform_geometry() -> str:
     # the main instance 504s under load, so try mirrors before failing.
     endpoints = [
         "https://overpass-api.de/api/interpreter",
+        "https://overpass.openstreetmap.fr/api/interpreter",
         "https://overpass.kumi.systems/api/interpreter",
-        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     ]
     resp = None
     last = None

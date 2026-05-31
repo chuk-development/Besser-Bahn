@@ -35,12 +35,15 @@ class OsmPlatformService {
   OsmPlatformService._();
   static final OsmPlatformService instance = OsmPlatformService._();
 
-  /// Public Overpass endpoints, tried in order — the main instance 504s under
-  /// load, so we fall through to mirrors before giving up. Keyless.
+  /// Public Overpass endpoints, tried in order — the primary can 504/throttle
+  /// under load, so we fall through before giving up. Keyless. EU-hosted only,
+  /// by design: a German rail app must not be seen calling a Russian endpoint in
+  /// its traffic (the old maps.mail.ru mirror is gone). Both fallbacks were
+  /// verified to return full data with our descriptive UA.
   static const _endpoints = [
-    'https://overpass-api.de/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter',
-    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+    'https://overpass-api.de/api/interpreter', // DE — primary
+    'https://overpass.openstreetmap.fr/api/interpreter', // FR — fast fallback
+    'https://overpass.kumi.systems/api/interpreter', // DE — last resort
   ];
 
   /// Overpass etiquette: identify the app. A browser/curl/empty UA is 406'd by
