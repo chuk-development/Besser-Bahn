@@ -23,7 +23,7 @@ import '../../services/db_api_service.dart';
 import '../../widgets/departure_card.dart';
 import '../../widgets/fahrgastrechte_card.dart';
 import '../../widgets/prediction_badge.dart';
-import '../../widgets/trip_progress_card.dart';
+import '../../widgets/trip_progress_inline.dart';
 import '../../widgets/trwl_checkin_sheet.dart';
 import '../train_lookup/widgets/train_detail_view.dart';
 import 'widgets/leg_switcher.dart';
@@ -200,13 +200,12 @@ class _ConnectionDetailScreenState
         children: [
           _summary(context),
           // Live companion cards (each self-hides when not applicable):
-          // Fahrgastrechte claim on a 60+ min late arrival; one combined
-          // pre-departure card (countdown + "wann musst du los"), which
-          // disappears once the train has left; and the on-board progress bar
-          // that only appears once moving.
+          // Fahrgastrechte claim on a 60+ min late arrival, and one combined
+          // pre-departure card (countdown + "wann musst du los") that
+          // disappears once the train has left. The on-board progress lives
+          // folded into the summary block above (TripProgressInline).
           FahrgastrechteCard(journey: journey),
           DepartureCard(journey: journey),
-          TripProgressCard(journey: journey, onBoardOnly: true),
           for (var i = 0; i < legs.length; i++) ...[
             if (i > 0) _transfer(context, ref, legs[i - 1], legs[i]),
             if (legs[i].isWalking)
@@ -501,6 +500,9 @@ class _ConnectionDetailScreenState
             const Divider(height: 1),
             const SizedBox(height: 10),
             PredictionBadge(journey: journey, axis: Axis.horizontal),
+            // Live "Reisefortschritt" folded into this main block (instead of a
+            // separate card) — only while on board, else it collapses.
+            TripProgressInline(journey: journey),
           ],
         ),
       ),
