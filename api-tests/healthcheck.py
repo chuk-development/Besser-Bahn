@@ -970,7 +970,8 @@ def check_osm_platform_geometry() -> str:
     for endpoint in endpoints:
         try:
             r = requests.post(endpoint, data={"data": ql},
-                              headers={"User-Agent": DBNAV_UA}, timeout=TIMEOUT)
+                              headers={"User-Agent": "BesserBahn/1.0 (+https://bahn.chuk.dev)",
+                                       "Accept": "*/*"}, timeout=TIMEOUT)
             if r.status_code == 200:
                 resp = r
                 break

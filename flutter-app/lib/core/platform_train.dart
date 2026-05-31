@@ -417,7 +417,7 @@ List<({List<LatLng> outline, Coach coach, bool boarding})> platformTrainCars(
   // so the train bends exactly like the real track (Hamburg's tracks curve hard
   // toward the throat). Without it we fall back BYTE-FOR-BYTE to the old
   // straight cube-axis line — the only stable thing the mis-assigned cubes give.
-  final curve = _platformCurve(island, osmRail);
+  final curve = _platformCurve(osmRail);
   if (curve == null) {
     why('platform curve degenerate');
     return const [];
@@ -491,80 +491,15 @@ List<({List<LatLng> outline, Coach coach, bool boarding})> platformTrainCars(
   return out;
 }
 
-/// The arc-length-indexed curve the train rides at the platform. When [osmRail]
-/// is non-null with ≥2 points it's the real OSM track centre-line (accurate, see
-/// core/osm_rail.dart); otherwise it's the straight cube-axis line — the exact
-/// pre-OSM fallback, so behaviour is byte-for-byte identical when OSM is
-/// unavailable. Returns null when neither yields a buildable path.
-RoutePath? _platformCurve(
-  ({List<({int idx, LatLng pos})> cubes, double dLat, double dLon, PlatformLine? axis})
-      island,
-  List<LatLng>? osmRail,
-) {
-  if (osmRail != null && osmRail.length >= 2) {
-    final c = RoutePath.build(osmRail);
-    if (c != null) return c;
-  }
-  return RoutePath.build(_cubeCurvePts(island));
-}
-
-/// Ordered points down a platform island's sector cubes — each nudged onto the
-/// boarding rail — forming the platform's real centreline (the spine for the
-/// per-car, composition and generic bodies).
-///
-/// MEASURED REALITY (Kiel + Hamburg fixtures): the bahnhof.de sector cubes are
-/// badly mis-assigned per letter — a single Abschnitt sits 28 m (Kiel) to 60 m
-/// (Hamburg) off the platform line, which is physically impossible for one
-/// sector. So we CANNOT draw a trustworthy curve by connecting the cubes: every
-/// attempt (raw chaining, axis-projection, parabola fit, spike removal)
-/// zig-zagged, folded, or gave wildly different shapes per Gleis. Instead we lay
-/// the train STRAIGHT along the platform's best-fit axis: that axis is dominated
-/// by the platform's LENGTH, so the cross-track contamination barely rotates it,
-/// giving a stable, correctly-placed straight body. A genuinely curved body
-/// would need a clean geometry source (e.g. the track polyline), not these
-/// cubes.
-List<LatLng> _cubeCurvePts(
-    ({List<({int idx, LatLng pos})> cubes, double dLat, double dLon, PlatformLine? axis})
-        island) {
-  final cubes = island.cubes;
-  LatLng nud(LatLng p) =>
-      LatLng(p.latitude + island.dLat, p.longitude + island.dLon);
-  if (cubes.length < 2) return [for (final c in cubes) nud(c.pos)];
-
-  final lat0 =
-      cubes.map((c) => c.pos.latitude).reduce((a, b) => a + b) / cubes.length;
-  const mlat = 111320.0;
-  final mlon = 111320.0 * math.cos(lat0 * math.pi / 180);
-  math.Point<double> xy(LatLng p) => math.Point(p.longitude * mlon, p.latitude * mlat);
-  LatLng ll(math.Point<double> p) => LatLng(p.y / mlat, p.x / mlon);
-
-  // Place the train STRAIGHT along the platform's principal axis. We measured
-  // the bahnhof.de sector cubes and they are badly MIS-ASSIGNED: a single
-  // sector "jumps" 28 m (Kiel) to 60 m (Hamburg) sideways off the platform line
-  // — physically impossible for one Abschnitt, so the per-letter cube positions
-  // can't be trusted to draw a curve (every attempt zig-zagged or folded). The
-  // best-fit axis through the cubes, by contrast, is dominated by the platform's
-  // LENGTH, so the cross-track contamination barely tilts it — a robust, stable
-  // straight line at the right place. (A true curve needs a clean source, e.g.
-  // the track polyline; the cubes aren't it.)
-  final pts = [for (final c in cubes) xy(c.pos)];
-  final axis = fitLine(pts);
-  if (axis == null) return [for (final c in cubes) nud(c.pos)];
-
-  // Project the cubes onto the axis to get the platform's extent, then extend
-  // past both ends so a train longer than the cube span keeps going.
-  var tMin = double.infinity, tMax = -double.infinity;
-  for (final p in pts) {
-    final t = (p.x - axis.cx) * axis.dx + (p.y - axis.cy) * axis.dy;
-    if (t < tMin) tMin = t;
-    if (t > tMax) tMax = t;
-  }
-  const ext = 60.0;
-  tMin -= ext;
-  tMax += ext;
-  math.Point<double> at(double t) =>
-      math.Point(axis.cx + axis.dx * t, axis.cy + axis.dy * t);
-  return [nud(ll(at(tMin))), nud(ll(at(tMax)))];
+/// The arc-length-indexed curve the train rides at the platform: the real OSM
+/// track centre-line ([osmRail], see core/osm_rail.dart). Returns null when we
+/// have no trusted rail — there is NO cube fallback: if we don't know where the
+/// track actually is, we draw no train rather than guess from the mis-assigned
+/// bahnhof.de cubes (which sit 28–60 m off the real line). The cubes are still
+/// used elsewhere ONLY to anchor the DB metre axis onto this curve.
+RoutePath? _platformCurve(List<LatLng>? osmRail) {
+  if (osmRail == null || osmRail.length < 2) return null;
+  return RoutePath.build(osmRail);
 }
 
 /// The boarding-rail-nudged LatLng of a resolved sector cube.
@@ -599,7 +534,7 @@ List<({List<LatLng> outline, Coach coach, bool boarding})>
   if (plat == null) return const [];
   final island = resolveIsland(map, plat, gleis, 0, 8);
   if (island.cubes.length < 2) return const [];
-  final curve = _platformCurve(island, osmRail);
+  final curve = _platformCurve(osmRail);
   if (curve == null) return const [];
 
   final lens = [for (final c in coaches) c.platformPosition!.length];
@@ -648,7 +583,7 @@ List<LatLng> platformGenericBody(
   if (plat == null) return const [];
   final island = resolveIsland(map, plat, gleis, 0, 8);
   if (island.cubes.length < 2) return const [];
-  final curve = _platformCurve(island, osmRail);
+  final curve = _platformCurve(osmRail);
   if (curve == null) return const [];
   final len = lengthM <= 0 ? curve.length : math.min(lengthM, curve.length);
   final startArc = _anchorStartArc(curve, island, section, len);

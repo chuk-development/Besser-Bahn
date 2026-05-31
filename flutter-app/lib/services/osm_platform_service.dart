@@ -6,7 +6,6 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 import '../core/app_log.dart';
-import '../core/constants.dart';
 
 /// One station's OpenStreetMap platform + rail geometry, the accurate source for
 /// WHERE each track is (verified against satellite — see
@@ -43,6 +42,10 @@ class OsmPlatformService {
     'https://overpass.kumi.systems/api/interpreter',
     'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   ];
+
+  /// Overpass etiquette: identify the app. A browser/curl/empty UA is 406'd by
+  /// overpass-api.de's WAF — a descriptive UA is what makes the primary work.
+  static const _userAgent = 'BesserBahn/1.0 (+https://bahn.chuk.dev)';
 
   /// Search radius around the station centre — comfortably covers a big Hbf's
   /// platform fan without dragging in a whole city's tracks.
@@ -125,8 +128,12 @@ class OsmPlatformService {
               .post(
                 Uri.parse(endpoint),
                 headers: {
-                  'User-Agent': ApiConstants.userAgent,
-                  'Accept': 'application/json',
+                  // A DESCRIPTIVE app User-Agent is mandatory: overpass-api.de's
+                  // WAF answers 406 to browser/curl/empty UAs (verified), which
+                  // is exactly why the fast primary failed on-device and only the
+                  // slow mirror was left. Identifying the app fixes it.
+                  'User-Agent': _userAgent,
+                  'Accept': '*/*',
                   'Content-Type': 'application/x-www-form-urlencoded',
                 },
                 body: {'data': ql},
