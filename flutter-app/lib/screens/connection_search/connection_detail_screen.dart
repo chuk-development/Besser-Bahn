@@ -20,7 +20,10 @@ import '../../providers/settings_provider.dart';
 import '../../providers/split_ticket_provider.dart';
 import '../../providers/station_map_provider.dart';
 import '../../services/db_api_service.dart';
+import '../../widgets/fahrgastrechte_card.dart';
+import '../../widgets/leave_by_card.dart';
 import '../../widgets/prediction_badge.dart';
+import '../../widgets/trip_progress_card.dart';
 import '../../widgets/trwl_checkin_sheet.dart';
 import '../train_lookup/widgets/train_detail_view.dart';
 import 'widgets/leg_switcher.dart';
@@ -51,6 +54,13 @@ class _ConnectionDetailScreenState
   // match the custom combination).
   late Journey _journey = widget.journey;
   Journey get journey => _journey;
+
+  /// True while the trip hasn't departed yet — gates the "wann musst du los"
+  /// door-to-door card (pointless once you're already rolling).
+  bool get _isUpcoming {
+    final dep = _journey.departure ?? _journey.plannedDeparture;
+    return dep != null && dep.isAfter(DateTime.now());
+  }
 
   /// Bumped on pull-to-refresh — part of each leg section's key, so bumping it
   /// rebuilds them fresh and re-triggers their trip fetch.
@@ -186,6 +196,13 @@ class _ConnectionDetailScreenState
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
           _summary(context),
+          // Live companion cards (each self-hides when not applicable):
+          // Fahrgastrechte claim on a 60+ min late arrival, the door-to-door
+          // "wann musst du los", and the countdown / progress for an
+          // upcoming or in-progress trip.
+          FahrgastrechteCard(journey: journey),
+          if (_isUpcoming) LeaveByCard(journey: journey),
+          TripProgressCard(journey: journey),
           for (var i = 0; i < legs.length; i++) ...[
             if (i > 0) _transfer(context, ref, legs[i - 1], legs[i]),
             if (legs[i].isWalking)
