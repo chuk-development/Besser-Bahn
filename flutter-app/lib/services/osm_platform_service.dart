@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../core/app_log.dart';
 
@@ -64,7 +66,15 @@ class OsmPlatformService {
   /// a big station doesn't strand it on the cube line permanently.
   static const _maxAttempts = 4;
 
+  /// On-disk cache format version. Station geometry is static (tracks don't
+  /// move), so a stored hit is reused forever — bump this only when the stored
+  /// shape changes, to invalidate every old file at once.
+  static const _diskV = 1;
+
   final http.Client _client = http.Client();
+
+  /// The on-disk cache directory, resolved once.
+  Directory? _dir;
 
   /// slug → resolved geometry (or null = "fetched a 200 with nothing usable").
   /// ONLY a real response settles the cache; a transient all-mirrors failure is
@@ -99,6 +109,18 @@ class OsmPlatformService {
 
   Future<OsmPlatformGeometry?> _fetch(String slug, LatLng center) async {
     try {
+      // Disk cache first: a stored hit skips the slow (10–20 s) Overpass
+      // round-trip entirely, so a revisited station's train draws as fast as
+      // the map. The geometry is static, so there's no expiry.
+      final disk = await _readDisk(slug);
+      if (disk != null) {
+        AppLog.log(
+            'OSM disk "$slug": ${disk.platforms.length} platforms, '
+            '${disk.rails.length} rails',
+            tag: 'osm');
+        _attempts.remove(slug);
+        return _settle(slug, disk);
+      }
       // bbox ~radius around the centre (equirectangular metres → degrees).
       final dLat = _radiusM / 111320.0;
       final dLon =
@@ -183,9 +205,11 @@ class OsmPlatformService {
           '${rails.length} rails',
           tag: 'osm');
       // Empty (no platforms or no rails) is treated as "nothing usable" → null,
-      // so the caller falls back to cubes; but we still cache it as resolved.
+      // so the caller draws no train; but we still cache it as resolved.
       _attempts.remove(slug);
-      return _settle(slug, geometry.isEmpty ? null : geometry);
+      final usable = geometry.isEmpty ? null : geometry;
+      if (usable != null) await _writeDisk(slug, usable);
+      return _settle(slug, usable);
     } catch (e) {
       AppLog.log('OSM overpass "$slug" failed: $e', tag: 'osm');
       return _transient(slug);
@@ -206,6 +230,84 @@ class OsmPlatformService {
     final n = (_attempts[slug] ?? 0) + 1;
     _attempts[slug] = n;
     return n >= _maxAttempts ? _settle(slug, null) : null;
+  }
+
+  /// The on-disk cache directory (`<appSupport>/osm_platforms`), created once.
+  /// Null when the platform has no filesystem — then we run memory-only.
+  Future<Directory?> _cacheDir() async {
+    if (_dir != null) return _dir;
+    try {
+      final base = await getApplicationSupportDirectory();
+      final d = Directory('${base.path}/osm_platforms');
+      if (!await d.exists()) await d.create(recursive: true);
+      return _dir = d;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The cache file for [slug] (slug sanitised to a safe filename).
+  File _fileFor(Directory dir, String slug) {
+    final safe = slug.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    return File('${dir.path}/$safe.json');
+  }
+
+  /// Read a stored geometry for [slug], or null on miss / version mismatch /
+  /// any error (always soft — a bad file just means a fresh fetch).
+  Future<OsmPlatformGeometry?> _readDisk(String slug) async {
+    try {
+      final dir = await _cacheDir();
+      if (dir == null) return null;
+      final f = _fileFor(dir, slug);
+      if (!await f.exists()) return null;
+      final m = json.decode(await f.readAsString()) as Map<String, dynamic>;
+      if (m['v'] != _diskV) return null;
+      List<LatLng> pts(List? raw) => [
+            for (final c in raw ?? const [])
+              if (c is List && c.length >= 2)
+                LatLng((c[0] as num).toDouble(), (c[1] as num).toDouble())
+          ];
+      final platforms = <({String ref, List<LatLng> pts})>[];
+      for (final p in (m['platforms'] as List? ?? const [])) {
+        if (p is! Map) continue;
+        final ps = pts(p['p'] as List?);
+        if (ps.length >= 2 && p['r'] is String) {
+          platforms.add((ref: p['r'] as String, pts: ps));
+        }
+      }
+      final rails = <List<LatLng>>[];
+      for (final r in (m['rails'] as List? ?? const [])) {
+        final ps = pts(r as List?);
+        if (ps.length >= 2) rails.add(ps);
+      }
+      final g = OsmPlatformGeometry(platforms: platforms, rails: rails);
+      return g.isEmpty ? null : g;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Persist [g] for [slug] as compact JSON ([[lat,lon], …] arrays). Best
+  /// effort — a write failure just means the next visit refetches.
+  Future<void> _writeDisk(String slug, OsmPlatformGeometry g) async {
+    try {
+      final dir = await _cacheDir();
+      if (dir == null) return;
+      final m = {
+        'v': _diskV,
+        'platforms': [
+          for (final p in g.platforms)
+            {
+              'r': p.ref,
+              'p': [for (final q in p.pts) [q.latitude, q.longitude]],
+            }
+        ],
+        'rails': [
+          for (final r in g.rails) [for (final q in r) [q.latitude, q.longitude]]
+        ],
+      };
+      await _fileFor(dir, slug).writeAsString(json.encode(m));
+    } catch (_) {}
   }
 }
 

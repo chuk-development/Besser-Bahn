@@ -284,15 +284,18 @@ class _TrainMapState extends ConsumerState<TrainMap> {
       final i = _queue.removeAt(0);
       final s = stops[i];
       final sw = Stopwatch()..start();
-      if (line.fahrtNr.isNotEmpty) {
-        await coachSvc.getCoachSequenceForDeparture(
-          category: line.productName,
-          trainNumber: line.fahrtNr,
-          stationEva: s.stop.id,
-          departureTime: s.departure ?? s.arrival,
-        );
-      }
-      if (!mounted) break;
+      // Kick the Wagenreihung and the station map CONCURRENTLY — they're
+      // independent endpoints, so awaiting them in series needlessly doubled
+      // the wait before a train could draw. Start the coach fetch (don't await
+      // yet), fetch the map, then join the coach future.
+      final coachFut = line.fahrtNr.isNotEmpty
+          ? coachSvc.getCoachSequenceForDeparture(
+              category: line.productName,
+              trainNumber: line.fahrtNr,
+              stationEva: s.stop.id,
+              departureTime: s.departure ?? s.arrival,
+            )
+          : null;
       var failed = false;
       var permanent = false;
       try {
@@ -302,6 +305,11 @@ class _TrainMapState extends ConsumerState<TrainMap> {
         permanent = !e.transient; // 404 / no map data → never retry
       } catch (_) {
         failed = true;
+      }
+      if (coachFut != null) {
+        try {
+          await coachFut;
+        } catch (_) {}
       }
       if (!mounted) break;
       AppLog.log(
