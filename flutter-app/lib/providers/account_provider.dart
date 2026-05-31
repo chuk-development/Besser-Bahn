@@ -146,3 +146,25 @@ final ticketProvider =
   final parts = key.split('/');
   return ref.read(dbAccountServiceProvider).ticket(parts[0], parts[1]);
 });
+
+/// Maps a locally-saved journey key → the `rkUuid` of the matching DB "Meine
+/// Reisen" trip created when the user bookmarked it while logged in, so the
+/// same bookmark can remove it from the DB account again. In-memory for the
+/// session (cross-session removal reconciles via the trip overview).
+class DbSavedReiseIds extends Notifier<Map<String, String>> {
+  @override
+  Map<String, String> build() => {};
+
+  void put(String key, String rkUuid) => state = {...state, key: rkUuid};
+
+  /// Removes and returns the stored id for [key] (null if none).
+  String? take(String key) {
+    final id = state[key];
+    if (id != null) state = {...state}..remove(key);
+    return id;
+  }
+}
+
+final dbSavedReiseIdsProvider =
+    NotifierProvider<DbSavedReiseIds, Map<String, String>>(
+        DbSavedReiseIds.new);

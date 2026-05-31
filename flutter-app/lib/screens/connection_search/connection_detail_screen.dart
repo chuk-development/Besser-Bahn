@@ -15,6 +15,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../providers/library_provider.dart';
+import '../../providers/account_provider.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/split_ticket_provider.dart';
@@ -184,6 +185,10 @@ class _ConnectionDetailScreenState
                 if (!wasSaved) {
                   autoCheckinSavedJourney(context, ref, journey);
                 }
+                // When signed into a DB account, mirror the bookmark to the
+                // official "Meine Reisen" so it also lives in the DB account
+                // (and gets DB's delay tracking). Best-effort, never blocks UI.
+                _syncDbReise(ref, key, saved: !wasSaved);
               },
             );
           }),
@@ -244,6 +249,40 @@ class _ConnectionDetailScreenState
         ),
       ),
     );
+  }
+
+  /// Mirror a bookmark toggle to the signed-in DB account's "Meine Reisen".
+  /// No-op when logged out, or when the journey lacks a recon context /
+  /// location ids (then it stays a purely local bookmark).
+  Future<void> _syncDbReise(WidgetRef ref, String key,
+      {required bool saved}) async {
+    if (!ref.read(dbAuthProvider).isLoggedIn) return;
+    final service = ref.read(dbAccountServiceProvider);
+    final ids = ref.read(dbSavedReiseIdsProvider.notifier);
+    try {
+      if (saved) {
+        final kontext = journey.refreshToken;
+        final from = journey.origin?.locationId;
+        final to = journey.destination?.locationId;
+        final dep = journey.plannedDeparture ?? journey.departure;
+        if (kontext == null || !kontext.contains('¶') ||
+            from == null || to == null || dep == null) {
+          return; // not enough to create a DB trip — local bookmark only
+        }
+        final rkUuid = await service.saveReise(
+          kontext: kontext,
+          fromLocationId: from,
+          toLocationId: to,
+          departure: dep,
+        );
+        if (rkUuid != null) ids.put(key, rkUuid);
+      } else {
+        final rkUuid = ids.take(key);
+        if (rkUuid != null) await service.deleteReise(rkUuid);
+      }
+      // Refresh the official list so the Reisen tab reflects the change.
+      ref.invalidate(ticketIndicesProvider);
+    } catch (_) {/* best-effort — the local bookmark already succeeded */}
   }
 
   /// Prominent "Kaufen" call to action. Opens the EXACT connection on bahn.de
