@@ -8,10 +8,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../core/app_log.dart';
+import '../../../core/osm_rail.dart';
 import '../../../core/platform_train.dart' as pt;
 import '../../../core/train_dimensions.dart';
 import '../../../core/train_geometry.dart';
+import '../../../services/osm_platform_service.dart';
 import '../../../models/coach_sequence.dart';
+import '../../../models/station_map.dart';
 import '../../../models/trip.dart';
 import '../../../providers/service_providers.dart';
 import '../../../services/station_map_service.dart' show StationMapException;
@@ -337,12 +340,16 @@ class _TrainMapState extends ConsumerState<TrainMap> {
       departureTime: s.departure ?? s.arrival,
     );
     if (cs == null) return;
+    final gleis = pt.normalizeGleis(gleisRaw);
     final cars = pt.platformTrainCars(
       map,
-      gleis: pt.normalizeGleis(gleisRaw),
+      gleis: gleis,
       // Only the rider's boarding stop dims the non-boarding portion.
       section: i == _boardingIndex ? _boardingSection : null,
       cs: cs,
+      // Ride the real OSM track curve when this station's geometry is warm;
+      // else the cube fallback now, and rebuild this stop once it lands.
+      osmRail: _osmRailFor(map, gleis, rebuildStop: i),
     );
     if (cars.isNotEmpty) {
       _parked[i] = _ParkedStop(cars);
@@ -351,6 +358,37 @@ class _TrainMapState extends ConsumerState<TrainMap> {
     // If this stop is the one the rider just zoomed to, now that its map is in
     // cache we can switch the floor plan + show its labels.
     if (i == _pendingFocus) _applyFocus();
+  }
+
+  /// The real OSM rail spine for [gleis] at [map]'s station, so the parked train
+  /// rides the true track curve. Returns null (→ cube fallback) until this
+  /// station's Overpass geometry is warm; the first miss kicks off the fetch and
+  /// rebuilds [rebuildStop] once it lands. Soft-fails: a station with no usable
+  /// OSM geometry just stays on the cube placement.
+  List<LatLng>? _osmRailFor(StationMap map, String gleis,
+      {required int rebuildStop}) {
+    final svc = OsmPlatformService.instance;
+    final geom = svc.cached(map.slug);
+    if (geom == null) {
+      if (!svc.isResolved(map.slug)) {
+        svc.fetch(map.slug, map.center).then((_) {
+          if (!mounted) return;
+          _done.remove(rebuildStop);
+          _buildParked(rebuildStop);
+        });
+      }
+      return null;
+    }
+    if (gleis.isEmpty) return null;
+    final cubeSide = pt.platformCubeSide(map, gleis);
+    if (cubeSide.length < 2) return null;
+    final rail = osmRailForGleis(
+      platforms: geom.platforms,
+      rails: geom.rails,
+      gleis: gleis,
+      cubeSide: cubeSide,
+    );
+    return rail.length >= 2 ? rail : null;
   }
 
   /// The stop the rider boards at, resolved from the leg's [boardingId] (EVA,
