@@ -176,6 +176,12 @@ class DbBahnCard {
   final String klasse; // KLASSE_1 / KLASSE_2
   final String? gueltigAb; // YYYY-MM-DD
   final String? gueltigBis;
+
+  /// DB rotates the Kontrollsicht PNG periodically as anti-fraud measure;
+  /// this is the date until which the cached image is considered valid for
+  /// a ticket check. Past it, the app should re-fetch.
+  final String? kontrollSichtGueltigBis;
+
   final bool business;
   final Uint8List? bildSicht; // decoded card face PNG
   final Uint8List? kontrollSicht; // decoded control-view PNG
@@ -188,6 +194,7 @@ class DbBahnCard {
     this.karteninhaber,
     this.gueltigAb,
     this.gueltigBis,
+    this.kontrollSichtGueltigBis,
     this.business = false,
     this.bildSicht,
     this.kontrollSicht,
@@ -203,10 +210,30 @@ class DbBahnCard {
         klasse: (j['klasse'] ?? 'KLASSE_2').toString(),
         gueltigAb: j['gueltigAb'] as String?,
         gueltigBis: j['gueltigBis'] as String?,
+        kontrollSichtGueltigBis: j['kontrollSichtGueltigBis'] as String?,
         business: j['isBahnCardBusiness'] as bool? ?? false,
         bildSicht: _decodePng(j['bildSicht'] as String?),
         kontrollSicht: _decodePng(j['kontrollSicht'] as String?),
       );
+
+  /// Persistable shape — mirrors the API JSON so the same [fromJson] reads
+  /// it back. Used by the on-disk cache so the BahnCard view (incl. the
+  /// Kontrollansicht PNG) survives offline / between launches.
+  Map<String, dynamic> toJson() => {
+        'bahnCardNummer': nummer,
+        'bahnCardTyp': typ,
+        'produktBezeichnung': produktBezeichnung,
+        if (karteninhaber != null) 'karteninhaber': karteninhaber,
+        'klasse': klasse,
+        if (gueltigAb != null) 'gueltigAb': gueltigAb,
+        if (gueltigBis != null) 'gueltigBis': gueltigBis,
+        if (kontrollSichtGueltigBis != null)
+          'kontrollSichtGueltigBis': kontrollSichtGueltigBis,
+        'isBahnCardBusiness': business,
+        if (bildSicht != null) 'bildSicht': base64Encode(bildSicht!),
+        if (kontrollSicht != null)
+          'kontrollSicht': base64Encode(kontrollSicht!),
+      };
 
   static Uint8List? _decodePng(String? b64) {
     if (b64 == null || b64.isEmpty) return null;

@@ -237,8 +237,9 @@ class _LoggedIn extends ConsumerWidget {
                                 color: Theme.of(context).colorScheme.error)),
                       ),
                       TextButton(
-                        onPressed: () =>
-                            ref.invalidate(bahncardsProvider),
+                        onPressed: () => ref
+                            .read(bahncardsProvider.notifier)
+                            .refresh(),
                         child: const Text('Erneut'),
                       ),
                     ],

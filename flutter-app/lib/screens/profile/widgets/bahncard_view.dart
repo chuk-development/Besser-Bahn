@@ -238,9 +238,16 @@ class _BahnCardControlScreen extends StatelessWidget {
                   style: const TextStyle(color: Colors.white54, fontSize: 12)),
               if (card.gueltigBis != null)
                 Text(
-                  'Gültig bis ${_fmt(card.gueltigBis!)}',
+                  'BahnCard gültig bis ${_fmt(card.gueltigBis!)}',
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              if (card.kontrollSichtGueltigBis != null)
+                Text(
+                  'Kontrollansicht gültig bis '
+                  '${_fmt(card.kontrollSichtGueltigBis!)}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white38, fontSize: 11),
                 ),
             ],
           ),

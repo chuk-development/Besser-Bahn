@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/app_log.dart';
 import '../models/db_account.dart';
@@ -10,6 +13,71 @@ import '../services/db_account_service.dart';
 import 'library_provider.dart';
 import 'service_providers.dart';
 import 'settings_provider.dart';
+
+/// On-disk persistence for the BahnCard list — including the bildSicht +
+/// kontrollSicht PNGs that take ~100 KB total. Lets the BahnCard view (and
+/// the Kontrollansicht) work offline and across cold starts, exactly like
+/// the official DB Navigator caches it locally.
+class _BahnCardCache {
+  static const _kKey = 'db_bahncards_cache_v2';
+
+  static Future<({List<DbBahnCard> cards, DateTime? fetchedAt})> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kKey);
+      if (raw == null || raw.isEmpty) {
+        return (cards: const <DbBahnCard>[], fetchedAt: null);
+      }
+      final data = json.decode(raw);
+      if (data is Map<String, dynamic>) {
+        final list = (data['cards'] as List<dynamic>? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(DbBahnCard.fromJson)
+            .toList();
+        final ts = data['fetchedAtMs'] as int?;
+        return (
+          cards: list,
+          fetchedAt: ts != null
+              ? DateTime.fromMillisecondsSinceEpoch(ts)
+              : null
+        );
+      }
+      // Migrate v1 (bare list) → v2 wrapper.
+      if (data is List) {
+        final list = data
+            .whereType<Map<String, dynamic>>()
+            .map(DbBahnCard.fromJson)
+            .toList();
+        return (cards: list, fetchedAt: null);
+      }
+      return (cards: const <DbBahnCard>[], fetchedAt: null);
+    } catch (_) {
+      return (cards: const <DbBahnCard>[], fetchedAt: null);
+    }
+  }
+
+  static Future<void> save(List<DbBahnCard> cards) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _kKey,
+        json.encode({
+          'fetchedAtMs': DateTime.now().millisecondsSinceEpoch,
+          'cards': cards.map((c) => c.toJson()).toList(),
+        }),
+      );
+    } catch (_) {/* best effort */}
+  }
+
+  static Future<void> clear() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kKey);
+      // Also drop the v1 key from the old cache shape if it lingers.
+      await prefs.remove('db_bahncards_cache_v1');
+    } catch (_) {}
+  }
+}
 
 /// Auth state for the DB account login.
 class DbAuthState {
@@ -172,6 +240,9 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
     // sync and were never used locally — leftover would otherwise leak the
     // signed-out account's data into the Schnellauswahl.
     ref.read(libraryProvider.notifier).dropServerFavorites();
+    // And drop the cached BahnCard list so a signed-out user can't open the
+    // Kontrollansicht of the previous holder.
+    await _BahnCardCache.clear();
   }
 
   /// Re-pull the profile (e.g. pull-to-refresh on the Profile tab).
@@ -212,12 +283,75 @@ final bahnbonusProvider = FutureProvider<DbBahnBonus?>((ref) async {
   return ref.read(dbAccountServiceProvider).bahnbonus();
 });
 
-/// The user's BahnCards.
-final bahncardsProvider = FutureProvider<List<DbBahnCard>>((ref) async {
-  final auth = ref.watch(dbAuthProvider);
-  if (!auth.isLoggedIn) return const [];
-  return ref.read(dbAccountServiceProvider).bahncards();
-});
+/// The user's BahnCards — stale-while-revalidate. On startup the on-disk
+/// cache returns instantly so the BahnCard / Kontrollansicht works offline;
+/// a background refresh updates the cache if the network is reachable. The
+/// "Aktualisieren" button calls [BahncardsController.refresh] for an
+/// explicit foreground re-fetch (rate-limited by the service layer).
+class BahncardsController extends AsyncNotifier<List<DbBahnCard>> {
+  @override
+  Future<List<DbBahnCard>> build() async {
+    final auth = ref.watch(dbAuthProvider);
+    if (!auth.isLoggedIn) {
+      // Don't surface a signed-out account's cache.
+      return const [];
+    }
+    final entry = await _BahnCardCache.load();
+    if (entry.cards.isNotEmpty) {
+      // Stale-while-revalidate, but only re-fetch once per calendar day —
+      // the user asked for "auto-refresh wenn die App am Tag geöffnet wird",
+      // not "spam every open". Same-day cache hit serves silently.
+      if (entry.fetchedAt == null || !_sameDay(entry.fetchedAt!, DateTime.now())) {
+        _refreshInBackground();
+      }
+      return entry.cards;
+    }
+    // No cache yet — block on the network for the very first fetch.
+    return _fetchAndPersist();
+  }
+
+  bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  /// Foreground refresh — the Profile "Aktualisieren" button.
+  Future<void> refresh() async {
+    state = const AsyncLoading();
+    try {
+      final fresh = await _fetchAndPersist();
+      state = AsyncData(fresh);
+    } catch (e, st) {
+      // Keep showing the cache on failure so the rider isn't stranded.
+      final entry = await _BahnCardCache.load();
+      if (entry.cards.isNotEmpty) {
+        state = AsyncData(entry.cards);
+      } else {
+        state = AsyncError(e, st);
+      }
+    }
+  }
+
+  Future<List<DbBahnCard>> _fetchAndPersist() async {
+    final fresh = await ref.read(dbAccountServiceProvider).bahncards();
+    await _BahnCardCache.save(fresh);
+    return fresh;
+  }
+
+  void _refreshInBackground() {
+    Future.microtask(() async {
+      try {
+        final fresh = await _fetchAndPersist();
+        state = AsyncData(fresh);
+      } catch (e) {
+        AppLog.log('bahncards background refresh failed: $e',
+            tag: 'db-account');
+      }
+    });
+  }
+}
+
+final bahncardsProvider =
+    AsyncNotifierProvider<BahncardsController, List<DbBahnCard>>(
+        BahncardsController.new);
 
 /// Full "Meine Reisen" overview from DB (orders + tracked-but-unpaid trips).
 /// Cached for the session; both [ticketIndicesProvider] and
