@@ -110,12 +110,10 @@ class TicketViewScreen extends ConsumerWidget {
     final reservations = ticket.asData?.value.reservierungen ?? const [];
 
     return Scaffold(
-      // White all the way through, like the official app.
-      backgroundColor: Colors.white,
+      // Theme background (the dark/brown app surface) shows between the two
+      // white cards below — matches the DB Navigator's structure where the
+      // ticket sits visually separate from the validity header.
       appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black87,
-        elevation: 0,
         title: const Text('Ticket'),
         actions: [
           if (reservations.isNotEmpty)
@@ -143,19 +141,29 @@ class TicketViewScreen extends ConsumerWidget {
   Widget _body(BuildContext context, DbTicket t) {
     return Column(
       children: [
-        _TicketStatusBlock(ticket: t),
+        // White status card at the top of the page, sitting on the theme bg.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: _TicketStatusBlock(ticket: t),
+        ),
+        // Visible ~1cm gap of theme background between the validity header
+        // and the ticket itself — matches the official app's spacing.
+        const SizedBox(height: 24),
+        // White ticket card, bigger inset around the WebView so the QR/Aztec
+        // has equal breathing room on all sides.
         Expanded(
           child: Padding(
-            // The half-cm white border around the ticket itself, matching the
-            // official app's framing.
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(14),
               child: ColoredBox(
                 color: Colors.white,
-                child: (_webViewSupported && t.ticketHtml != null)
-                    ? _OfficialTicketWebView(html: t.ticketHtml!)
-                    : _FallbackTicket(ticket: t),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: (_webViewSupported && t.ticketHtml != null)
+                      ? _OfficialTicketWebView(html: t.ticketHtml!)
+                      : _FallbackTicket(ticket: t),
+                ),
               ),
             ),
           ),
@@ -233,11 +241,12 @@ class TicketViewScreen extends ConsumerWidget {
 
 // --- Ticket status header (matches DB Navigator's dark block) --------------
 
-/// Static status block above the ticket, mirroring the DB Navigator layout:
-/// dark-grey panel, top row carries the validity date and the Auftrags-Nr,
-/// the tariff line is large, route line small/secondary, and a coloured pill
-/// at the bottom (red ✕ "Ticket nicht mehr gültig" / green ✓ "Ticket gültig" /
-/// red ⓘ "Ticket storniert") gives the inspection-relevant state at a glance.
+/// White validity card above the ticket, mirroring the DB Navigator layout:
+/// top row is gültig-ab date (left) + Auftrags-Nr (right, tabular), big
+/// tariff line, route line small/secondary, and a status line at the bottom
+/// (red "Ticket nicht mehr gültig" / "Ticket storniert", or green "Ticket
+/// gültig" with a pulsing dot) — all on white with dark text so it sits
+/// cleanly on top of the app's themed background.
 class _TicketStatusBlock extends StatelessWidget {
   final DbTicket ticket;
   const _TicketStatusBlock({required this.ticket});
@@ -250,13 +259,10 @@ class _TicketStatusBlock extends StatelessWidget {
     final stornoed = ticket.status.toUpperCase() == 'STORNIERT';
     final valid = !expired && !stornoed;
 
-    final pillColor = stornoed || expired
-        ? const Color(0xFFD32011)
-        : const Color(0xFF0E7A2C);
-    final pillIcon = stornoed
-        ? Icons.info
-        : (expired ? Icons.cancel : Icons.check_circle);
-    final pillText = stornoed
+    final statusColor = stornoed || expired
+        ? const Color(0xFFD32011) // red
+        : const Color(0xFF0E7A2C); // green
+    final statusText = stornoed
         ? 'Ticket storniert'
         : expired
             ? 'Ticket nicht mehr gültig'
@@ -270,12 +276,15 @@ class _TicketStatusBlock extends StatelessWidget {
         : (ticket.firstClass ? 'Einzelkarte 1.Kl' : 'Einzelkarte 2.Kl');
     final route = (ticket.vonName == null && ticket.nachName == null)
         ? ''
-        : '${ticket.vonName ?? '—'} · ${ticket.nachName ?? '—'}';
+        : '${ticket.vonName ?? '—'} → ${ticket.nachName ?? '—'}';
 
     return Container(
       width: double.infinity,
-      color: const Color(0xFF1F1F22),
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -284,13 +293,14 @@ class _TicketStatusBlock extends StatelessWidget {
             children: [
               Text(date,
                   style: const TextStyle(
-                      color: Colors.white, fontSize: 13,
+                      color: Colors.black87,
+                      fontSize: 13,
                       fontWeight: FontWeight.w600)),
               const Spacer(),
               Text(
                 ticket.auftragsnummer,
                 style: const TextStyle(
-                    color: Colors.white70,
+                    color: Colors.black54,
                     fontSize: 13,
                     fontFeatures: [FontFeature.tabularFigures()]),
               ),
@@ -300,48 +310,35 @@ class _TicketStatusBlock extends StatelessWidget {
           // Tariff (the headline).
           Text(tariff,
               style: const TextStyle(
-                  color: Colors.white,
+                  color: Colors.black87,
                   fontSize: 15,
                   fontWeight: FontWeight.bold)),
           if (route.isNotEmpty) ...[
             const SizedBox(height: 2),
             Text(route,
-                style: const TextStyle(color: Colors.white60, fontSize: 12)),
+                style: const TextStyle(color: Colors.black54, fontSize: 12)),
           ],
           const SizedBox(height: 8),
-          // Status pill.
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: pillColor,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(pillIcon, color: Colors.white, size: 16),
+          // Status text — red when expired/storniert, green when valid; a
+          // small pulsing dot rides next to the valid state as a cheap "live"
+          // proof a screenshot can't fake.
+          Row(
+            children: [
+              if (valid) ...[
+                const _LiveDot(),
                 const SizedBox(width: 6),
-                Text(pillText,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600)),
+              ] else ...[
+                Icon(stornoed ? Icons.info : Icons.cancel,
+                    color: statusColor, size: 16),
+                const SizedBox(width: 4),
               ],
-            ),
+              Text(statusText,
+                  style: TextStyle(
+                      color: statusColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700)),
+            ],
           ),
-          // Tiny "ticket valid" shimmer marker for the corner — purely visual
-          // anti-screenshot proof that this is the live app, not a still
-          // picture. Sits under the pill on the right so it doesn't compete
-          // with the pill text.
-          if (valid)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: const [_LiveDot()],
-              ),
-            ),
         ],
       ),
     );
