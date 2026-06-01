@@ -313,7 +313,12 @@ class _ConnectionDetailScreenState
   /// (the `vbid` deep link lands on the booking/checkout page), where the user
   /// completes the purchase on the official Deutsche-Bahn flow. After buying,
   /// the Profil tab picks the ticket up automatically on app resume.
+  ///
+  /// Hidden when this Reiseplan IS a bought ticket ([widget.ticketRef] set) —
+  /// the user already has a ticket, the AppBar's "Ticket" icon top-right is
+  /// what they actually want.
   Widget _buyButton(BuildContext context, WidgetRef ref) {
+    if (widget.ticketRef != null) return const SizedBox.shrink();
     final price = journey.price?.amount;
     final label = price != null
         ? 'Kaufen ab ${price.toStringAsFixed(2).replaceAll('.', ',')} €'
