@@ -78,8 +78,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- Don't delete the meta-data below.
-             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <!-- Declares Flutter v2 embedding. Required; do not remove. -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
