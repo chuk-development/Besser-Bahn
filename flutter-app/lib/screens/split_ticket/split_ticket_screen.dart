@@ -86,6 +86,12 @@ class SplitTicketScreen extends ConsumerWidget {
               ),
             ),
 
+          // Show assumptions (BahnCard / Deutschland-Ticket from settings) up
+          // front, so the rider can see WHAT the running search is pricing for
+          // — not only after results land.
+          if (state.isLoading || state.result != null)
+            _buildAssumptions(context, ref),
+
           // Progress
           if (state.isLoading && state.progress != null)
             _buildProgress(context, state.progress!),
@@ -105,7 +111,6 @@ class SplitTicketScreen extends ConsumerWidget {
 
           // Results
           if (state.result != null) ...[
-            _buildAssumptions(context, ref),
             _buildPriceComparison(context, state.result!),
             for (int i = 0; i < state.result!.tickets.length; i++)
               _buildTicketCard(context, ref, state.result!.tickets[i], i + 1),
