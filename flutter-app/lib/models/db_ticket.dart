@@ -138,6 +138,28 @@ class DbTicket {
       (fahrtrichtung ?? '').toLowerCase().contains('rueck') ||
       (fahrtrichtung ?? '').toLowerCase().contains('rück');
 
+  /// Station name + SH-Tarif Haltestellen-Nummer extracted from the ticket
+  /// HTML — DB's tariff tickets carry the route as "Von Kiel (4000)" /
+  /// "Nach Martensrade (5330)". The JSON `vonName` carries the bare name only,
+  /// so the in-app status block falls back to these when present to match
+  /// what's printed on the official ticket.
+  ({String name, String? id})? get routeFrom => _parseRoute(r'Von');
+  ({String name, String? id})? get routeTo => _parseRoute(r'Nach');
+
+  ({String name, String? id})? _parseRoute(String prefix) {
+    final html = ticketHtml;
+    if (html == null) return null;
+    // Match e.g. "Von Kiel (4000)" / "Nach Bad Vilbel (123)" — non-greedy
+    // station name, optional bracketed numeric SH-Tarif id.
+    final m = RegExp('$prefix\\s+([^<\\n(]{2,80}?)(?:\\s*\\((\\d+)\\))?\\s*<',
+            multiLine: true)
+        .firstMatch(html);
+    if (m == null) return null;
+    final name = m.group(1)?.trim();
+    if (name == null || name.isEmpty) return null;
+    return (name: name, id: m.group(2));
+  }
+
   factory DbTicket.fromJson(Map<String, dynamic> json) {
     final reise = json['reise'] as Map<String, dynamic>? ?? const {};
     final std = reise['standardInfos'] as Map<String, dynamic>? ?? const {};

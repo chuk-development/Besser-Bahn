@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../../models/db_account.dart';
+import '../../../providers/account_provider.dart';
 
 /// Renders a single BahnCard. Prefers DB's own card artwork (`bildSicht`,
 /// the exact image the DB Navigator app shows); falls back to a styled card
@@ -146,6 +148,42 @@ void openBahnCardControl(BuildContext context, DbBahnCard card) {
       builder: (_) => _BahnCardControlScreen(card: card),
     ),
   );
+}
+
+/// Open the first BahnCard's Kontrollansicht, or show a snackbar explaining
+/// why nothing happened (still loading / endpoint failed / no BahnCard in the
+/// account). Always-visible Ticket-AppBar action — never a silent no-op.
+Future<void> openFirstBahnCardControl(
+    BuildContext context, WidgetRef ref) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final async = ref.read(bahncardsProvider);
+  final cards = async.asData?.value;
+  if (cards != null && cards.isNotEmpty) {
+    openBahnCardControl(context, cards.first);
+    return;
+  }
+  if (cards != null && cards.isEmpty) {
+    messenger.showSnackBar(
+        const SnackBar(content: Text('Keine BahnCard im Konto.')));
+    return;
+  }
+  // Loading or error — kick a fresh fetch and report.
+  messenger.showSnackBar(
+      const SnackBar(content: Text('BahnCard wird geladen …')));
+  ref.invalidate(bahncardsProvider);
+  try {
+    final fresh = await ref.read(bahncardsProvider.future);
+    if (!context.mounted) return;
+    if (fresh.isEmpty) {
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Keine BahnCard im Konto.')));
+      return;
+    }
+    openBahnCardControl(context, fresh.first);
+  } catch (e) {
+    if (!context.mounted) return;
+    messenger.showSnackBar(SnackBar(content: Text('BahnCard nicht ladbar: $e')));
+  }
 }
 
 /// Fullscreen Kontrollansicht — the control-view image DB shows for ticket

@@ -8,13 +8,12 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart'
     show AndroidWebViewController;
 
-import '../../models/db_account.dart' show DbBahnCard;
 import '../../models/db_ticket.dart';
 import '../../models/journey.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/service_providers.dart';
 import '../connection_search/connection_detail_screen.dart';
-import 'widgets/bahncard_view.dart' show openBahnCardControl;
+import 'widgets/bahncard_view.dart' show openFirstBahnCardControl;
 
 /// Entry point for a booked ticket from the Reisen tab. Loads the ticket,
 /// parses its `verbindung` into a [Journey], then defers to
@@ -112,11 +111,7 @@ class TicketViewScreen extends ConsumerWidget {
     final key = '${ticketRef.auftragsnummer}/${ticketRef.kundenwunschId}';
     final ticket = ref.watch(ticketProvider(key));
     final reservations = ticket.asData?.value.reservierungen ?? const [];
-    // Conductors usually want both ticket and BahnCard during inspection —
-    // surface a fast-switch button here when the user holds one.
-    final bahncardsAsync = ref.watch(bahncardsProvider);
-    final bahncards =
-        bahncardsAsync.asData?.value ?? const <DbBahnCard>[];
+    final loggedIn = ref.watch(dbAuthProvider).isLoggedIn;
 
     return Scaffold(
       // Theme background (the dark/brown app surface) shows between the two
@@ -125,12 +120,15 @@ class TicketViewScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Ticket'),
         actions: [
-          if (bahncards.isNotEmpty)
+          // Conductors usually want BOTH the ticket and the BahnCard during
+          // inspection. The action is always visible when signed in so the
+          // user never has to hunt for it; the tap path handles loading /
+          // empty / error states with explicit snackbars.
+          if (loggedIn)
             IconButton(
               icon: const Icon(Icons.credit_card),
               tooltip: 'BahnCard · Kontrolle',
-              onPressed: () =>
-                  openBahnCardControl(context, bahncards.first),
+              onPressed: () => openFirstBahnCardControl(context, ref),
             ),
           if (reservations.isNotEmpty)
             IconButton(
@@ -286,9 +284,20 @@ class _TicketStatusBlock extends StatelessWidget {
     final tariff = ticket.angebotsname?.trim().isNotEmpty == true
         ? '${ticket.angebotsname} ${ticket.firstClass ? '1.Kl' : '2.Kl'}'
         : (ticket.firstClass ? 'Einzelkarte 1.Kl' : 'Einzelkarte 2.Kl');
-    final route = (ticket.vonName == null && ticket.nachName == null)
+    // Prefer the station name + Haltestellen-Nummer printed on the ticket
+    // ("Raisdorf (5120) → Kaltenkirchen (617)"), with the bare JSON names
+    // ("Raisdorf · Kaltenkirchen") as a fallback when the HTML isn't there.
+    final from = ticket.routeFrom;
+    final to = ticket.routeTo;
+    String formatStop(({String name, String? id})? r, String? fallback) {
+      if (r == null) return fallback ?? '—';
+      return r.id != null ? '${r.name} (${r.id})' : r.name;
+    }
+    final route = (from == null && to == null &&
+            ticket.vonName == null && ticket.nachName == null)
         ? ''
-        : '${ticket.vonName ?? '—'} → ${ticket.nachName ?? '—'}';
+        : '${formatStop(from, ticket.vonName)} → '
+            '${formatStop(to, ticket.nachName)}';
 
     return Container(
       width: double.infinity,

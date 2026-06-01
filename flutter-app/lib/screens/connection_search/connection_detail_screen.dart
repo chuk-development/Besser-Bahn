@@ -17,6 +17,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/service_providers.dart';
+import '../profile/widgets/bahncard_view.dart' show openFirstBahnCardControl;
 import '../../providers/settings_provider.dart';
 import '../../providers/split_ticket_provider.dart';
 import '../../providers/station_map_provider.dart';
@@ -134,14 +135,21 @@ class _ConnectionDetailScreenState
         actions: [
           // For a booked ticket: prominent "Ticket" action top-right, opening
           // the official Handyticket WebView. Search-result connections don't
-          // carry a ticket and skip this.
-          if (ticketRef != null)
+          // carry a ticket and skip this. The BahnCard quick-jump sits next
+          // to it so a conductor can be shown both without leaving Reiseplan.
+          if (ticketRef != null) ...[
+            IconButton(
+              icon: const Icon(Icons.credit_card),
+              tooltip: 'BahnCard · Kontrolle',
+              onPressed: () => openFirstBahnCardControl(context, ref),
+            ),
             IconButton(
               icon: const Icon(Icons.qr_code_2),
               tooltip: 'Ticket anzeigen',
               onPressed: () =>
                   context.push('/ticket-view', extra: ticketRef),
             ),
+          ],
           // Teilen + Öffnen folded into one button → a small menu asks which.
           PopupMenuButton<int>(
             icon: const Icon(Icons.ios_share),
