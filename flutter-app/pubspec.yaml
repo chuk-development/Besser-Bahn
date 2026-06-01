@@ -15,7 +15,7 @@ dependencies:
   go_router: ^17.2.3
   http: ^1.6.0
   url_launcher: ^6.3.2
-  share_plus: ^12.0.2            # system share sheet for "Reise teilen" links
+  share_plus: ^13.1.0            # system share sheet for "Reise teilen" links
   flutter_map: ^8.3.0
   latlong2: ^0.9.1
   geolocator: ^14.0.0           # device GPS for "Mein Standort" on the map
@@ -35,6 +35,15 @@ dependencies:
   vector_map_tiles: 9.0.0-beta.8
   connectivity_plus: ^7.1.1      # offline detection → offline banner / cached-data mode
   webview_flutter: ^4.10.0       # render DB's official Handyticket HTML offline
+
+# Force-bump transitives our direct deps pin too low. Each is API-compatible
+# with the held version (LatLng / xml AST / image API), so the override is
+# safe; the few that would actually break (objectbox 4→5 schema, protobuf
+# 3→6, vector_tile 2→4) are deliberately NOT overridden.
+dependency_overrides:
+  latlong2: ^0.10.1
+  xml: ^7.0.1
+  image: ^4.9.1
 
 dev_dependencies:
   flutter_test:
