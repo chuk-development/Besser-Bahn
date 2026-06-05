@@ -92,6 +92,16 @@ class Journey {
   bool get hasDelay => legs.any((l) =>
       (l.departureDelay != null && l.departureDelay! > 0) ||
       (l.arrivalDelay != null && l.arrivalDelay! > 0));
+
+  /// At least one transit leg of this connection is fully cancelled — the
+  /// connection as planned cannot be travelled.
+  bool get hasCancelledLeg => legs.any((l) => !l.isWalking && l.cancelled);
+
+  /// A leg runs but drops one of its intermediate stops (Teilausfall), without
+  /// the whole leg being cancelled.
+  bool get hasPartialCancellation =>
+      !hasCancelledLeg &&
+      legs.any((l) => !l.isWalking && l.partiallyCancelled);
 }
 
 class JourneyLeg {
@@ -160,6 +170,11 @@ class JourneyLeg {
       departureDelay != null ? departureDelay! ~/ 60 : 0;
   int get arrivalDelayMinutes =>
       arrivalDelay != null ? arrivalDelay! ~/ 60 : 0;
+
+  /// The leg runs but at least one of its intermediate stops is dropped
+  /// ("Halt entfällt"), while the leg itself isn't fully cancelled.
+  bool get partiallyCancelled =>
+      !cancelled && stopovers.any((s) => s.cancelled);
 
   factory JourneyLeg.fromHafas(Map<String, dynamic> json) {
     final originJson = json['origin'] as Map<String, dynamic>? ?? {};
@@ -263,12 +278,17 @@ class LegStopover {
   final int? arrivalDelay;
   final int? departureDelay;
 
+  /// This intermediate stop is dropped from the run (DB "Halt entfällt" /
+  /// `ersatzhaltNotiz.typ == GECANCELT`). Boarding/alighting here is impossible.
+  final bool cancelled;
+
   const LegStopover({
     required this.stop,
     this.arrival,
     this.departure,
     this.arrivalDelay,
     this.departureDelay,
+    this.cancelled = false,
   });
 
   factory LegStopover.fromHafas(Map<String, dynamic> json) {
@@ -279,6 +299,7 @@ class LegStopover {
       departure: _parse(json['departure']),
       arrivalDelay: json['arrivalDelay'] as int?,
       departureDelay: json['departureDelay'] as int?,
+      cancelled: json['cancelled'] as bool? ?? false,
     );
   }
 
@@ -288,6 +309,7 @@ class LegStopover {
         'departure': departure?.toIso8601String(),
         'arrivalDelay': arrivalDelay,
         'departureDelay': departureDelay,
+        'cancelled': cancelled,
       };
 
   factory LegStopover.fromJson(Map<String, dynamic> json) => LegStopover(
@@ -296,6 +318,7 @@ class LegStopover {
         departure: _parse(json['departure']),
         arrivalDelay: json['arrivalDelay'] as int?,
         departureDelay: json['departureDelay'] as int?,
+        cancelled: json['cancelled'] as bool? ?? false,
       );
 }
 

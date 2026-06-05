@@ -9,6 +9,7 @@ import '../../../models/journey.dart';
 import '../../../core/extensions.dart';
 import '../../../core/share_text.dart';
 import '../../../providers/service_providers.dart';
+import '../../../theme/app_colors.dart';
 import '../../../widgets/delay_badge.dart';
 import '../../../widgets/occupancy_indicator.dart';
 import '../../../widgets/prediction_badge.dart';
@@ -55,6 +56,14 @@ class JourneyCard extends ConsumerWidget {
               Expanded(
                 child: Column(
             children: [
+              // Cancellation banner — full width, red, above everything else so
+              // a dead connection can't be mistaken for a normal one.
+              if (journey.hasCancelledLeg || journey.hasPartialCancellation) ...[
+                _CancelBanner(
+                  partial: !journey.hasCancelledLeg,
+                ),
+                const SizedBox(height: 6),
+              ],
               // Route row: origin (left) and destination (right). No arrow —
               // a search always runs left→right, so it adds nothing.
               Row(
@@ -185,6 +194,45 @@ class JourneyCard extends ConsumerWidget {
     );
   }
 
+}
+
+/// Full-width red (cancelled) / amber (partial) strip warning that this
+/// connection can't be travelled as shown.
+class _CancelBanner extends StatelessWidget {
+  final bool partial;
+  const _CancelBanner({required this.partial});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = partial ? AppColors.warning : AppColors.dbRed;
+    final label = partial ? 'Teilausfall — Halt entfällt' : 'Fällt aus';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(partial ? Icons.warning_amber_rounded : Icons.cancel,
+              size: 15, color: color),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: color, fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Proportional length comparison: each train is a coloured segment whose

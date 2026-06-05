@@ -21,6 +21,7 @@ import '../../providers/settings_provider.dart';
 import '../../providers/split_ticket_provider.dart';
 import '../../providers/station_map_provider.dart';
 import '../../services/db_api_service.dart';
+import '../../theme/app_colors.dart';
 import '../../widgets/departure_card.dart';
 import '../../widgets/fahrgastrechte_card.dart';
 import '../../widgets/prediction_badge.dart';
@@ -229,6 +230,10 @@ class _ConnectionDetailScreenState
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
           _summary(context),
+          if (journey.hasCancelledLeg)
+            const _JourneyCancelBanner(partial: false)
+          else if (journey.hasPartialCancellation)
+            const _JourneyCancelBanner(partial: true),
           _buyButton(context, ref),
           // Live companion cards (each self-hides when not applicable):
           // Fahrgastrechte claim on a 60+ min late arrival, and one combined
@@ -244,6 +249,8 @@ class _ConnectionDetailScreenState
                   i > 0 ? legs[i - 1] : null,
                   i + 1 < legs.length ? legs[i + 1] : null)
             else ...[
+              if (legs[i].cancelled || legs[i].partiallyCancelled)
+                _LegCancelBanner(leg: legs[i]),
               _LegNotes(notes: _visibleNotes(legs[i].disruptions)),
               Builder(builder: (_) {
                 final prev = _prevTransitLeg(legs, i);
@@ -1326,6 +1333,108 @@ class _LegSectionState extends ConsumerState<_LegSection>
         subtitle: Text(
             '${leg.origin.name} → ${leg.destination.name}'
             '${leg.direction != null ? '  ·  Richtung ${leg.direction}' : ''}'),
+      ),
+    );
+  }
+}
+
+/// Top-of-screen banner: the connection as planned can't be travelled because a
+/// train fully cancels (red) or drops a stop (amber). Points the rider at the
+/// per-Fahrtblock alternative-departure switcher further down.
+class _JourneyCancelBanner extends StatelessWidget {
+  final bool partial;
+  const _JourneyCancelBanner({required this.partial});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = partial ? AppColors.warning : AppColors.dbRed;
+    final title = partial
+        ? 'Teilausfall auf dieser Verbindung'
+        : 'Diese Verbindung fällt aus';
+    final body = partial
+        ? 'Auf einem Abschnitt entfällt ein Halt. Prüfe die markierten '
+            'Halte und weiche bei Bedarf auf eine andere Abfahrt aus.'
+        : 'Mindestens ein Zug dieser Verbindung fährt nicht. Wische über den '
+            'betroffenen Fahrtblock oder tippe „Weitere Abfahrten“, um auf '
+            'eine andere Abfahrt zu wechseln.';
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.55)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(partial ? Icons.warning_amber_rounded : Icons.cancel,
+              color: color, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: TextStyle(
+                        color: color,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(height: 3),
+                Text(body,
+                    style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Per-Fahrtblock banner repeated directly above the affected leg, so the
+/// cancellation is visible right where the train is rendered (and the
+/// alternative-departure switcher sits).
+class _LegCancelBanner extends StatelessWidget {
+  final JourneyLeg leg;
+  const _LegCancelBanner({required this.leg});
+
+  @override
+  Widget build(BuildContext context) {
+    final partial = !leg.cancelled;
+    final color = partial ? AppColors.warning : AppColors.dbRed;
+    final line = leg.line?.lineNumberWithFahrt ?? 'Zug';
+    final dropped = leg.stopovers
+        .where((s) => s.cancelled)
+        .map((s) => s.stop.name)
+        .where((n) => n.isNotEmpty)
+        .toList();
+    final label = partial
+        ? (dropped.isEmpty
+            ? '$line: Halt entfällt'
+            : '$line: Halt entfällt – ${dropped.join(', ')}')
+        : '$line fällt aus';
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.55)),
+      ),
+      child: Row(
+        children: [
+          Icon(partial ? Icons.warning_amber_rounded : Icons.cancel,
+              color: color, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(label,
+                style: TextStyle(
+                    color: color,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.bold)),
+          ),
+        ],
       ),
     );
   }

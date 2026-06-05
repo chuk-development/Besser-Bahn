@@ -289,6 +289,10 @@ def check_vendo_journey() -> str:
     # Disruption-note containers the app reads (himNotizen / echtzeitNotizen,
     # at leg and stop level) must still be lists when present — the leg
     # disruption banner parses {text: ...} out of them.
+    # Cancellation: a dropped stop carries `ersatzhaltNotiz` whose `typ` is
+    # GECANCELT ("Halt entfällt") — vendo_service reads exactly that path to
+    # flag JourneyLeg/LegStopover.cancelled, so guard its shape if present.
+    ersatz_seen = False
     for leg in legs:
         for fld in ("himNotizen", "echtzeitNotizen"):
             if fld in leg and not isinstance(leg[fld], list):
@@ -296,7 +300,13 @@ def check_vendo_journey() -> str:
         for h in leg.get("halte", []):
             if "himNotizen" in h and not isinstance(h["himNotizen"], list):
                 raise CheckError("halt himNotizen is not a list")
-    return f"{len(conns)} journeys, first has {len(legs)} legs{price_txt}"
+            ez = h.get("ersatzhaltNotiz")
+            if ez is not None:
+                ersatz_seen = True
+                if not isinstance(ez, dict) or "typ" not in ez:
+                    raise CheckError("ersatzhaltNotiz lacks a 'typ' field")
+    ez_txt = ", ersatzhaltNotiz shape ok" if ersatz_seen else ""
+    return f"{len(conns)} journeys, first has {len(legs)} legs{price_txt}{ez_txt}"
 
 
 def check_vendo_journey_party() -> str:

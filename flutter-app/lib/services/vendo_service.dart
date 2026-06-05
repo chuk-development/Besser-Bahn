@@ -454,6 +454,12 @@ class VendoService {
         .map(_parseStopover)
         .toList();
 
+    // The leg is unusable when the boarding (first) or alighting (last) stop of
+    // this segment is dropped — you can't get on, or can't get off here. A
+    // dropped intermediate stop alone is a Teilausfall, surfaced per-stopover.
+    final cancelled = stopovers.isNotEmpty &&
+        (stopovers.first.cancelled || stopovers.last.cancelled);
+
     // Disruption notes: HIM messages (construction, broken lifts, …) and
     // realtime notes ("Reparatur an der Strecke"), from the leg and its stops.
     // attributNotizen (amenities/reservation hints) are intentionally excluded.
@@ -506,6 +512,7 @@ class VendoService {
       line: line,
       direction: a['richtung'] as String?,
       isWalking: isWalking,
+      cancelled: cancelled,
       stopovers: stopovers,
       occupancy: _occupancy(a['auslastungsInfos'] as List<dynamic>?),
       disruptions: disruptions,
@@ -517,8 +524,15 @@ class VendoService {
       stop: _stationFromVendo(h['ort'] as Map<String, dynamic>? ?? const {}),
       arrival: _parse(h['ezAnkunftsDatum']) ?? _parse(h['ankunftsDatum']),
       departure: _parse(h['ezAbgangsDatum']) ?? _parse(h['abgangsDatum']),
+      cancelled: _haltCancelled(h),
     );
   }
+
+  /// A stop is dropped when DB attaches an `ersatzhaltNotiz` of type
+  /// `GECANCELT` ("Halt entfällt"). Other types (e.g. an additional/replacement
+  /// stop) are not cancellations.
+  static bool _haltCancelled(Map<String, dynamic> h) =>
+      (h['ersatzhaltNotiz'] as Map<String, dynamic>?)?['typ'] == 'GECANCELT';
 
   Station _stationFromVendo(Map<String, dynamic> ort) {
     final pos = ort['position'] as Map<String, dynamic>?;
