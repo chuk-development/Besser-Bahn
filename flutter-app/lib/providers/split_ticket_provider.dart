@@ -101,6 +101,10 @@ class SplitTicketNotifier extends Notifier<SplitTicketState> {
     final travellers = DbApiService.createTravellerPayload(
       bahnCard: settings.bahnCard,
     );
+    // Price segments for the SAME party the search uses (age/type/BahnCard), so
+    // youth/child fares match the DB app instead of always pricing an adult —
+    // the root cause of split prices coming out higher than the real fare.
+    final partyReisende = settings.searchParty.toReisendeJson();
 
     final stopwatch = Stopwatch()..start();
     final n = stops.length;
@@ -153,6 +157,7 @@ class SplitTicketNotifier extends Notifier<SplitTicketState> {
             deutschlandTicket: settings.hasDeutschlandTicket,
             firstClass: settings.bahnCard.isFirstClass,
             ermaessigung: settings.bahnCard.vendoErmaessigung,
+            reisende: partyReisende,
           );
           if (price.price == double.infinity && !price.isDTicketCovered) {
             price = await dbApi.getSegmentPrice(

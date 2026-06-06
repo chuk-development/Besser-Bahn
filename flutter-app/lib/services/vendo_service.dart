@@ -305,6 +305,11 @@ class VendoService {
     bool deutschlandTicket = false,
     bool firstClass = false,
     String ermaessigung = 'KEINE_ERMAESSIGUNG KLASSENLOS',
+    // The actual passenger profile (age + type + BahnCard) from the search
+    // party. When given it drives the price so youth/child fares match what the
+    // user sees in the DB app — instead of always pricing an adult. Falls back
+    // to a single adult with [ermaessigung] when omitted.
+    List<Map<String, dynamic>>? reisende,
   }) async {
     try {
       final result = await searchJourneys(
@@ -312,12 +317,13 @@ class VendoService {
         toLocationId: _loc(to),
         dateTime: dateTime,
         firstClass: firstClass,
-        reisende: [
-          {
-            'reisendenTyp': 'ERWACHSENER',
-            'ermaessigungen': [ermaessigung],
-          }
-        ],
+        reisende: reisende ??
+            [
+              {
+                'reisendenTyp': 'ERWACHSENER',
+                'ermaessigungen': [ermaessigung],
+              }
+            ],
         deutschlandTicket: deutschlandTicket,
       );
       if (result.journeys.isEmpty) {
