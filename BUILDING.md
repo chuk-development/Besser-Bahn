@@ -27,17 +27,26 @@ R8 runs in full mode (`android.enableR8.fullMode=true`, committed in
 ```sh
 cd flutter-app
 flutter pub get
+./scripts/rb-strip-buildid.sh                 # REQUIRED for RB — see below
 flutter build apk --release --split-per-abi   # or appbundle, as released
 ```
 
+The `rb-strip-buildid.sh` step must run on **both** the release build and the RB
+rebuild, otherwise `lib/*/libdartjni.so` differs.
+
 ## Known cosmetic diff: `lib/*/libdartjni.so`
 
-The Dart JNI native lib embeds a build-id, an upstream Flutter issue. Strip it
-before building to make it reproducible:
+The Dart JNI native lib (`jni` pub package, pulled in transitively via
+`flutter_secure_storage`) embeds a unique build-id — an upstream Flutter issue —
+so every build produces a different `.so`. `scripts/rb-strip-buildid.sh` patches
+the package's `CMakeLists.txt` in the pub cache to add `-Wl,--build-id=none`,
+which makes the lib deterministic. It is idempotent and safe to re-run.
 
-```sh
-sed -i -e 's/-Wl,/-Wl,--build-id=none,/' \
-  "${PUB_CACHE}/hosted/"*/jni-*/src/CMakeLists.txt
+The equivalent IzzyOnDroid recipe step is:
+
+```yaml
+- flutter pub get
+- sed -i -e 's/-Wl,/-Wl,--build-id=none,/' ${PUB_CACHE}/hosted/*/jni-*/src/CMakeLists.txt
 ```
 
 ## Per-release checklist
