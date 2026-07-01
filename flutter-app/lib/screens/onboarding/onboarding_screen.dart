@@ -33,6 +33,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           'Bahn — Verbindungen, Bahnhöfe und deine Reisen an einem Ort.',
     ),
     const _Step.intro(
+      icon: Icons.info_outline,
+      title: 'Inoffizielle App',
+      body:
+          'Besser Bahn ist eine inoffizielle, unabhängige App und steht in '
+          'keiner Verbindung zur Deutschen Bahn AG. Alle Marken- und '
+          'Namensrechte gehören ihren jeweiligen Eigentümern.\n\n'
+          'Die Nutzung erfolgt auf eigenes Risiko. Für Preise, Verbindungen, '
+          'Verspätungen oder etwaige Schäden — etwa Geldverlust oder gesperrte '
+          'Konten — wird keine Haftung übernommen. Buchungen schließt du '
+          'direkt bei der Deutschen Bahn ab.',
+    ),
+    const _Step.intro(
       icon: Icons.search,
       title: 'Suche',
       body:
@@ -209,6 +221,21 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     TextButton(
                       onPressed: _next,
                       child: const Text('Nicht jetzt'),
+                    )
+                  // On the final step, the enter button doubles as acceptance of
+                  // the inofficial-use / no-liability terms shown earlier.
+                  else if (_isLast)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(
+                        'Mit „Los geht\'s" bestätigst du, dass Besser Bahn eine '
+                        'inoffizielle App ohne Verbindung zur Deutschen Bahn ist '
+                        'und die Nutzung auf eigenes Risiko erfolgt.',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                     )
                   else
                     const SizedBox(height: 8),
