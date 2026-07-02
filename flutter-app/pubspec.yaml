@@ -2,7 +2,7 @@ name: besser_bahn
 description: "Die bessere Bahn-App. Privacy-first, für Vielfahrer."
 publish_to: 'none'
 
-version: 2.0.2+3
+version: 2.0.3+4
 
 environment:
   sdk: ^3.11.0
