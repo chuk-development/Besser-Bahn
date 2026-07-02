@@ -2,7 +2,7 @@ name: besser_bahn
 description: "Die bessere Bahn-App. Privacy-first, für Vielfahrer."
 publish_to: 'none'
 
-version: 2.0.3+4
+version: 2.0.4+5
 
 environment:
   sdk: ^3.11.0
@@ -18,7 +18,7 @@ dependencies:
   share_plus: ^13.1.0            # system share sheet for "Reise teilen" links
   flutter_map: ^8.3.0
   latlong2: ^0.9.1
-  geolocator: ^14.0.0           # device GPS for "Mein Standort" on the map
+  libre_location: ^0.4.1        # GMS-free GPS ("Mein Standort"); pure AOSP LocationManager
   intl: ^0.20.2
   shared_preferences: ^2.3.4
   path_provider: ^2.1.5          # on-disk cache for static OSM platform geometry
@@ -46,13 +46,6 @@ dependency_overrides:
   latlong2: ^0.10.1
   xml: ^7.0.1
   image: ^4.9.1
-  # FLOSS geolocator_android (no Google Play Services / GMS): uses the plain
-  # Android LocationManager instead of the fused-location provider. Keeps the
-  # geolocator API unchanged. Vendored into third_party/ (see its VENDORED.md)
-  # so the build never depends on an external GitHub repo staying online.
-  # Issue #10 + https://izzyondroid.org/docs/devpractices/ProprietaryLibraries/#flutter-and-geolocation
-  geolocator_android:
-    path: third_party/geolocator_android
 
 dev_dependencies:
   flutter_test:

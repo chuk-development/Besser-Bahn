@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:geolocator/geolocator.dart';
+import 'package:libre_location/libre_location.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../providers/onboarding_provider.dart';
@@ -106,11 +106,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   ];
 
   static Future<void> _requestLocation() async {
-    // geolocator drives the OS dialog; permanent denials just resolve — the app
+    // libre_location drives the OS dialog; permanent denials just resolve — the app
     // degrades gracefully (the map prompts again when "Mein Standort" is used).
-    var p = await Geolocator.checkPermission();
+    var p = await LibreLocation.checkPermission();
     if (p == LocationPermission.denied) {
-      await Geolocator.requestPermission();
+      await LibreLocation.requestPermission();
     }
   }
 

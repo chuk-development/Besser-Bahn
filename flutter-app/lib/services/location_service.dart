@@ -1,4 +1,4 @@
-import 'package:geolocator/geolocator.dart';
+import 'package:libre_location/libre_location.dart';
 import 'package:latlong2/latlong.dart';
 
 /// Thrown when we can't get the user's position, with a German message ready
@@ -17,22 +17,22 @@ class UserFix {
   const UserFix(this.latLng, this.accuracy);
 }
 
-/// Thin wrapper over `geolocator`: checks the location service + permission,
+/// Thin wrapper over `libre_location`: checks the location service + permission,
 /// then returns a single fix. Keeps all the permission/error wording in one
 /// place so the UI just shows what we throw.
 class LocationService {
   /// Resolve the current device position, requesting permission if needed.
   /// Throws [LocationException] with a user-facing German message on failure.
   Future<UserFix> currentFix() async {
-    if (!await Geolocator.isLocationServiceEnabled()) {
+    if (!await LibreLocation.isLocationServiceEnabled()) {
       throw const LocationException(
         'Standortdienste sind aus. Bitte in den Geräteeinstellungen aktivieren.',
       );
     }
 
-    var permission = await Geolocator.checkPermission();
+    var permission = await LibreLocation.checkPermission();
     if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
+      permission = await LibreLocation.requestPermission();
     }
     if (permission == LocationPermission.denied) {
       throw const LocationException(
@@ -46,11 +46,16 @@ class LocationService {
       );
     }
 
-    final pos = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-      ),
-    );
-    return UserFix(LatLng(pos.latitude, pos.longitude), pos.accuracy);
+    try {
+      final pos = await LibreLocation.getCurrentPosition(
+        accuracy: Accuracy.high,
+      );
+      return UserFix(LatLng(pos.latitude, pos.longitude), pos.accuracy);
+    } catch (_) {
+      throw const LocationException(
+        'Standort konnte nicht ermittelt werden. Bitte im Freien erneut '
+        'versuchen.',
+      );
+    }
   }
 }

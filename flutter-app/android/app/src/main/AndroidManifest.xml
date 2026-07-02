@@ -1,6 +1,18 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Add internet permission -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- libre_location ships a full background-tracking manifest. We only use a
+         one-shot foreground fix ("Mein Standort"), so strip everything it merges
+         in beyond ACCESS_FINE/COARSE_LOCATION. Re-enable the specific lines below
+         if/when we add a real background-tracking feature. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" tools:node="remove" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" tools:node="remove" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" tools:node="remove" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" tools:node="remove" />
     <!-- "Mein Standort" on the Bahnhofskarte: show the user's position and the
          direction toward their boarding Gleis. Coarse + fine; while-in-use. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -24,6 +36,9 @@
         android:label="Besser Bahn"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- Drop libre_location's background components (we only do one-shot fixes). -->
+        <service android:name="io.rezivure.libre_location.LocationService" tools:node="remove" />
+        <receiver android:name="io.rezivure.libre_location.BootReceiver" tools:node="remove" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
