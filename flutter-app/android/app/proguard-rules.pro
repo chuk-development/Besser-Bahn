@@ -16,13 +16,6 @@
 # Keep annotations (used by several AndroidX libs at runtime via reflection).
 -keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod
 
-# ObjectBox (FMTC tile-cache backend) — uses JNI + generated model classes via
-# reflection; full-mode R8 must not strip or rename them.
--keep class io.objectbox.** { *; }
--keep @io.objectbox.annotation.Entity class * { *; }
--keepclassmembers class * { @io.objectbox.annotation.* <fields>; }
--dontwarn io.objectbox.**
-
 # flutter_secure_storage (DB account + Träwelling token persistence) and its
 # Tink crypto backend. Without these, R8 full-mode strips internal cipher /
 # JNI bridge helpers and reads silently return null on the next cold start —
