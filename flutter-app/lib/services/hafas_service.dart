@@ -5,16 +5,15 @@ import '../core/constants.dart';
 import '../core/polyline_cache.dart';
 import '../models/station.dart';
 import '../models/departure.dart';
-import '../models/journey.dart' show OccupancyLevel;
 import '../models/trip.dart';
 import 'vendo_service.dart';
 
-/// Primary service using bahn.de internal APIs (always available)
-/// with HAFAS REST as fallback for trip details.
+/// Station search, departure boards and trip detail. Backed by the DB Vendo
+/// `/mob` backend (the bahn.de web API is Akamai-blocked); HAFAS REST remains a
+/// last-resort fallback for trip detail only.
 class HafasService {
   final http.Client _client = http.Client();
   final VendoService _vendo = VendoService();
-  static const _dbBase = ApiConstants.dbWebApiBaseUrl;
   static const _hafasBase = ApiConstants.hafasBaseUrl;
 
   Map<String, String> get _headers => {
@@ -24,60 +23,28 @@ class HafasService {
       };
 
   // ============================================================
-  // STATION SEARCH (bahn.de API — always works)
+  // STATION SEARCH (DB Vendo /mob backend — bahn.de web API is Akamai-blocked)
   // ============================================================
 
-  Future<List<Station>> searchStations(String query) async {
-    final uri = Uri.parse('$_dbBase/reiseloesung/orte').replace(
-      queryParameters: {
-        'suchbegriff': query,
-        'typ': 'ALL',
-        'limit': '10',
-      },
-    );
-    final response = await _client.get(uri, headers: _headers);
-    if (response.statusCode != 200) return [];
+  Future<List<Station>> searchStations(String query) =>
+      _vendo.searchLocations(query);
 
-    final decoded = json.decode(response.body);
-    if (decoded is List) {
-      return decoded
-          .whereType<Map<String, dynamic>>()
-          .where((j) => j['type'] == 'ST')
-          .map(Station.fromDbWeb)
-          .toList();
-    }
-    return [];
-  }
-
+  /// Stations near a coordinate. The DB Vendo backend exposes no working
+  /// nearby-location endpoint we could find (all body shapes 400), and the
+  /// bahn.de `orte/nearby` GET is Akamai-blocked — so this currently returns
+  /// empty. Callers (only the map-bay stop resolver) already fall back to the
+  /// searched station's EVA, so this degrades gracefully rather than breaking.
   Future<List<Station>> nearbyStations({
     required double latitude,
     required double longitude,
     int results = 8,
     int? distance,
   }) async {
-    final uri = Uri.parse('$_dbBase/reiseloesung/orte/nearby').replace(
-      queryParameters: {
-        'lat': latitude.toString(),
-        'long': longitude.toString(),
-        'radius': (distance ?? 2000).toString(),
-        'maxNo': results.toString(),
-      },
-    );
-    final response = await _client.get(uri, headers: _headers);
-    if (response.statusCode != 200) return [];
-
-    final decoded = json.decode(response.body);
-    if (decoded is List) {
-      return decoded
-          .whereType<Map<String, dynamic>>()
-          .map(Station.fromDbWeb)
-          .toList();
-    }
-    return [];
+    return const [];
   }
 
   // ============================================================
-  // DEPARTURES / ARRIVALS (bahn.de API)
+  // DEPARTURES / ARRIVALS (DB Vendo Bahnhofstafel)
   // ============================================================
 
   Future<List<Departure>> getDepartures(
@@ -85,184 +52,48 @@ class HafasService {
     DateTime? when,
     int duration = 60,
     int results = 40,
-  }) async {
-    final now = when ?? DateTime.now();
-    final datum =
-        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    final zeit =
-        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:00';
-
-    // bahn.de uses repeated params for verkehrsmittel
-    final realUri = Uri.parse('$_dbBase/reiseloesung/abfahrten?'
-        'datum=$datum&zeit=$zeit&ortExtId=$stationId&mitVias=false'
-        '&verkehrsmittel[]=ICE&verkehrsmittel[]=EC_IC&verkehrsmittel[]=IR'
-        '&verkehrsmittel[]=REGIONAL&verkehrsmittel[]=SBAHN'
-        '&verkehrsmittel[]=BUS&verkehrsmittel[]=SCHIFF'
-        '&verkehrsmittel[]=UBAHN&verkehrsmittel[]=TRAM'
-        '&verkehrsmittel[]=ANRUFPFLICHTIG');
-
-    final response = await _client.get(realUri, headers: _headers);
-    if (response.statusCode != 200) return [];
-
-    final data = json.decode(response.body) as Map<String, dynamic>;
-    final entries = data['entries'] as List<dynamic>? ?? [];
-
-    return entries
-        .whereType<Map<String, dynamic>>()
-        .take(results)
-        .map(_departureFomDbWeb)
-        .toList();
-  }
+  }) =>
+      _vendo.getDepartures(stationId, when: when, results: results);
 
   Future<List<Departure>> getArrivals(
     String stationId, {
     DateTime? when,
     int duration = 60,
     int results = 40,
-  }) async {
-    final now = when ?? DateTime.now();
-    final datum =
-        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    final zeit =
-        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:00';
-
-    final realUri = Uri.parse('$_dbBase/reiseloesung/ankuenfte?'
-        'datum=$datum&zeit=$zeit&ortExtId=$stationId&mitVias=false'
-        '&verkehrsmittel[]=ICE&verkehrsmittel[]=EC_IC&verkehrsmittel[]=IR'
-        '&verkehrsmittel[]=REGIONAL&verkehrsmittel[]=SBAHN'
-        '&verkehrsmittel[]=BUS&verkehrsmittel[]=SCHIFF'
-        '&verkehrsmittel[]=UBAHN&verkehrsmittel[]=TRAM'
-        '&verkehrsmittel[]=ANRUFPFLICHTIG');
-
-    final response = await _client.get(realUri, headers: _headers);
-    if (response.statusCode != 200) return [];
-
-    final data = json.decode(response.body) as Map<String, dynamic>;
-    final entries = data['entries'] as List<dynamic>? ?? [];
-
-    return entries
-        .whereType<Map<String, dynamic>>()
-        .take(results)
-        .map(_departureFomDbWeb)
-        .toList();
-  }
-
-  Departure _departureFomDbWeb(Map<String, dynamic> json) {
-    final vm = json['verkehrmittel'] as Map<String, dynamic>? ?? {};
-    final zeit = json['zeit'] as String?;
-    final ezZeit = json['ezZeit'] as String?;
-    final plannedWhen = zeit != null ? DateTime.tryParse(zeit) : null;
-    final actualWhen = ezZeit != null ? DateTime.tryParse(ezZeit) : null;
-
-    int? delay;
-    if (plannedWhen != null && actualWhen != null) {
-      delay = actualWhen.difference(plannedWhen).inSeconds;
-    }
-
-    final gleis = json['gleis'] as String?;
-    final ezGleis = json['ezGleis'] as String?;
-
-    final meldungen = json['meldungen'] as List<dynamic>? ?? [];
-
-    return Departure(
-      tripId: json['journeyId'] as String? ?? '',
-      stop: Station(
-        id: json['bahnhofsId']?.toString() ?? '',
-        name: '',
-      ),
-      when: actualWhen ?? plannedWhen,
-      plannedWhen: plannedWhen,
-      delay: delay,
-      platform: ezGleis ?? gleis,
-      plannedPlatform: gleis,
-      direction: json['terminus'] as String? ?? '',
-      line: TransitLine(
-        name: vm['mittelText'] as String? ?? vm['name'] as String? ?? '',
-        fahrtNr: vm['linienNummer'] as String? ?? '',
-        productName: vm['kurzText'] as String? ?? '',
-        product: _mapProduct(vm['produktGattung'] as String? ?? ''),
-        operatorName: null,
-      ),
-      cancelled: false,
-      remarks: meldungen
-          .whereType<Map<String, dynamic>>()
-          .map((m) => m['text'] as String? ?? '')
-          .where((s) => s.isNotEmpty)
-          .toList(),
-    );
-  }
-
-  /// DB `auslastungsmeldungen` (per stop) → 2nd-class [OccupancyLevel].
-  /// Shape: `[{klasse: KLASSE_2, stufe: 1}]`, stufe 1=gering … 4=sehr hoch.
-  OccupancyLevel _auslastung(List<dynamic>? infos) {
-    if (infos == null) return OccupancyLevel.unknown;
-    for (final i in infos.whereType<Map<String, dynamic>>()) {
-      if (i['klasse'] == 'KLASSE_2') {
-        switch (i['stufe'] as int?) {
-          case 1:
-            return OccupancyLevel.low;
-          case 2:
-            return OccupancyLevel.medium;
-          case 3:
-            return OccupancyLevel.high;
-          case 4:
-            return OccupancyLevel.veryHigh;
-        }
-      }
-    }
-    return OccupancyLevel.unknown;
-  }
-
-  String _mapProduct(String gattung) {
-    switch (gattung) {
-      case 'ICE':
-        return 'nationalExpress';
-      case 'EC_IC':
-        return 'national';
-      case 'IR':
-      case 'REGIONAL':
-        return 'regional';
-      case 'SBAHN':
-        return 'suburban';
-      case 'BUS':
-        return 'bus';
-      case 'UBAHN':
-        return 'subway';
-      case 'TRAM':
-        return 'tram';
-      case 'SCHIFF':
-        return 'ferry';
-      default:
-        return gattung.toLowerCase();
-    }
-  }
+  }) =>
+      _vendo.getArrivals(stationId, when: when, results: results);
 
   // ============================================================
   // TRIP DETAILS
   // ============================================================
 
   Future<Trip> getTrip(String tripId) async {
-    // bahn.de first — it's fast and reliable. HAFAS is only a last resort
-    // (the public mirror is frequently down and would otherwise hang ~10s).
+    // DB Vendo `zuglauf` first — it returns the stop list, train attributes AND
+    // the exact track polyline in one call, and isn't Akamai-gated. HAFAS is a
+    // last resort (the public mirror is frequently down and would hang ~10s).
     final sw = Stopwatch()..start();
-    AppLog.log('getTrip via bahn.de fahrt…', tag: 'trip');
+    AppLog.log('getTrip via Vendo zuglauf…', tag: 'trip');
     try {
-      final trip = await _getTripDbWeb(tripId);
+      final trip = await _vendo.getTrip(tripId);
       AppLog.log(
           'getTrip ok ${sw.elapsedMilliseconds}ms · ${trip.line.displayName} '
-          '(${trip.stopovers.length} stops)',
+          '(${trip.stopovers.length} stops, '
+          '${trip.polyline?.length ?? 0} geo pts)',
           tag: 'trip');
-      // bahn.de carries no track geometry. Attach the exact route geometry
-      // *from the local cache only* here so the trip renders instantly — the
-      // (possibly slow) HAFAS network fetch happens lazily from the map widget
-      // via [fetchRoutePolyline], snapping the straight line onto the rails.
+      // zuglauf already carries the geometry; cache it for reuse across days
+      // (keyed by the physical route, not the date-bearing trip id).
+      if (trip.polyline != null && trip.polyline!.isNotEmpty) {
+        await PolylineCache.instance.put(trip.routeKey, trip.polyline!);
+        return trip;
+      }
+      // No geometry in this response → attach a cached track if we have one.
       final cached = await PolylineCache.instance.get(trip.routeKey);
       return (cached != null && cached.isNotEmpty)
           ? trip.copyWith(polyline: cached)
           : trip;
     } catch (e) {
       AppLog.log(
-          'bahn.de fahrt failed ${sw.elapsedMilliseconds}ms ($e) → trying HAFAS',
+          'Vendo zuglauf failed ${sw.elapsedMilliseconds}ms ($e) → trying HAFAS',
           tag: 'trip');
       final trip = await _getTripHafas(tripId);
       AppLog.log('getTrip via HAFAS ok ${sw.elapsedMilliseconds}ms', tag: 'trip');
@@ -330,109 +161,6 @@ class HafasService {
     final data = json.decode(response.body) as Map<String, dynamic>;
     final tripData = data['trip'] as Map<String, dynamic>? ?? data;
     return Trip.fromHafas(tripData);
-  }
-
-  Future<Trip> _getTripDbWeb(String journeyId) async {
-    final encoded = Uri.encodeComponent(journeyId);
-    final uri = Uri.parse('$_dbBase/reiseloesung/fahrt?journeyId=$encoded');
-    // Cap the wait: a hanging/slow bahn.de request must not block the UI
-    // forever — time out so getTrip can fall back to HAFAS quickly.
-    final response = await _client
-        .get(uri, headers: _headers)
-        .timeout(const Duration(seconds: 8));
-    if (response.statusCode != 200) {
-      throw Exception('bahn.de fahrt returned ${response.statusCode}');
-    }
-    final data = json.decode(response.body) as Map<String, dynamic>;
-    return _parseTripFromDbWeb(data, journeyId);
-  }
-
-  Trip _parseTripFromDbWeb(Map<String, dynamic> data, String journeyId) {
-    final halte = data['halte'] as List<dynamic>? ?? [];
-
-    // Train info comes from first halt or top-level fields
-    final zugName = data['zugName'] as String? ?? '';
-    String kategorie = '';
-    String nummer = '';
-    if (halte.isNotEmpty) {
-      final firstHalt = halte.first as Map<String, dynamic>;
-      kategorie = firstHalt['kategorie'] as String? ?? '';
-      nummer = firstHalt['nummer']?.toString() ?? '';
-    }
-
-    final stopovers = halte.whereType<Map<String, dynamic>>().map((h) {
-      // bahn.de `fahrt` nests times: abfahrt/ankunft = {sollzeit, echtzeit}.
-      final ab = h['abfahrt'] as Map<String, dynamic>?;
-      final an = h['ankunft'] as Map<String, dynamic>?;
-      final plannedDep = _parseTime(ab?['sollzeit'] as String?);
-      final actualDep = _parseTime(ab?['echtzeit'] as String?);
-      final plannedArr = _parseTime(an?['sollzeit'] as String?);
-      final actualArr = _parseTime(an?['echtzeit'] as String?);
-
-      // Coordinates are encoded in the HAFAS location id (@X=lon*1e6@Y=lat*1e6@).
-      final locId = h['id'] as String?;
-      final coords = _coordsFromLocationId(locId);
-
-      return Stopover(
-        stop: Station(
-          id: h['extId'] as String? ?? '',
-          name: h['name'] as String? ?? '',
-          latitude: coords?.$1,
-          longitude: coords?.$2,
-          locationId: (locId != null && locId.contains('@')) ? locId : null,
-        ),
-        departure: actualDep ?? plannedDep,
-        plannedDeparture: plannedDep,
-        departureDelay: (plannedDep != null && actualDep != null)
-            ? actualDep.difference(plannedDep).inSeconds
-            : null,
-        arrival: actualArr ?? plannedArr,
-        plannedArrival: plannedArr,
-        arrivalDelay: (plannedArr != null && actualArr != null)
-            ? actualArr.difference(plannedArr).inSeconds
-            : null,
-        departurePlatform: h['gleis'] as String?,
-        plannedDeparturePlatform: h['gleis'] as String?,
-        arrivalPlatform: h['gleis'] as String?,
-        plannedArrivalPlatform: h['gleis'] as String?,
-        cancelled: h['cancelled'] as bool? ?? false,
-        occupancy:
-            _auslastung(h['auslastungsmeldungen'] as List<dynamic>?),
-      );
-    }).toList();
-
-    final origin = stopovers.isNotEmpty
-        ? stopovers.first.stop
-        : const Station(id: '', name: '');
-    final dest = stopovers.length > 1
-        ? stopovers.last.stop
-        : origin;
-
-    // Build display name: "RE 11972" or "Bus 310" etc.
-    final displayName =
-        kategorie.isNotEmpty ? '$kategorie $nummer' : zugName;
-
-    // Train-wide attributes (bike, accessibility, AC, …) — present for RE/IC
-    // alike, independent of any Wagenreihung.
-    final attributes = (data['zugattribute'] as List<dynamic>? ?? [])
-        .whereType<Map<String, dynamic>>()
-        .map(TripAttribute.fromDbWeb)
-        .toList();
-
-    return Trip(
-      id: journeyId,
-      line: TransitLine(
-        name: displayName,
-        fahrtNr: nummer,
-        productName: kategorie,
-        product: _mapProduct(kategorie),
-      ),
-      direction: dest.name,
-      origin: origin,
-      destination: dest,
-      stopovers: stopovers,
-      attributes: attributes,
-    );
   }
 
   // ============================================================
@@ -525,21 +253,6 @@ class HafasService {
     });
 
     return results;
-  }
-
-  DateTime? _parseTime(dynamic value) {
-    if (value is String) return DateTime.tryParse(value);
-    return null;
-  }
-
-  /// Extract (latitude, longitude) from a HAFAS location id
-  /// (`...@X=<lon*1e6>@Y=<lat*1e6>@...`).
-  (double, double)? _coordsFromLocationId(String? id) {
-    if (id == null) return null;
-    final x = RegExp(r'@X=(-?\d+)@').firstMatch(id);
-    final y = RegExp(r'@Y=(-?\d+)@').firstMatch(id);
-    if (x == null || y == null) return null;
-    return (int.parse(y.group(1)!) / 1e6, int.parse(x.group(1)!) / 1e6);
   }
 }
 

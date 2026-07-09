@@ -64,6 +64,33 @@ def _browser_headers() -> dict:
     }
 
 
+BAHNHOFSTAFEL_MEDIA = "application/x.db.vendo.mob.bahnhofstafeln.v2+json"
+ZUGLAUF_MEDIA = "application/x.db.vendo.mob.zuglauf.v2+json"
+
+
+def _vendo_board(eva: str, arrivals: bool = False) -> list:
+    """POST /mob/bahnhofstafel/{abfahrt|ankunft} — the departure/arrival board
+    that replaced the Akamai-blocked bahn.de `reiseloesung/abfahrten`. Returns
+    the positions list (each carries a `zuglaufId` for the train run)."""
+    now = datetime.now()
+    body = {
+        "anfrageZeit": now.strftime("%H:%M"),
+        "datum": now.strftime("%Y-%m-%d"),
+        "ursprungsBahnhofId": eva,
+        "verkehrsmittel": ["ALL"],
+    }
+    path = "ankunft" if arrivals else "abfahrt"
+    r = requests.post(
+        f"https://app.services-bahn.de/mob/bahnhofstafel/{path}",
+        headers=_vendo_headers(BAHNHOFSTAFEL_MEDIA),
+        data=json.dumps(body), timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    key = ("bahnhofstafelAnkunftPositionen" if arrivals
+           else "bahnhofstafelAbfahrtPositionen")
+    return r.json().get(key, [])
+
+
 def _vendo_headers(media: str) -> dict:
     return {
         "Accept": media,
@@ -83,145 +110,100 @@ class CheckError(AssertionError):
 # Individual checks. Each returns a short detail string on success or raises.
 # --------------------------------------------------------------------------
 
-def check_bahn_autocomplete() -> str:
-    r = requests.get(
-        "https://www.bahn.de/web/api/reiseloesung/orte",
-        params={"suchbegriff": "Köln Hbf", "typ": "ALL", "limit": "5"},
-        headers=_browser_headers(), timeout=TIMEOUT,
-    )
-    r.raise_for_status()
-    data = r.json()
-    if not isinstance(data, list) or not data:
-        raise CheckError("expected non-empty list")
-    first = data[0]
-    for key in ("id", "extId", "name"):
-        if key not in first:
-            raise CheckError(f"missing field '{key}' in station object")
-    return f"{len(data)} hits, top='{first['name']}' eva={first['extId']}"
-
-
-def check_bahn_departures() -> str:
+def check_bahn_web_api_blocked() -> str:
+    """The bahn.de website `reiseloesung/*` GET API (orte/abfahrten/ankuenfte/
+    fahrt) is Akamai bot-blocked (OPS_BLOCKED) as of 2026-07-09 — the app moved
+    off it onto the DB Vendo `/mob` backend. Assert it STAYS blocked so we
+    notice (and could simplify) if DB ever reopens it. Soft: a transient 200
+    shouldn't fail CI."""
     now = datetime.now()
     r = requests.get(
-        "https://www.bahn.de/web/api/reiseloesung/abfahrten",
-        params={
-            "datum": now.strftime("%Y-%m-%d"),
-            "zeit": now.strftime("%H:%M:00"),
-            "ortExtId": KOELN_HBF, "mitVias": "false",
-        },
-        headers=_browser_headers(), timeout=TIMEOUT,
-    )
-    r.raise_for_status()
-    entries = r.json().get("entries", [])
-    if not entries:
-        raise CheckError("no departure entries")
-    e = entries[0]
-    if "verkehrmittel" not in e or "journeyId" not in e:
-        raise CheckError("departure entry missing verkehrmittel/journeyId")
-    return f"{len(entries)} departures, first journeyId len={len(e['journeyId'])}"
-
-
-def check_bahn_train_run() -> str:
-    """reiseloesung/fahrt — powers the Zugverlauf (onward stops)."""
-    now = datetime.now()
-    dep = requests.get(
         "https://www.bahn.de/web/api/reiseloesung/abfahrten",
         params={"datum": now.strftime("%Y-%m-%d"),
                 "zeit": now.strftime("%H:%M:00"),
                 "ortExtId": KOELN_HBF, "mitVias": "false"},
         headers=_browser_headers(), timeout=TIMEOUT,
     )
-    dep.raise_for_status()
-    entries = dep.json().get("entries", [])
-    if not entries:
-        raise CheckError("no departures to derive a journeyId")
-    jid = entries[0]["journeyId"]
+    if r.status_code == 403 or "OPS_BLOCKED" in r.text:
+        return "reiseloesung still Akamai-blocked (expected) — app uses vendo"
+    raise CheckError(
+        f"reiseloesung/abfahrten returned {r.status_code} (no longer blocked?) "
+        "— the bahn.de web API may be usable again")
+
+
+def check_vendo_departures() -> str:
+    """POST /mob/bahnhofstafel/abfahrt — the departure board (replaces the
+    blocked bahn.de abfahrten). Powers the Abfahrtstafel + train-by-number."""
+    pos = _vendo_board(KOELN_HBF, arrivals=False)
+    if not pos:
+        raise CheckError("no departure positions")
+    e = pos[0]
+    for key in ("zuglaufId", "abgangsDatum"):
+        if key not in e:
+            raise CheckError(f"departure position missing '{key}'")
+    if not e.get("mitteltext") and not e.get("kurztext"):
+        raise CheckError("departure position has no line text")
+    return (f"{len(pos)} departures, first '{e.get('mitteltext', '?')}' → "
+            f"{e.get('richtung', '?')}, zuglaufId len={len(e['zuglaufId'])}")
+
+
+def check_vendo_arrivals() -> str:
+    """POST /mob/bahnhofstafel/ankunft — the arrival board. Each position adds
+    `abgangsOrt` (origin) which the board renders as "von …"."""
+    pos = _vendo_board(KOELN_HBF, arrivals=True)
+    if not pos:
+        raise CheckError("no arrival positions")
+    e = pos[0]
+    if "ankunftsDatum" not in e or "zuglaufId" not in e:
+        raise CheckError("arrival position missing ankunftsDatum/zuglaufId")
+    origin = (e.get("abgangsOrt") or {}).get("name", "?")
+    return f"{len(pos)} arrivals, first from '{origin}'"
+
+
+def check_vendo_zuglauf_detail() -> str:
+    """GET /mob/zuglauf/{zuglaufId} — the train run that powers the Zugverlauf.
+    Replaces the blocked bahn.de `fahrt`. One response carries the stop list
+    (halte: ort+coords, ankunft/abgang times, gleis), per-stop `auslastungsInfos`
+    (2nd-class load), train-wide `attributNotizen` (bike/accessibility/amenities)
+    AND `polylineGroup` (map geometry). Asserts the halte shape; occupancy and
+    attributes are best-effort (a stray tram carries neither)."""
+    pos = _vendo_board(KOELN_HBF, arrivals=False)
+    if not pos:
+        raise CheckError("no departures to derive a zuglaufId")
+    # Prefer long-distance — likeliest to carry occupancy + amenities.
+    zid = next((p["zuglaufId"] for p in pos
+                if p.get("produktGattung") in ("ICE", "IC", "EC")),
+               pos[0]["zuglaufId"])
     r = requests.get(
-        "https://www.bahn.de/web/api/reiseloesung/fahrt",
-        params={"journeyId": jid}, headers=_browser_headers(), timeout=TIMEOUT,
+        f"https://app.services-bahn.de/mob/zuglauf/{urllib.parse.quote(zid, safe='')}",
+        headers=_vendo_headers(ZUGLAUF_MEDIA), timeout=TIMEOUT,
     )
     r.raise_for_status()
     data = r.json()
-    halte = data.get("halte") or data.get("verlauf") or []
+    halte = data.get("halte") or []
     if not halte:
-        raise CheckError("train run has no halte/verlauf")
-    return f"{len(halte)} stops on the train run"
-
-
-def check_bahn_occupancy() -> str:
-    """fahrt halte carry `auslastungsmeldungen` (per-stop 2nd-class load).
-
-    Powers the "Geringe Auslastung erwartet" line on the train timeline. Soft:
-    not every train/stop reports a load, so absence is a warning, not a failure.
-    """
-    now = datetime.now()
-    dep = requests.get(
-        "https://www.bahn.de/web/api/reiseloesung/abfahrten",
-        params={"datum": now.strftime("%Y-%m-%d"),
-                "zeit": now.strftime("%H:%M:00"),
-                "ortExtId": KOELN_HBF, "mitVias": "false"},
-        headers=_browser_headers(), timeout=TIMEOUT,
-    )
-    dep.raise_for_status()
-    entries = dep.json().get("entries", [])
-    if not entries:
-        raise CheckError("no departures to derive a journeyId")
-    # ICE/IC are likeliest to report a load — scan a few departures.
-    for entry in entries[:8]:
-        r = requests.get(
-            "https://www.bahn.de/web/api/reiseloesung/fahrt",
-            params={"journeyId": entry["journeyId"]},
-            headers=_browser_headers(), timeout=TIMEOUT,
-        )
-        if r.status_code != 200:
-            continue
-        for halt in r.json().get("halte", []):
-            for m in halt.get("auslastungsmeldungen", []) or []:
-                if "klasse" in m and isinstance(m.get("stufe"), int):
-                    return (f"load reported: {m['klasse']} stufe {m['stufe']} "
-                            f"@ {halt.get('name', '?')}")
-    raise CheckError("no auslastungsmeldungen with klasse/stufe in any sampled run")
-
-
-def check_bahn_train_attributes() -> str:
-    """fahrt carries top-level `zugattribute` (train-wide amenities).
-
-    Each is {kategorie, key, value}, e.g. FAHRRADMITNAHME/FB/"Fahrradmitnahme
-    begrenzt möglich" or BARRIEREFREI/RO/"Rollstuhlstellplatz". Powers the
-    amenity row in the stop timeline gap — and unlike the Wagenreihung it's
-    present for an RE just as for an IC. Soft: a stray Bus/tram reports none,
-    so absence across all samples is a warning, not a hard failure.
-    """
-    now = datetime.now()
-    dep = requests.get(
-        "https://www.bahn.de/web/api/reiseloesung/abfahrten",
-        params={"datum": now.strftime("%Y-%m-%d"),
-                "zeit": now.strftime("%H:%M:00"),
-                "ortExtId": KOELN_HBF, "mitVias": "false"},
-        headers=_browser_headers(), timeout=TIMEOUT,
-    )
-    dep.raise_for_status()
-    entries = dep.json().get("entries", [])
-    if not entries:
-        raise CheckError("no departures to derive a journeyId")
-    for entry in entries[:8]:
-        r = requests.get(
-            "https://www.bahn.de/web/api/reiseloesung/fahrt",
-            params={"journeyId": entry["journeyId"]},
-            headers=_browser_headers(), timeout=TIMEOUT,
-        )
-        if r.status_code != 200:
-            continue
-        attrs = r.json().get("zugattribute") or []
-        hit = next(
-            (a for a in attrs
-             if a.get("kategorie") in ("FAHRRADMITNAHME", "BARRIEREFREI")
-             and a.get("value")),
-            None,
-        )
-        if hit:
-            return f"{len(attrs)} zugattribute, e.g. {hit['kategorie']}: {hit['value']}"
-    raise CheckError("no FAHRRADMITNAHME/BARRIEREFREI zugattribute in any sampled run")
+        raise CheckError("zuglauf has no halte")
+    h0 = halte[0]
+    if "ort" not in h0 or "evaNr" not in (h0.get("ort") or {}):
+        raise CheckError("zuglauf halt missing ort/evaNr")
+    if not any(h.get("abgangsDatum") or h.get("ankunftsDatum") for h in halte):
+        raise CheckError("zuglauf halte carry no times")
+    # Best-effort shape guards (the app reads these but tolerates absence).
+    occ = any(isinstance(h.get("auslastungsInfos"), list) and h["auslastungsInfos"]
+              for h in halte)
+    attrs = data.get("attributNotizen") or []
+    if attrs and not isinstance(attrs, list):
+        raise CheckError("attributNotizen is not a list")
+    poly = (data.get("polylineGroup") or {}).get("polylineDesc") or []
+    extras = []
+    if occ:
+        extras.append("auslastung✓")
+    if attrs:
+        extras.append(f"{len(attrs)} attrs")
+    if poly:
+        extras.append("polyline✓")
+    return (f"{len(halte)} stops, {data.get('mitteltext', '?')}"
+            + (f" ({', '.join(extras)})" if extras else ""))
 
 
 def check_vendo_location() -> str:
@@ -543,28 +525,17 @@ def check_vendo_train_polyline() -> str:
     """
     GET /mob/zuglauf/{id} — the exact track geometry DB Navigator draws on its
     map (polylineGroup.polylineDesc[].coordinates). Powers the app's route map
-    (services/vendo_service.fetchTripPolyline). Id is the bahn.de departures
-    journeyId / a vendo leg's zuglaufId (same HAFAS-style string).
+    (services/vendo_service.fetchTripPolyline). Id is a vendo `zuglaufId` — here
+    taken from the departure board (a vendo leg carries the same string).
     """
-    now = datetime.now()
-    dep = requests.get(
-        "https://www.bahn.de/web/api/reiseloesung/abfahrten",
-        params={"datum": now.strftime("%Y-%m-%d"),
-                "zeit": now.strftime("%H:%M:00"),
-                "ortExtId": BERLIN_HBF, "mitVias": "false"},
-        headers=_browser_headers(), timeout=TIMEOUT,
-    )
-    dep.raise_for_status()
-    entries = dep.json().get("entries", [])
-    if not entries:
+    pos = _vendo_board(BERLIN_HBF, arrivals=False)
+    if not pos:
         raise CheckError("no departures to derive a zuglaufId")
-    jid = entries[0]["journeyId"]
+    jid = pos[0]["zuglaufId"]
 
-    media = "application/x.db.vendo.mob.zuglauf.v2+json"
-    import urllib.parse
     r = requests.get(
         f"https://app.services-bahn.de/mob/zuglauf/{urllib.parse.quote(jid, safe='')}",
-        headers=_vendo_headers(media), timeout=TIMEOUT,
+        headers=_vendo_headers(ZUGLAUF_MEDIA), timeout=TIMEOUT,
     )
     r.raise_for_status()
     data = r.json()
@@ -629,16 +600,8 @@ def check_bay_departure_link() -> str:
     DB data sources still share a labelling so the match works (the app falls
     back to showing all departures when they don't, so this is a soft check).
     """
-    now = datetime.now()
-    dep = requests.get(
-        "https://www.bahn.de/web/api/reiseloesung/abfahrten",
-        params={"datum": now.strftime("%Y-%m-%d"),
-                "zeit": now.strftime("%H:%M:00"),
-                "ortExtId": KIEL, "mitVias": "false"},
-        headers=_browser_headers(), timeout=TIMEOUT,
-    )
-    dep.raise_for_status()
-    gleise = {e.get("gleis") for e in dep.json().get("entries", []) if e.get("gleis")}
+    pos = _vendo_board(KIEL, arrivals=False)
+    gleise = {e.get("gleis") for e in pos if e.get("gleis")}
 
     karte = requests.get("https://www.bahnhof.de/kiel-hbf/karte",
                          headers=_browser_headers(), timeout=TIMEOUT)
@@ -671,16 +634,8 @@ def check_gleis_departure_link() -> str:
     ("6A-C") the map omits ("6"); we normalise both. Verify they still align
     for trains at a big station — this is the universal (non-bus) case.
     """
-    now = datetime.now()
-    dep = requests.get(
-        "https://www.bahn.de/web/api/reiseloesung/abfahrten",
-        params={"datum": now.strftime("%Y-%m-%d"), "zeit": now.strftime("%H:%M:00"),
-                "ortExtId": "8002549", "mitVias": "false"},  # Hamburg Hbf
-        headers=_browser_headers(), timeout=TIMEOUT,
-    )
-    dep.raise_for_status()
-    dep_g = {_norm_gleis(e["gleis"]) for e in dep.json().get("entries", [])
-             if e.get("gleis")}
+    pos = _vendo_board("8002549", arrivals=False)  # Hamburg Hbf
+    dep_g = {_norm_gleis(e["gleis"]) for e in pos if e.get("gleis")}
 
     karte = requests.get("https://www.bahnhof.de/hamburg-hbf/karte",
                          headers=_browser_headers(), timeout=TIMEOUT)
@@ -1141,11 +1096,10 @@ def check_db_account_endpoints_require_auth() -> str:
 
 # (name, callable, soft) — soft checks warn instead of fail.
 CHECKS = [
-    ("bahn.de autocomplete (orte)", check_bahn_autocomplete, False),
-    ("bahn.de departures (abfahrten)", check_bahn_departures, False),
-    ("bahn.de train run (fahrt)", check_bahn_train_run, False),
-    ("bahn.de occupancy (auslastung)", check_bahn_occupancy, True),
-    ("bahn.de train attributes (zugattribute)", check_bahn_train_attributes, True),
+    ("bahn.de web API blocked (reiseloesung)", check_bahn_web_api_blocked, True),
+    ("vendo departures (bahnhofstafel)", check_vendo_departures, False),
+    ("vendo arrivals (bahnhofstafel)", check_vendo_arrivals, False),
+    ("vendo train run (zuglauf halte)", check_vendo_zuglauf_detail, False),
     ("vendo location search", check_vendo_location, False),
     ("vendo journey + prices (v9)", check_vendo_journey, False),
     ("vendo party search (pax/bike/dog/SBA)", check_vendo_journey_party, False),

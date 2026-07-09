@@ -6,6 +6,7 @@ import '../models/station.dart';
 import 'db_api_service.dart' show SegmentPrice;
 import '../models/departure.dart';
 import '../models/journey.dart';
+import '../models/trip.dart';
 
 /// Client for the DB Navigator mobile backend (`app.services-bahn.de/mob`).
 ///
@@ -23,6 +24,8 @@ class VendoService {
   static const _zuglaufMedia = 'application/x.db.vendo.mob.zuglauf.v2+json';
   static const _shareMedia =
       'application/x.db.vendo.mob.verbindungteilen.v1+json';
+  static const _bahnhofstafelMedia =
+      'application/x.db.vendo.mob.bahnhofstafeln.v2+json';
 
   final _rng = Random();
 
@@ -278,6 +281,14 @@ class VendoService {
       throw VendoException('Vendo zuglauf HTTP ${res.statusCode}');
     }
     final data = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    final points = _parsePolyline(data);
+    AppLog.log('zuglauf polyline ${points?.length ?? 0} pts', tag: 'vendo');
+    return points;
+  }
+
+  /// Extract the flattened lat/lng track from a `zuglauf` response's
+  /// `polylineGroup.polylineDesc[].coordinates`. Null when absent.
+  List<Map<String, double>>? _parsePolyline(Map<String, dynamic> data) {
     final group = data['polylineGroup'] as Map<String, dynamic>?;
     final descs = group?['polylineDesc'] as List<dynamic>? ?? const [];
     final points = <Map<String, double>>[];
@@ -291,8 +302,220 @@ class VendoService {
         }
       }
     }
-    AppLog.log('zuglauf polyline ${points.length} pts', tag: 'vendo');
     return points.isEmpty ? null : points;
+  }
+
+  // ==========================================================================
+  // DEPARTURE / ARRIVAL BOARD (Bahnhofstafel) — replaces the Akamai-blocked
+  // bahn.de `reiseloesung/abfahrten|ankuenfte` GET endpoints.
+  // POST /mob/bahnhofstafel/{abfahrt|ankunft}
+  //   body {anfrageZeit "HH:MM", datum "YYYY-MM-DD", ursprungsBahnhofId <eva>,
+  //         verkehrsmittel ["ALL"]}
+  //   → {bahnhofstafel{Abfahrt|Ankunft}Positionen: [...]}
+  // Each position carries a `zuglaufId` — the same id GET /mob/zuglauf/{id}
+  // (and [getTrip]) consumes, so a board row taps straight through to detail.
+  // ==========================================================================
+
+  Future<List<Departure>> getDepartures(String evaId,
+          {DateTime? when, int results = 40}) =>
+      _fetchBoard(evaId, when: when, results: results, arrivals: false);
+
+  Future<List<Departure>> getArrivals(String evaId,
+          {DateTime? when, int results = 40}) =>
+      _fetchBoard(evaId, when: when, results: results, arrivals: true);
+
+  Future<List<Departure>> _fetchBoard(String evaId,
+      {DateTime? when, int results = 40, required bool arrivals}) async {
+    final now = when ?? DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    final body = {
+      'anfrageZeit': '${two(now.hour)}:${two(now.minute)}',
+      'datum': '${now.year}-${two(now.month)}-${two(now.day)}',
+      'ursprungsBahnhofId': evaId,
+      'verkehrsmittel': ['ALL'],
+    };
+    final path = arrivals ? 'ankunft' : 'abfahrt';
+    final res = await _client
+        .post(Uri.parse('$_base/bahnhofstafel/$path'),
+            headers: _headers(_bahnhofstafelMedia),
+            // Bytes, not String — a charset param on Content-Type is rejected.
+            body: utf8.encode(json.encode(body)))
+        .timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) {
+      throw VendoException('Vendo bahnhofstafel/$path HTTP ${res.statusCode}');
+    }
+    final data = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    final key = arrivals
+        ? 'bahnhofstafelAnkunftPositionen'
+        : 'bahnhofstafelAbfahrtPositionen';
+    final list = data[key] as List<dynamic>? ?? const [];
+    return list
+        .whereType<Map<String, dynamic>>()
+        .take(results)
+        .map((p) => _departureFromBoard(p, arrivals: arrivals))
+        .toList();
+  }
+
+  Departure _departureFromBoard(Map<String, dynamic> p,
+      {required bool arrivals}) {
+    final planned =
+        _parse(arrivals ? p['ankunftsDatum'] : p['abgangsDatum']);
+    final actual =
+        _parse(arrivals ? p['ezAnkunftsDatum'] : p['ezAbgangsDatum']) ??
+            planned;
+    final delay = (planned != null && actual != null)
+        ? actual.difference(planned).inSeconds
+        : null;
+    final gattung = p['produktGattung'] as String? ?? '';
+    final gleis = p['gleis'] as String?;
+    // Departures label the destination (`richtung`); arrivals label the origin
+    // (`abgangsOrt`) — the board shows "from …" for an incoming train.
+    final direction = arrivals
+        ? ((p['abgangsOrt'] as Map<String, dynamic>?)?['name'] as String? ?? '')
+        : (p['richtung'] as String? ?? '');
+    final notes = (p['echtzeitNotizen'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map((m) => m['text'] as String? ?? '')
+        .where((s) => s.isNotEmpty)
+        .toList();
+    return Departure(
+      tripId: p['zuglaufId'] as String? ?? '',
+      stop: _stationFromVendo(p['abfrageOrt'] as Map<String, dynamic>? ?? const {}),
+      when: actual ?? planned,
+      plannedWhen: planned,
+      delay: delay,
+      platform: gleis,
+      plannedPlatform: gleis,
+      direction: direction,
+      line: TransitLine(
+        name: p['mitteltext'] as String? ??
+            p['kurztext'] as String? ??
+            gattung,
+        fahrtNr: p['zugnummer']?.toString() ??
+            p['verkehrsmittelNummer'] as String? ??
+            '',
+        productName: p['kurztext'] as String? ?? gattung,
+        product: _mapProduct(gattung),
+      ),
+      cancelled: false,
+      remarks: notes,
+    );
+  }
+
+  // ==========================================================================
+  // TRIP DETAIL (Zugverlauf) — GET /mob/zuglauf/{zuglaufId}. Replaces the
+  // Akamai-blocked bahn.de `reiseloesung/fahrt`. One call yields the stop list
+  // (times/platform/occupancy/coords), train-wide attributes AND the exact
+  // track polyline, so the map needs no second request.
+  // ==========================================================================
+
+  Future<Trip> getTrip(String zuglaufId) async {
+    final url = '$_base/zuglauf/${Uri.encodeComponent(zuglaufId)}';
+    final res = await _client
+        .get(Uri.parse(url), headers: _headers(_zuglaufMedia))
+        .timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) {
+      throw VendoException('Vendo zuglauf HTTP ${res.statusCode}');
+    }
+    final data = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    return _parseTripFromZuglauf(data, zuglaufId);
+  }
+
+  Trip _parseTripFromZuglauf(Map<String, dynamic> data, String zuglaufId) {
+    final halte = data['halte'] as List<dynamic>? ?? const [];
+    final stopovers = halte
+        .whereType<Map<String, dynamic>>()
+        .map(_stopoverFromZuglauf)
+        .toList();
+
+    final gattung = data['produktGattung'] as String? ?? '';
+    final zugnummer = data['zugnummer']?.toString() ?? '';
+    final displayName = (data['mitteltext'] as String?)?.trim().isNotEmpty == true
+        ? data['mitteltext'] as String
+        : '$gattung $zugnummer'.trim();
+
+    final origin = stopovers.isNotEmpty
+        ? stopovers.first.stop
+        : const Station(id: '', name: '');
+    final dest = stopovers.length > 1 ? stopovers.last.stop : origin;
+
+    final attributes = (data['attributNotizen'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(_tripAttrFromNotiz)
+        .toList();
+
+    return Trip(
+      id: zuglaufId,
+      line: TransitLine(
+        name: displayName,
+        fahrtNr: zugnummer,
+        productName: data['kurztext'] as String? ?? gattung,
+        product: _mapProduct(gattung),
+      ),
+      direction: dest.name,
+      origin: origin,
+      destination: dest,
+      stopovers: stopovers,
+      attributes: attributes,
+      polyline: _parsePolyline(data),
+    );
+  }
+
+  Stopover _stopoverFromZuglauf(Map<String, dynamic> h) {
+    final plannedDep = _parse(h['abgangsDatum']);
+    final actualDep = _parse(h['ezAbgangsDatum']) ?? plannedDep;
+    final plannedArr = _parse(h['ankunftsDatum']);
+    final actualArr = _parse(h['ezAnkunftsDatum']) ?? plannedArr;
+    final gleis = h['gleis'] as String?;
+    return Stopover(
+      stop: _stationFromVendo(h['ort'] as Map<String, dynamic>? ?? const {}),
+      departure: actualDep,
+      plannedDeparture: plannedDep,
+      departureDelay: (plannedDep != null && actualDep != null)
+          ? actualDep.difference(plannedDep).inSeconds
+          : null,
+      arrival: actualArr,
+      plannedArrival: plannedArr,
+      arrivalDelay: (plannedArr != null && actualArr != null)
+          ? actualArr.difference(plannedArr).inSeconds
+          : null,
+      departurePlatform: gleis,
+      plannedDeparturePlatform: gleis,
+      arrivalPlatform: gleis,
+      plannedArrivalPlatform: gleis,
+      cancelled: _haltCancelled(h),
+      occupancy: _occupancyFrom(h['auslastungsInfos'] as List<dynamic>?),
+    );
+  }
+
+  /// Map a vendo `attributNotiz` ({key, text, priority}) to a [TripAttribute].
+  /// The train-detail UI keys its bike/wheelchair icons off `kategorie`, which
+  /// vendo doesn't send — so derive it from the well-known short codes (FB/…
+  /// bike, RO/RG/OC/RS wheelchair). Amenity codes (EH/KL/WLAN/BR) are matched
+  /// by `key` downstream, so those pass through with an empty kategorie.
+  TripAttribute _tripAttrFromNotiz(Map<String, dynamic> n) {
+    final key = (n['key'] as String? ?? '').toUpperCase();
+    String kategorie = '';
+    if (const {'FB', 'FK', 'FR', 'FH'}.contains(key)) {
+      kategorie = 'FAHRRADMITNAHME';
+    } else if (const {'RO', 'RG', 'OC', 'RS'}.contains(key)) {
+      kategorie = 'BARRIEREFREI';
+    }
+    return TripAttribute(
+      kategorie: kategorie,
+      key: key,
+      value: n['text'] as String? ?? '',
+    );
+  }
+
+  /// DB `auslastungsInfos` (per stop) → 2nd-class [OccupancyLevel], reusing the
+  /// shared `stufe` mapping. Shape: `[{klasse: KLASSE_2, stufe: 1}]`.
+  OccupancyLevel _occupancyFrom(List<dynamic>? infos) {
+    if (infos == null) return OccupancyLevel.unknown;
+    for (final i in infos.whereType<Map<String, dynamic>>()) {
+      if (i['klasse'] == 'KLASSE_2') return _stufe(i['stufe'] as int?);
+    }
+    return OccupancyLevel.unknown;
   }
 
   /// Cheapest price for one split-ticket segment, via the vendo journey API
@@ -403,7 +626,13 @@ class VendoService {
     if (res.statusCode != 200) return [];
     final data = json.decode(utf8.decode(res.bodyBytes));
     if (data is! List) return [];
-    return data.whereType<Map<String, dynamic>>().map(_stationFromVendo).toList();
+    return data
+        .whereType<Map<String, dynamic>>()
+        // Stations only (locationType 'ST') — the app searches for stops, not
+        // addresses/POIs, and downstream boards need a station EVA.
+        .where((o) => o['locationType'] == 'ST')
+        .map(_stationFromVendo)
+        .toList();
   }
 
   // -- parsing ---------------------------------------------------------------
@@ -552,7 +781,9 @@ class VendoService {
       (h['ersatzhaltNotiz'] as Map<String, dynamic>?)?['typ'] == 'GECANCELT';
 
   Station _stationFromVendo(Map<String, dynamic> ort) {
-    final pos = ort['position'] as Map<String, dynamic>?;
+    // Journey halte/legs nest coords under `position`; the location-search
+    // endpoint uses `coordinates` — accept either.
+    final pos = (ort['position'] ?? ort['coordinates']) as Map<String, dynamic>?;
     final loc = ort['locationId'] as String?;
     return Station(
       id: (ort['evaNr'] ?? '').toString(),
