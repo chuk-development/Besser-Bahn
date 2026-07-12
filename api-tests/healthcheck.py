@@ -225,6 +225,33 @@ def check_vendo_location() -> str:
     return f"{len(data)} hits, top='{first['name']}' eva={first['evaNr']}"
 
 
+def check_vendo_nearby() -> str:
+    """POST /mob/location/nearby/bytypes — stations near a coordinate. The
+    coords go inside `area`, and `types`/`operatingSystem` are required (that
+    shape is why the older /mob/location/nearby guesses all 400'd). Response:
+    {fahrplanAuskunftLocations: [...]}."""
+    media = "application/x.db.vendo.mob.location.v3+json"
+    body = {
+        "area": {"coordinates": {"latitude": 50.9427, "longitude": 6.9586},
+                 "radius": 2000},
+        "maxResults": 5, "operatingSystem": "ANDROID",
+        "products": ["ALL"], "types": ["ST"],
+    }
+    r = requests.post(
+        "https://app.services-bahn.de/mob/location/nearby/bytypes",
+        headers=_vendo_headers(media), data=json.dumps(body), timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    locs = r.json().get("fahrplanAuskunftLocations", [])
+    if not locs:
+        raise CheckError("no nearby locations")
+    first = locs[0]
+    for key in ("evaNr", "name", "coordinates"):
+        if key not in first:
+            raise CheckError(f"nearby location missing '{key}'")
+    return f"{len(locs)} nearby, closest '{first['name']}' ({first.get('distance')}m)"
+
+
 def check_vendo_journey() -> str:
     """The important one: journeys WITH prices, replaces website fahrplan."""
     media = "application/x.db.vendo.mob.verbindungssuche.v9+json"
@@ -1101,6 +1128,7 @@ CHECKS = [
     ("vendo arrivals (bahnhofstafel)", check_vendo_arrivals, False),
     ("vendo train run (zuglauf halte)", check_vendo_zuglauf_detail, False),
     ("vendo location search", check_vendo_location, False),
+    ("vendo nearby stations (bytypes)", check_vendo_nearby, False),
     ("vendo journey + prices (v9)", check_vendo_journey, False),
     ("vendo party search (pax/bike/dog/SBA)", check_vendo_journey_party, False),
     ("vendo journey pagination (context)", check_vendo_journey_pagination, False),

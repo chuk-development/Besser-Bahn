@@ -29,19 +29,20 @@ class HafasService {
   Future<List<Station>> searchStations(String query) =>
       _vendo.searchLocations(query);
 
-  /// Stations near a coordinate. The DB Vendo backend exposes no working
-  /// nearby-location endpoint we could find (all body shapes 400), and the
-  /// bahn.de `orte/nearby` GET is Akamai-blocked — so this currently returns
-  /// empty. Callers (only the map-bay stop resolver) already fall back to the
-  /// searched station's EVA, so this degrades gracefully rather than breaking.
+  /// Stations near a coordinate — via the DB Vendo `location/nearby/bytypes`
+  /// endpoint (request shape reverse-engineered from the DB Navigator APK).
   Future<List<Station>> nearbyStations({
     required double latitude,
     required double longitude,
     int results = 8,
     int? distance,
-  }) async {
-    return const [];
-  }
+  }) =>
+      _vendo.nearbyStations(
+        latitude: latitude,
+        longitude: longitude,
+        radius: distance ?? 2000,
+        maxResults: results,
+      );
 
   // ============================================================
   // DEPARTURES / ARRIVALS (DB Vendo Bahnhofstafel)

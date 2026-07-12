@@ -635,6 +635,39 @@ class VendoService {
         .toList();
   }
 
+  /// Stations near a coordinate — `POST /mob/location/nearby/bytypes`. The
+  /// coordinates go inside an `area`, and `types`/`operatingSystem` are
+  /// required (that request shape, reverse-engineered from the DB Navigator
+  /// APK, is why the older `/mob/location/nearby` guesses all 400'd). Response
+  /// is `{fahrplanAuskunftLocations: [...]}` in the same item shape as search.
+  Future<List<Station>> nearbyStations({
+    required double latitude,
+    required double longitude,
+    int radius = 2000,
+    int maxResults = 8,
+  }) async {
+    final res = await _client.post(
+      Uri.parse('$_base/location/nearby/bytypes'),
+      headers: _headers(_locationMedia),
+      body: utf8.encode(json.encode({
+        'area': {
+          'coordinates': {'latitude': latitude, 'longitude': longitude},
+          'radius': radius,
+        },
+        'maxResults': maxResults,
+        'operatingSystem': 'ANDROID',
+        'products': ['ALL'],
+        'types': ['ST'],
+      })),
+    );
+    if (res.statusCode != 200) return [];
+    final data = json.decode(utf8.decode(res.bodyBytes));
+    final locs = (data is Map<String, dynamic>
+        ? data['fahrplanAuskunftLocations']
+        : null) as List<dynamic>? ?? const [];
+    return locs.whereType<Map<String, dynamic>>().map(_stationFromVendo).toList();
+  }
+
   // -- parsing ---------------------------------------------------------------
 
   /// Public entry to the connection parser — accepts a raw vendo `verbindung`
