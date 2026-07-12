@@ -225,6 +225,85 @@ def check_vendo_location() -> str:
     return f"{len(data)} hits, top='{first['name']}' eva={first['evaNr']}"
 
 
+# Every concrete (non-templated) DB Navigator `/mob` endpoint, extracted from
+# the app APK with `apkurl` (see the apk-url-extractor tool). This is the full
+# backend surface the official app talks to — most we don't use yet, but probing
+# them catches the moment DB removes/renames one (which is how the whole
+# reiseloesung API vanished). Regenerate on a DB Navigator update:
+#   apkurl <dbnav.xapk> ; jq -r '.apiPaths[]|select(startswith("mob/") and (contains("{")|not))' snapshots/de.hafas.android.db-*.json
+MOB_SURFACE = [
+    "mob/aboVertragsstatusAnonym", "mob/aboverkauf/bestellanfrage",
+    "mob/adressvalidierung", "mob/amp/discovery/v1/nearby",
+    "mob/amp/discovery/v1/stations", "mob/amp/discovery/v1/stations/location",
+    "mob/amp/discovery/v1/vehicles", "mob/amp/discovery/v1/vehicles/location",
+    "mob/amp/discovery/v1/vehicles/lookup", "mob/amp/login/v1/auth",
+    "mob/amp/login/v1/token", "mob/amp/navigation/v1/estimations/multimodal",
+    "mob/amp/pay-discounts/v1/vouchers", "mob/amp/sharing-booking/v1/bookings",
+    "mob/amp/sharing-booking/v1/bookings/latest", "mob/angebote/fahrplan",
+    "mob/angebote/recon", "mob/angebote/recon/autonomereservierung",
+    "mob/angebote/tagesbestpreis", "mob/angebote/umtausch",
+    "mob/angebote/upgrade", "mob/angebote/verbindung/teilen",
+    "mob/appversion/check", "mob/auftrag/materialisieren/erstmaterialisierung",
+    "mob/auftrag/materialisieren/folgematerialisierung", "mob/auftrag/token",
+    "mob/auftrag/upgradeAngebot", "mob/bahnhofstafel/abfahrt",
+    "mob/bahnhofstafel/ankunft", "mob/buchungen", "mob/buchungen/abbrechen",
+    "mob/buchungen/abschliessen", "mob/buchungen/abschliessen/anonym",
+    "mob/buchungen/anonym", "mob/buchungen/storno", "mob/buchungen/umtausch",
+    "mob/datalake", "mob/devicetoken", "mob/devicetoken/delete",
+    "mob/emobilebahncards", "mob/errorreport", "mob/gsd/gsd_v3",
+    "mob/katalog/angebot", "mob/katalog/verbundshop/angebot",
+    "mob/kci/reservierungen", "mob/kcidurchfuehren", "mob/konfiguration",
+    "mob/kundenkonten/nutzungsbedingungen/akzeptieren",
+    "mob/kundenkonten/nutzungsbedingungen/status", "mob/kundenkontingente",
+    "mob/location/calculateroute", "mob/location/nearby/bytypes",
+    "mob/location/search", "mob/mehrfahrtenkarten", "mob/reisen",
+    "mob/reisenuebersicht", "mob/stammdaten", "mob/streckenfavoriten",
+    "mob/trip/recon", "mob/trip/weitereabfahrten", "mob/warenkorb",
+    "mob/warenkorb/stornooption", "mob/zahlungsart/lastschrift/mandatstext",
+    "mob/zahlungsmittel", "mob/zahlungsmittel/bankdetails",
+    "mob/zahlungsmittel/legacy", "mob/zuglaeufe/halte/by-abfahrt/wagenreihung",
+]
+
+
+def check_mob_surface() -> str:
+    """Reachability sweep over the ENTIRE DB Navigator /mob surface (see
+    MOB_SURFACE). POST an empty body to each and flag only the ones that are
+    *gone* — 404 (removed/renamed) or OPS_BLOCKED (Akamai). Auth-gated (401),
+    wrong-media (415), bad-body (400), wrong-method (405) all count as reachable:
+    the endpoint still exists. Soft — a transient blip shouldn't fail CI, but a
+    real removal shows up here first. This is the early-warning net that would
+    have flagged the reiseloesung shutdown."""
+    from concurrent.futures import ThreadPoolExecutor
+    media = "application/x.db.vendo.mob.location.v3+json"
+
+    def probe(path: str):
+        url = f"https://app.services-bahn.de/{path}"
+        # POST first; if the path 404s (some are GET-only → the router 404s an
+        # unmatched method+path), re-probe with GET before calling it gone.
+        try:
+            for method in ("POST", "GET"):
+                r = requests.request(method, url, headers=_vendo_headers(media),
+                                     data="{}" if method == "POST" else None,
+                                     timeout=15)
+                if r.status_code == 403 or "OPS_BLOCKED" in r.text:
+                    return path, "BLOCKED"
+                if r.status_code != 404:
+                    return path, "ok"   # reachable (401/400/405/415/200/500…)
+            return path, "404"          # both methods 404 → really gone
+        except Exception as e:
+            return path, f"ERR:{type(e).__name__}"
+
+    gone = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for path, status in ex.map(probe, MOB_SURFACE):
+            if status != "ok":
+                gone.append(f"{path}→{status}")
+    if gone:
+        raise CheckError(f"{len(gone)}/{len(MOB_SURFACE)} mob endpoints NOT "
+                         f"reachable: {gone}")
+    return f"all {len(MOB_SURFACE)} mob endpoints reachable"
+
+
 def check_vendo_nearby() -> str:
     """POST /mob/location/nearby/bytypes — stations near a coordinate. The
     coords go inside `area`, and `types`/`operatingSystem` are required (that
@@ -1129,6 +1208,7 @@ CHECKS = [
     ("vendo train run (zuglauf halte)", check_vendo_zuglauf_detail, False),
     ("vendo location search", check_vendo_location, False),
     ("vendo nearby stations (bytypes)", check_vendo_nearby, False),
+    ("mob endpoint surface reachable (67)", check_mob_surface, True),
     ("vendo journey + prices (v9)", check_vendo_journey, False),
     ("vendo party search (pax/bike/dog/SBA)", check_vendo_journey_party, False),
     ("vendo journey pagination (context)", check_vendo_journey_pagination, False),
