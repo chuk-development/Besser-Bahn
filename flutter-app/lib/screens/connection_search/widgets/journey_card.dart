@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../../models/journey.dart';
+import '../../../providers/journey_search_provider.dart';
+import '../../../utils/journey_highlights.dart';
 import '../../../core/extensions.dart';
 import '../../../core/share_text.dart';
 import '../../../providers/service_providers.dart';
@@ -32,6 +34,17 @@ class JourneyCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final transitLegs = journey.legs.where((l) => !l.isWalking).toList();
+    // "Schnellste / Günstigste / Sicherste / Bester Kompromiss" (#11.9). Only
+    // in a result list: the same card stands in for a booked ticket in the
+    // Reisen tab, where there's nothing to compare against.
+    final highlights = onTap == null
+        ? ref
+            .watch(journeyHighlightsProvider)
+            .entries
+            .where((e) => identical(e.value, journey))
+            .map((e) => e.key)
+            .toList()
+        : const <JourneyHighlight>[];
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -56,6 +69,16 @@ class JourneyCard extends ConsumerWidget {
               Expanded(
                 child: Column(
             children: [
+              if (highlights.isNotEmpty) ...[
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: [
+                    for (final h in highlights) _HighlightChip(highlight: h),
+                  ],
+                ),
+                const SizedBox(height: 6),
+              ],
               // Cancellation banner — full width, red, above everything else so
               // a dead connection can't be mistaken for a normal one.
               if (journey.hasCancelledLeg || journey.hasPartialCancellation) ...[
@@ -198,6 +221,33 @@ class JourneyCard extends ConsumerWidget {
 
 /// Full-width red (cancelled) / amber (partial) strip warning that this
 /// connection can't be travelled as shown.
+/// "⚡ Schnellste" / "🛡️ Sicherste" … — why this connection stands out from
+/// the rest of the list (#11, point 9).
+class _HighlightChip extends StatelessWidget {
+  final JourneyHighlight highlight;
+  const _HighlightChip({required this.highlight});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        '${highlight.emoji} ${highlight.label}',
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: scheme.onPrimaryContainer,
+        ),
+      ),
+    );
+  }
+}
+
 class _CancelBanner extends StatelessWidget {
   final bool partial;
   const _CancelBanner({required this.partial});

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/station.dart';
 import '../core/app_log.dart';
 import '../models/journey.dart';
+import '../utils/journey_highlights.dart';
 import 'prediction_provider.dart';
 import 'service_providers.dart';
 import 'settings_provider.dart';
@@ -300,6 +301,24 @@ class JourneySearchNotifier extends Notifier<JourneySearchState> {
 final journeySearchProvider =
     NotifierProvider<JourneySearchNotifier, JourneySearchState>(
         JourneySearchNotifier.new);
+
+/// Which connection is the fastest / cheapest / safest / best compromise of
+/// the current result list (#11, point 9).
+///
+/// Reads the same per-journey predictions the badges and the reliability sort
+/// already request, so the labels fill in as those land — no extra traffic.
+final journeyHighlightsProvider =
+    Provider.autoDispose<Map<JourneyHighlight, Journey>>((ref) {
+  final journeys = ref.watch(journeySearchProvider).sortedJourneys;
+  return journeyHighlights(
+    journeys,
+    (j) => ref
+        .watch(journeyPredictionProvider(PredictionRequest(j)))
+        .asData
+        ?.value
+        ?.reliabilityScore,
+  );
+});
 
 /// The result list the UI renders — [JourneySearchState.sortedJourneys], except
 /// in `reliability` mode, where it's re-ordered by the prediction model.
