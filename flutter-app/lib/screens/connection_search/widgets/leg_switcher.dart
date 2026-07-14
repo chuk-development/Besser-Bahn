@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/extensions.dart';
 import '../../../models/journey.dart';
+import '../../../models/transfer_profile.dart';
 import '../../../providers/service_providers.dart';
+import '../../../providers/settings_provider.dart';
 import '../../../services/vendo_service.dart';
 
 /// A compact bar on a train leg that lets you step through the OTHER departures
@@ -53,10 +55,17 @@ class LegAlternativeSwitcherState
   bool _loaded = false;
   String? _error;
 
-  bool get _atRisk =>
-      widget.incomingGapMinutes != null && widget.incomingGapMinutes! <= 2;
-  bool get _tight =>
-      widget.incomingGapMinutes != null && widget.incomingGapMinutes! <= 5;
+  /// The transfer as THIS rider experiences it: a 10-minute change is not the
+  /// same with a pram as with a backpack (#11, point 7). Scaling the gap (not
+  /// the thresholds) keeps every consumer comparing the same number.
+  int? get _gap {
+    final planned = widget.incomingGapMinutes;
+    if (planned == null) return null;
+    return ref.read(settingsProvider).transferProfile.effectiveGap(planned);
+  }
+
+  bool get _atRisk => _gap != null && _gap! <= 2;
+  bool get _tight => _gap != null && _gap! <= 5;
 
   @override
   void initState() {
@@ -352,11 +361,22 @@ class LegAlternativeSwitcherState
     final name = l?.line?.titleWithNumber ?? l?.line?.displayName ?? 'Zug';
     final fg = _atRisk ? theme.colorScheme.onErrorContainer : const Color(0xFF7A4E00);
     final station = widget.transferStationName;
+    // The PLANNED gap, not the profile-scaled one: that's the number on the
+    // platform display, and contradicting it would just look wrong. The
+    // profile decides whether to warn, not what the clock says.
     final gap = widget.incomingGapMinutes;
+    final profile = ref.read(settingsProvider).transferProfile;
+    // Say so when the profile — not the clock — is what raised this, otherwise
+    // "Knapper Anschluss · 12 min" reads as a bug.
+    final byProfile = profile != TransferProfile.normal &&
+        gap != null &&
+        gap > 5 &&
+        _tight;
     final headline = _atRisk
         ? 'Anschluss${station != null ? ' in $station' : ''} evtl. nicht erreichbar'
             '${gap != null ? ' · nur $gap min' : ''}'
-        : 'Knapper Anschluss${gap != null ? ' · $gap min' : ''}';
+        : 'Knapper Anschluss${gap != null ? ' · $gap min' : ''}'
+            '${byProfile ? ' für „${profile.label}"' : ''}';
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 2, 4, 6),

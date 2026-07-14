@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/constants.dart';
 import '../../models/split_ticket.dart';
+import '../../models/transfer_profile.dart';
 import '../../models/traewelling_models.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/traewelling_provider.dart';
@@ -146,6 +147,17 @@ class SettingsScreen extends ConsumerWidget {
                     notifier.setExitAlarmEnabled(v);
                     if (v) NotificationService.requestPermissions();
                   },
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.directions_walk),
+                  title: const Text('Umsteigeprofil'),
+                  subtitle: Text(
+                      '${settings.transferProfile.emoji} '
+                      '${settings.transferProfile.label} — '
+                      '${settings.transferProfile.hint}'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _pickTransferProfile(context, ref, settings),
                 ),
               ],
             ),
@@ -359,6 +371,53 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Picker for the transfer profile. A sheet rather than a dropdown: each
+  /// option needs its one-line "why", or the labels alone ("Normal" vs "Mehr
+  /// Zeit") don't say what actually changes.
+  void _pickTransferProfile(
+      BuildContext context, WidgetRef ref, AppSettings settings) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+              child: Text('Umsteigeprofil',
+                  style: Theme.of(ctx).textTheme.titleLarge),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: Text(
+                'Wie schnell du umsteigst. Beeinflusst, ab wann die App einen '
+                'Anschluss als knapp warnt — die Fahrplanzeiten selbst ändert '
+                'es nicht. Bleibt auf dem Gerät.',
+                style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant),
+              ),
+            ),
+            for (final p in TransferProfile.values)
+              RadioListTile<TransferProfile>(
+                value: p,
+                groupValue: settings.transferProfile,
+                title: Text('${p.emoji}  ${p.label}'),
+                subtitle: Text(p.hint),
+                onChanged: (v) {
+                  if (v != null) {
+                    ref.read(settingsProvider.notifier).setTransferProfile(v);
+                  }
+                  Navigator.pop(ctx);
+                },
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/reisende.dart';
 import '../models/split_ticket.dart';
+import '../models/transfer_profile.dart';
 
 class AppSettings {
   final BahnCardType bahnCard;
@@ -49,6 +50,10 @@ class AppSettings {
   /// unlike the timetable-based arrival ping. Off by default (uses location).
   final bool exitAlarmEnabled;
 
+  /// How fast this rider changes trains. Scales how tight a transfer is judged
+  /// to be, everywhere the app judges one (#11, point 7). Local-only.
+  final TransferProfile transferProfile;
+
   const AppSettings({
     this.bahnCard = BahnCardType.none,
     this.hasDeutschlandTicket = false,
@@ -62,6 +67,7 @@ class AppSettings {
     this.arrivalAlertEnabled = true,
     this.arrivalAlarmSound = false,
     this.exitAlarmEnabled = false,
+    this.transferProfile = TransferProfile.normal,
     this.searchParty = const SearchParty(),
   });
 
@@ -78,6 +84,7 @@ class AppSettings {
     bool? arrivalAlertEnabled,
     bool? arrivalAlarmSound,
     bool? exitAlarmEnabled,
+    TransferProfile? transferProfile,
     SearchParty? searchParty,
   }) {
     return AppSettings(
@@ -93,6 +100,7 @@ class AppSettings {
       arrivalAlertEnabled: arrivalAlertEnabled ?? this.arrivalAlertEnabled,
       arrivalAlarmSound: arrivalAlarmSound ?? this.arrivalAlarmSound,
       exitAlarmEnabled: exitAlarmEnabled ?? this.exitAlarmEnabled,
+      transferProfile: transferProfile ?? this.transferProfile,
       searchParty: searchParty ?? this.searchParty,
     );
   }
@@ -122,6 +130,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
       arrivalAlertEnabled: prefs.getBool('arrivalAlertEnabled') ?? true,
       arrivalAlarmSound: prefs.getBool('arrivalAlarmSound') ?? false,
       exitAlarmEnabled: prefs.getBool('exitAlarmEnabled') ?? false,
+      transferProfile:
+          TransferProfile.fromName(prefs.getString('transferProfile')),
       // First run (no stored party): seed from the single-card settings so the
       // search behaves exactly as before until the user customises the party.
       searchParty: SearchParty.tryDecode(prefs.getString('searchParty')) ??
@@ -143,6 +153,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
     await prefs.setBool('arrivalAlertEnabled', state.arrivalAlertEnabled);
     await prefs.setBool('arrivalAlarmSound', state.arrivalAlarmSound);
     await prefs.setBool('exitAlarmEnabled', state.exitAlarmEnabled);
+    await prefs.setString('transferProfile', state.transferProfile.name);
     await prefs.setString('searchParty', state.searchParty.encode());
   }
 
@@ -237,6 +248,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
 
   void setExitAlarmEnabled(bool value) {
     state = state.copyWith(exitAlarmEnabled: value);
+    _save();
+  }
+
+  void setTransferProfile(TransferProfile profile) {
+    state = state.copyWith(transferProfile: profile);
     _save();
   }
 }

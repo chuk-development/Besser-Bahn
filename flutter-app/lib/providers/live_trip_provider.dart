@@ -8,6 +8,7 @@ import '../core/app_log.dart';
 import '../core/extensions.dart';
 import '../models/journey.dart';
 import '../models/library_models.dart';
+import '../models/transfer_profile.dart';
 import '../models/trip.dart';
 import '../services/notification_service.dart';
 import 'library_provider.dart';
@@ -256,14 +257,24 @@ class LiveTripTracker extends Notifier<LiveTripState>
 
   void _checkTransfer(
       String tripId, String nextLine, String station, int gap, DateTime dep) {
-    if (gap >= 5) return; // comfortable, stay quiet
+    // Judge the gap the way the rider experiences it, so the push and the
+    // on-screen risk banner can't disagree about the same transfer (#11.7).
+    final profile = ref.read(settingsProvider).transferProfile;
+    final felt = profile.effectiveGap(gap);
+    if (felt >= 5) return; // comfortable, stay quiet
     final String title, body;
     if (gap < 0) {
       title = 'Anschluss gefährdet: $nextLine';
       body = 'In $station ${gap.abs()} Min zu spät — Anschluss könnte weg sein.';
     } else {
       title = 'Knapper Umstieg: $nextLine';
-      body = 'Nur $gap Min in $station · ab ${dep.hhmm}, beeil dich.';
+      // Quote the planned minutes (that's what the board says) and name the
+      // profile when IT is the reason we're pinging at all — "Nur 10 Min ·
+      // beeil dich" would otherwise look like a miscalculation.
+      final why = (gap > 5 && profile != TransferProfile.normal)
+          ? ' (Profil „${profile.label}")'
+          : '';
+      body = 'Nur $gap Min in $station$why · ab ${dep.hhmm}, beeil dich.';
     }
     _alertOnce('transfer:$tripId', '$gap', title: title, body: body);
   }
