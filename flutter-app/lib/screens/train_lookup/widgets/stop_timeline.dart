@@ -895,6 +895,16 @@ class _StopRow extends StatelessWidget {
                                   color: theme.colorScheme.error,
                                   fontSize: 12,
                                   fontWeight: FontWeight.bold)),
+                        // A stop the train picked up that isn't timetabled —
+                        // without this the rider can't tell an extra stop from
+                        // a normal one, which is what makes a diversion
+                        // readable as a route change rather than a delay (#17).
+                        if (stopover.additional)
+                          Text('Zusatzhalt',
+                              style: TextStyle(
+                                  color: Colors.amber.shade800,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold)),
                         if (!hideOccupancy &&
                             stopover.occupancy != OccupancyLevel.unknown)
                           Row(

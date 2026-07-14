@@ -41,6 +41,13 @@ class Trip {
   /// so even an RE without coach data still carries its bike/accessibility info.
   final List<TripAttribute> attributes;
 
+  /// Disruption texts for the whole run — HIM messages (construction, closed
+  /// track) and realtime notes ("Umleitung", "Verspätung aus vorheriger
+  /// Fahrt"). Distinct from [attributes], which are amenities. Mirrors
+  /// JourneyLeg.disruptions, which the journey search already collected while
+  /// the train run threw them away (#17).
+  final List<String> disruptions;
+
   const Trip({
     required this.id,
     required this.line,
@@ -50,7 +57,32 @@ class Trip {
     required this.stopovers,
     this.polyline,
     this.attributes = const [],
+    this.disruptions = const [],
   });
+
+  /// The run deviates from its timetabled route. Two independent signals:
+  /// DB says so in a note, or the run picked up stops that aren't in the plan.
+  ///
+  /// Text matching is the only option — realtime notes carry no `typ`, just
+  /// `text` (verified against live responses), which is also how _parseLeg
+  /// detects a cancellation.
+  bool get isRerouted =>
+      stopovers.any((s) => s.additional) ||
+      disruptions.any((d) {
+        final t = d.toLowerCase();
+        return t.contains('umleitung') ||
+            t.contains('umgeleitet') ||
+            t.contains('geänderte') && t.contains('laufweg') ||
+            t.contains('änderung') && t.contains('laufweg');
+      });
+
+  /// Stops DB added to this run that the timetable doesn't have.
+  List<Stopover> get additionalStops =>
+      stopovers.where((s) => s.additional).toList();
+
+  /// Timetabled stops this run drops ("Halt entfällt").
+  List<Stopover> get cancelledStops =>
+      stopovers.where((s) => s.cancelled).toList();
 
   /// Build a Trip from the data the journey search already returned for a leg.
   ///
@@ -314,6 +346,10 @@ class Stopover {
   final String? plannedDeparturePlatform;
   final bool cancelled;
 
+  /// An extra stop this run makes that isn't in the timetable (vendo
+  /// `istZusatzhalt`). Usually the visible symptom of a diversion (#17).
+  final bool additional;
+
   /// 2nd-class occupancy expected at this stop (DB `auslastungsmeldungen`).
   final OccupancyLevel occupancy;
 
@@ -330,6 +366,7 @@ class Stopover {
     this.departurePlatform,
     this.plannedDeparturePlatform,
     this.cancelled = false,
+    this.additional = false,
     this.occupancy = OccupancyLevel.unknown,
   });
 

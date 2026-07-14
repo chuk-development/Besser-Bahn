@@ -522,8 +522,32 @@ class VendoService {
         .map(_tripAttrFromNotiz)
         .toList();
 
+    // Disruption notes: HIM messages (construction, closed track) and realtime
+    // notes ("Umleitung", "Zusatzhalt"), from the run and its stops. Same
+    // treatment _parseLeg already gives the journey search — the train run
+    // parsed only attributNotizen, so a diversion was invisible while its
+    // delay showed up on the unchanged stop list (#17). attributNotizen stay
+    // out: they're amenities, and they're already parsed above.
+    final disruptions = <String>[];
+    void collect(dynamic list) {
+      if (list is! List) return;
+      for (final n in list.whereType<Map<String, dynamic>>()) {
+        final t = (n['text'] as String?)?.trim();
+        if (t != null && t.isNotEmpty && !disruptions.contains(t)) {
+          disruptions.add(t);
+        }
+      }
+    }
+
+    collect(data['himNotizen']);
+    collect(data['echtzeitNotizen']);
+    for (final h in halte.whereType<Map<String, dynamic>>()) {
+      collect(h['himNotizen']);
+    }
+
     return Trip(
       id: zuglaufId,
+      disruptions: disruptions,
       line: TransitLine(
         name: displayName,
         fahrtNr: zugnummer,
@@ -563,6 +587,7 @@ class VendoService {
       arrivalPlatform: ezGleis ?? gleis,
       plannedArrivalPlatform: gleis,
       cancelled: _haltCancelled(h),
+      additional: h['istZusatzhalt'] as bool? ?? false,
       occupancy: _occupancyFrom(h['auslastungsInfos'] as List<dynamic>?),
     );
   }

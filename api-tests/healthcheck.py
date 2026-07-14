@@ -206,6 +206,55 @@ def check_vendo_zuglauf_detail() -> str:
             + (f" ({', '.join(extras)})" if extras else ""))
 
 
+def check_vendo_zuglauf_notes() -> str:
+    """Diversion signals on the train run (#17). The app reads three things the
+    zuglauf parser used to ignore: root `himNotizen` (Bauarbeiten/Streckensperrung),
+    root+halt `echtzeitNotizen` ("Umleitung", "Zusatzhalt" — text only, NO `typ`
+    key, so matching is on text), and `istZusatzhalt` per halt.
+
+    Asserts the fields still exist and keep their types. Whether any train is
+    actually diverted right now is up to the day, so presence of a real
+    Umleitung is reported, not required."""
+    pos = _vendo_board(KOELN_HBF, arrivals=False)
+    if not pos:
+        raise CheckError("no departures to derive a zuglaufId")
+    zid = next((p["zuglaufId"] for p in pos
+                if p.get("produktGattung") in ("ICE", "IC", "EC")),
+               pos[0]["zuglaufId"])
+    r = requests.get(
+        f"https://app.services-bahn.de/mob/zuglauf/{urllib.parse.quote(zid, safe='')}",
+        headers=_vendo_headers(ZUGLAUF_MEDIA), timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    data = r.json()
+    halte = data.get("halte") or []
+    if not halte:
+        raise CheckError("zuglauf has no halte")
+
+    for key in ("himNotizen", "echtzeitNotizen"):
+        if key in data and not isinstance(data[key], list):
+            raise CheckError(f"root '{key}' is not a list")
+    # istZusatzhalt is sent on every halt; the app defaults it to False, but if
+    # it vanished entirely we'd silently stop detecting added stops.
+    if not any("istZusatzhalt" in h for h in halte):
+        raise CheckError("no halt carries 'istZusatzhalt' — added stops "
+                         "can no longer be detected")
+    for h in halte:
+        if not isinstance(h.get("istZusatzhalt", False), bool):
+            raise CheckError("istZusatzhalt is not a bool")
+
+    notes = [n.get("text", "") for n in (data.get("himNotizen") or [])
+             + (data.get("echtzeitNotizen") or []) if isinstance(n, dict)]
+    for h in halte:
+        notes += [n.get("text", "") for n in (h.get("echtzeitNotizen") or [])
+                  if isinstance(n, dict)]
+    zusatz = sum(1 for h in halte if h.get("istZusatzhalt"))
+    detail = f"{len(halte)} stops, {len(notes)} notes, {zusatz} Zusatzhalt"
+    if any("umleitung" in n.lower() or "umgeleitet" in n.lower() for n in notes):
+        detail += " (live Umleitung!)"
+    return detail
+
+
 def check_vendo_platform_change() -> str:
     """Gleiswechsel: vendo sends the timetabled platform as `gleis` and the
     realtime one as `ezGleis` — the latter ONLY when it differs. The app parses
@@ -1231,6 +1280,7 @@ CHECKS = [
     ("vendo arrivals (bahnhofstafel)", check_vendo_arrivals, False),
     ("vendo train run (zuglauf halte)", check_vendo_zuglauf_detail, False),
     ("vendo platform change (gleis vs ezGleis)", check_vendo_platform_change, True),
+    ("vendo zuglauf notes (Umleitung/Zusatzhalt)", check_vendo_zuglauf_notes, False),
     ("vendo location search", check_vendo_location, False),
     ("vendo nearby stations (bytypes)", check_vendo_nearby, False),
     ("mob endpoint surface reachable (67)", check_mob_surface, True),

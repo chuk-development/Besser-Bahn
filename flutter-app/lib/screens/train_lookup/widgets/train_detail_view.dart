@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../models/coach_sequence.dart';
 import '../../../models/trip.dart';
 import 'coach_sequence_view.dart' show splitTrainBanner;
+import 'rerouted_banner.dart';
 import 'seat_map_view.dart' show SeatPlanBody;
 import 'stop_timeline.dart';
 import 'train_info_header.dart';
@@ -85,6 +86,9 @@ class _TrainDetailViewState extends ConsumerState<TrainDetailView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // A diversion changes the route, not just the times — so it can't sit
+        // in the notes list below like a lift outage. Above the block (#17).
+        if (trip.isRerouted) ReroutedBanner(trip: trip),
         // One block: train name/info + Halte timeline, in one card. On a leg
         // the header renders inline on the route line.
         StopTimeline(
