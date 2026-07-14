@@ -7,6 +7,7 @@ import '../core/app_log.dart';
 import '../models/db_account.dart';
 import '../models/db_ticket.dart';
 import '../models/journey.dart';
+import '../models/library_models.dart' show SavedJourney;
 import '../models/split_ticket.dart' show BahnCardType;
 import '../models/station.dart';
 import '../services/db_account_service.dart';
@@ -307,6 +308,8 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
     await _DbTicketCache.clearAll();
     await _ProfileCache.clear();
     await _BahnBonusCache.clear();
+    // The key→rkUuid map points at the previous holder's saved trips.
+    await ref.read(dbSavedReiseIdsProvider.notifier).clear();
   }
 
   /// Re-pull the profile (e.g. pull-to-refresh on the Profile tab).
@@ -635,7 +638,16 @@ final savedReiseJourneyProvider =
       .savedReiseVerbindung(rkUuid);
   if (wrap == null) return null;
   try {
-    return ref.read(vendoServiceProvider).parseConnection(wrap);
+    final journey = ref.read(vendoServiceProvider).parseConnection(wrap);
+    // Reconcile: the trip overview lists rkUuid + startDatum but no stations,
+    // so it alone can't be matched to a local journey key. This per-trip fetch
+    // (which the Reisen tab already makes to render the tile) carries the full
+    // Journey, so the key is derivable here — teaching the map about DB trips
+    // this session didn't create: saved on another device, saved before the
+    // map was persisted, or orphaned by an earlier local-only delete (#15).
+    final key = SavedJourney(journey: journey, savedAtMs: 0).key;
+    ref.read(dbSavedReiseIdsProvider.notifier).register(key, rkUuid);
+    return journey;
   } catch (_) {
     return null;
   }
@@ -735,16 +747,84 @@ final ticketProvider =
 /// same bookmark can remove it from the DB account again. In-memory for the
 /// session (cross-session removal reconciles via the trip overview).
 class DbSavedReiseIds extends Notifier<Map<String, String>> {
-  @override
-  Map<String, String> build() => {};
+  static const _kKey = 'db_saved_reise_ids_v1';
 
-  void put(String key, String rkUuid) => state = {...state, key: rkUuid};
+  /// Completes once the on-disk map has been merged into [state]. Every write
+  /// waits on it: a put/register landing first would otherwise persist a map
+  /// containing only that one entry, and _restore's read — arriving later —
+  /// would find the file already overwritten, dropping every stored mapping.
+  late final Future<void> _restored;
+
+  @override
+  Map<String, String> build() {
+    _restored = _restore();
+    return {};
+  }
+
+  /// The map used to live only in RAM, so after a restart un-bookmarking
+  /// couldn't find the rkUuid and silently skipped deleting the DB Reise —
+  /// leaving it stranded in "Meine Reisen" forever (#15). Persisting it is
+  /// half the fix; [register] reconciles the other half (entries created on
+  /// another device, or before this existed).
+  Future<void> _restore() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kKey);
+      if (raw == null || raw.isEmpty) return;
+      final data = json.decode(raw);
+      if (data is Map) {
+        final restored = data.map((k, v) => MapEntry('$k', '$v'));
+        // Don't clobber anything registered while the read was in flight.
+        state = {...restored, ...state};
+      }
+    } catch (_) {/* best effort */}
+  }
+
+  Future<void> _persist() async {
+    try {
+      await _restored;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kKey, json.encode(state));
+    } catch (_) {/* best effort */}
+  }
+
+  void put(String key, String rkUuid) {
+    state = {...state, key: rkUuid};
+    _persist();
+  }
+
+  /// Learn a key→rkUuid pair discovered by reading the DB's own saved trips.
+  /// Unlike [put] this is idempotent and never overwrites a known mapping, so
+  /// it's safe to call on every render of a saved-trip tile.
+  void register(String key, String rkUuid) {
+    if (state[key] == rkUuid) return;
+    state = {...state, key: rkUuid};
+    _persist();
+  }
+
+  String? lookup(String key) => state[key];
 
   /// Removes and returns the stored id for [key] (null if none).
   String? take(String key) {
     final id = state[key];
-    if (id != null) state = {...state}..remove(key);
+    if (id != null) {
+      state = {...state}..remove(key);
+      _persist();
+    }
     return id;
+  }
+
+  Future<void> clear() async {
+    // Wait out an in-flight restore first, or it would merge the signed-out
+    // account's mappings back in right after we emptied them.
+    try {
+      await _restored;
+    } catch (_) {}
+    state = {};
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kKey);
+    } catch (_) {}
   }
 }
 

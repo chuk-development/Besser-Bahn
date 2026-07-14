@@ -24,8 +24,16 @@ class JourneysScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final lib = ref.watch(libraryProvider);
-    final upcoming = lib.upcomingJourneys;
-    final past = lib.pastJourneys;
+    // A trip bookmarked while signed in exists locally AND in the DB account,
+    // and this screen renders both lists — so it appeared twice (#15). The DB
+    // section wins (it can delete both sides); drop the local twin. The keys
+    // fill in as the "Gemerkte Reisen" tiles resolve their journeys, so a
+    // duplicate can flash on first paint and then collapse.
+    final dbKeys = ref.watch(dbSavedReiseIdsProvider).keys.toSet();
+    bool shownAsDbTrip(SavedJourney j) => dbKeys.contains(j.key);
+    final upcoming =
+        lib.upcomingJourneys.where((j) => !shownAsDbTrip(j)).toList();
+    final past = lib.pastJourneys.where((j) => !shownAsDbTrip(j)).toList();
     final stats = ref.watch(travelStatsProvider);
     // When signed into a DB account, the user's REAL booked tickets lead the
     // list (active + past, newest first). Logged out, only the local/offline
@@ -118,6 +126,8 @@ class JourneysScreen extends ConsumerWidget {
                         context, 'Anstehende Reisen', upcoming.length),
                     for (final j in upcoming) _entry(context, ref, j),
                   ],
+                  // (past trips below — a DB trip that already rendered above
+                  // is filtered out of `upcoming`, see the build header.)
                   if (past.isNotEmpty) ...[
                     _sectionHeader(
                         context, 'Vergangene Reisen', past.length),
@@ -196,6 +206,11 @@ class JourneysScreen extends ConsumerWidget {
       ),
       onDismissed: (_) {
         ref.read(libraryProvider.notifier).removeJourney(saved.key);
+        // Swiping deleted the local copy only, leaving the trip in the DB
+        // account: it kept showing under "Gemerkte Reisen" with an empty
+        // bookmark, and re-saving it then created duplicates. Delete both
+        // sides — that half-deleted state is what started #15.
+        _deleteDbReise(ref, saved.key);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
               duration: Duration(seconds: 2), content: Text('Reise entfernt')),
@@ -289,6 +304,19 @@ class JourneysScreen extends ConsumerWidget {
 /// One server-side "Gemerkte Reise" (tracked but unpaid). Lazily fetches the
 /// individual reise via `/mob/reisen/{rkUuid}` and renders it as a regular
 /// JourneyCard. Tap → /connection (no ticket — just the Reiseplan).
+/// Delete the DB-account "gemerkte Reise" that mirrors the local journey [key],
+/// if we know which one that is. Best-effort: a purely local bookmark has no
+/// rkUuid and nothing to delete.
+Future<void> _deleteDbReise(WidgetRef ref, String key) async {
+  if (!ref.read(dbAuthProvider).isLoggedIn) return;
+  final rkUuid = ref.read(dbSavedReiseIdsProvider.notifier).take(key);
+  if (rkUuid == null) return;
+  try {
+    await ref.read(dbAccountServiceProvider).deleteReise(rkUuid);
+    await ref.read(reisenuebersichtProvider.notifier).refresh();
+  } catch (_) {/* best-effort — the local entry is already gone */}
+}
+
 class _SavedReiseTile extends ConsumerWidget {
   final DbSavedReiseIndex index;
   const _SavedReiseTile({required this.index});
@@ -298,9 +326,38 @@ class _SavedReiseTile extends ConsumerWidget {
     final journey = ref.watch(savedReiseJourneyProvider(index.rkUuid));
     final j = journey.asData?.value;
     if (j != null && j.legs.isNotEmpty) {
-      return JourneyCard(
-        journey: j,
-        onTap: () => context.push('/connection', extra: j),
+      // Swipeable like a local trip: a "Gemerkte Reise" had no delete
+      // affordance at all here, so a trip orphaned in the DB account couldn't
+      // be removed from this screen by any gesture (#15).
+      return Dismissible(
+        key: ValueKey('db-${index.rkUuid}'),
+        direction: DismissDirection.endToStart,
+        background: Container(
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 28),
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.errorContainer,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Icon(Icons.delete_outline,
+              color: Theme.of(context).colorScheme.onErrorContainer),
+        ),
+        onDismissed: (_) {
+          final key = SavedJourney(journey: j, savedAtMs: 0).key;
+          // Both sides, so this can't recreate the half-deleted state.
+          ref.read(libraryProvider.notifier).removeJourney(key);
+          _deleteDbReise(ref, key);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                duration: Duration(seconds: 2),
+                content: Text('Reise entfernt')),
+          );
+        },
+        child: JourneyCard(
+          journey: j,
+          onTap: () => context.push('/connection', extra: j),
+        ),
       );
     }
     final theme = Theme.of(context);

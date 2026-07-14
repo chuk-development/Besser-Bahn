@@ -198,13 +198,24 @@ class _ConnectionDetailScreenState
           Builder(builder: (context) {
             final key =
                 SavedJourney(journey: journey, savedAtMs: 0).key;
-            final saved = ref.watch(libraryProvider).hasJourney(key);
+            // A trip saved to the DB account but no longer in the local
+            // library still IS saved — showing an empty bookmark there made it
+            // un-removable, and tapping it created a *second* DB trip (#15).
+            final saved = ref.watch(libraryProvider).hasJourney(key) ||
+                ref.watch(dbSavedReiseIdsProvider).containsKey(key);
             return IconButton(
               icon: Icon(saved ? Icons.bookmark : Icons.bookmark_border),
               tooltip: saved ? 'Reise entfernen' : 'Reise speichern',
               onPressed: () {
                 final wasSaved = saved;
-                ref.read(libraryProvider.notifier).toggleJourney(journey);
+                // Explicit add/remove, not toggle: when the trip is saved in
+                // the DB account but absent locally, a local toggle would ADD
+                // it — the opposite of what the filled bookmark promises.
+                if (wasSaved) {
+                  ref.read(libraryProvider.notifier).removeJourney(key);
+                } else {
+                  ref.read(libraryProvider.notifier).toggleJourney(journey);
+                }
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     duration: const Duration(seconds: 2),
@@ -299,6 +310,10 @@ class _ConnectionDetailScreenState
     final ids = ref.read(dbSavedReiseIdsProvider.notifier);
     try {
       if (saved) {
+        // Already mirrored to the DB account? Then saving again would create a
+        // second, identical trip — which is how the same journey ended up
+        // listed several times in the Reisen tab (#15).
+        if (ids.lookup(key) != null) return;
         final kontext = journey.refreshToken;
         final from = journey.origin?.locationId;
         final to = journey.destination?.locationId;
@@ -319,7 +334,11 @@ class _ConnectionDetailScreenState
         if (rkUuid != null) await service.deleteReise(rkUuid);
       }
       // Refresh the official list so the Reisen tab reflects the change.
-      ref.invalidate(ticketIndicesProvider);
+      // Refresh the SOURCE: ticketIndicesProvider is derived from the overview,
+      // so invalidating it re-read the same in-memory data and the tab never
+      // changed. It's also the wrong list — saved trips are reiseIndizes, not
+      // bought orders.
+      await ref.read(reisenuebersichtProvider.notifier).refresh();
     } catch (_) {/* best-effort — the local bookmark already succeeded */}
   }
 
