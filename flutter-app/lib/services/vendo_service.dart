@@ -367,7 +367,11 @@ class VendoService {
         ? actual.difference(planned).inSeconds
         : null;
     final gattung = p['produktGattung'] as String? ?? '';
+    // `gleis` is the timetabled platform, `ezGleis` the realtime one — only
+    // sent when they differ. Keeping both apart is what makes a Gleiswechsel
+    // detectable; collapsing them onto one field hides it (#16).
     final gleis = p['gleis'] as String?;
+    final ezGleis = p['ezGleis'] as String?;
     // Departures label the destination (`richtung`); arrivals label the origin
     // (`abgangsOrt`) — the board shows "from …" for an incoming train.
     final direction = arrivals
@@ -384,7 +388,7 @@ class VendoService {
       when: actual ?? planned,
       plannedWhen: planned,
       delay: delay,
-      platform: gleis,
+      platform: ezGleis ?? gleis,
       plannedPlatform: gleis,
       direction: direction,
       line: TransitLine(
@@ -467,6 +471,7 @@ class VendoService {
     final plannedArr = _parse(h['ankunftsDatum']);
     final actualArr = _parse(h['ezAnkunftsDatum']) ?? plannedArr;
     final gleis = h['gleis'] as String?;
+    final ezGleis = h['ezGleis'] as String?;
     return Stopover(
       stop: _stationFromVendo(h['ort'] as Map<String, dynamic>? ?? const {}),
       departure: actualDep,
@@ -479,9 +484,9 @@ class VendoService {
       arrivalDelay: (plannedArr != null && actualArr != null)
           ? actualArr.difference(plannedArr).inSeconds
           : null,
-      departurePlatform: gleis,
+      departurePlatform: ezGleis ?? gleis,
       plannedDeparturePlatform: gleis,
-      arrivalPlatform: gleis,
+      arrivalPlatform: ezGleis ?? gleis,
       plannedArrivalPlatform: gleis,
       cancelled: _haltCancelled(h),
       occupancy: _occupancyFrom(h['auslastungsInfos'] as List<dynamic>?),
@@ -760,10 +765,16 @@ class VendoService {
     }
 
     String? depPlatform;
+    String? plannedDepPlatform;
     String? arrPlatform;
+    String? plannedArrPlatform;
     if (stopovers.isNotEmpty) {
-      depPlatform = (halte.first as Map)['gleis'] as String?;
-      arrPlatform = (halte.last as Map)['gleis'] as String?;
+      final first = halte.first as Map;
+      final last = halte.last as Map;
+      plannedDepPlatform = first['gleis'] as String?;
+      depPlatform = first['ezGleis'] as String? ?? plannedDepPlatform;
+      plannedArrPlatform = last['gleis'] as String?;
+      arrPlatform = last['ezGleis'] as String? ?? plannedArrPlatform;
     }
 
     TransitLine? line;
@@ -784,10 +795,12 @@ class VendoService {
       plannedDeparture: plannedDep,
       departureDelay: _delay(plannedDep, actualDep),
       departurePlatform: depPlatform,
+      plannedDeparturePlatform: plannedDepPlatform,
       arrival: actualArr,
       plannedArrival: plannedArr,
       arrivalDelay: _delay(plannedArr, actualArr),
       arrivalPlatform: arrPlatform,
+      plannedArrivalPlatform: plannedArrPlatform,
       line: line,
       direction: a['richtung'] as String?,
       isWalking: isWalking,

@@ -206,6 +206,30 @@ def check_vendo_zuglauf_detail() -> str:
             + (f" ({', '.join(extras)})" if extras else ""))
 
 
+def check_vendo_platform_change() -> str:
+    """Gleiswechsel: vendo sends the timetabled platform as `gleis` and the
+    realtime one as `ezGleis` — the latter ONLY when it differs. The app parses
+    both apart (planned vs actual) so a platform change is detectable; parsing
+    both from `gleis` silently swallowed every Gleiswechsel (#16).
+
+    Soft: whether any train is rerouted to another platform right now is up to
+    the day. Absence of `ezGleis` across a whole board is normal-ish; the point
+    is to notice if the FIELD NAME disappears while changes still happen."""
+    pos = _vendo_board(KOELN_HBF, arrivals=False)
+    if not pos:
+        raise CheckError("no departures to inspect for platform changes")
+    if not any("gleis" in p for p in pos):
+        raise CheckError("no departure carries 'gleis' — planned platform gone")
+    changed = [p for p in pos
+               if p.get("ezGleis") and p.get("ezGleis") != p.get("gleis")]
+    if not changed:
+        return (f"{len(pos)} departures, no live Gleiswechsel right now "
+                "(field intact, nothing to compare)")
+    e = changed[0]
+    return (f"{len(changed)}/{len(pos)} with Gleiswechsel, e.g. "
+            f"'{e.get('mitteltext', '?')}' {e.get('gleis')} → {e['ezGleis']}")
+
+
 def check_vendo_location() -> str:
     media = "application/x.db.vendo.mob.location.v3+json"
     r = requests.post(
@@ -1206,6 +1230,7 @@ CHECKS = [
     ("vendo departures (bahnhofstafel)", check_vendo_departures, False),
     ("vendo arrivals (bahnhofstafel)", check_vendo_arrivals, False),
     ("vendo train run (zuglauf halte)", check_vendo_zuglauf_detail, False),
+    ("vendo platform change (gleis vs ezGleis)", check_vendo_platform_change, True),
     ("vendo location search", check_vendo_location, False),
     ("vendo nearby stations (bytypes)", check_vendo_nearby, False),
     ("mob endpoint surface reachable (67)", check_mob_surface, True),
