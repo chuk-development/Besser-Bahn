@@ -205,6 +205,24 @@ class LegAlternativeSwitcherState
   DateTime? _depOf(Journey j) =>
       j.legs.firstOrNull?.departure ?? j.legs.firstOrNull?.plannedDeparture;
 
+  /// How much later you'd arrive if this connection breaks and you fall back to
+  /// [_bestReachable], in minutes. Null when it can't be worked out.
+  ///
+  /// The consequence of missing the train, which the risk banner had the data
+  /// for but never stated: "Anschluss gefährdet" tells you there's a problem,
+  /// not whether it costs 12 minutes or two hours — and that's the whole
+  /// difference between risking it and getting off earlier (#11, option C).
+  int? get _fallbackCostMinutes {
+    final planned = widget.leg.plannedArrival ?? widget.leg.arrival;
+    final alt = _bestReachable;
+    if (planned == null || alt == null) return null;
+    final l = alt.legs.lastOrNull;
+    final altArr = l?.arrival ?? l?.plannedArrival;
+    if (altArr == null) return null;
+    final diff = altArr.difference(planned).inMinutes;
+    return diff > 0 ? diff : null;
+  }
+
   /// The earliest alternative you can still catch (departs at/after [readyAt])
   /// that isn't the train already shown — the "next reachable" suggestion.
   Journey? get _bestReachable {
@@ -318,6 +336,15 @@ class LegAlternativeSwitcherState
     );
   }
 
+  /// "45 Min" / "1:20 Std" — an hour-plus delay reads as a wall of minutes
+  /// otherwise, and that's exactly the case the rider must not misjudge.
+  static String _hm(int minutes) {
+    if (minutes < 60) return '$minutes Min';
+    final h = minutes ~/ 60;
+    final m = minutes % 60;
+    return m == 0 ? '$h Std' : '$h:${m.toString().padLeft(2, '0')} Std';
+  }
+
   Widget _riskOffer(ThemeData theme, Journey best) {
     final l = best.legs.firstOrNull;
     final dep = l?.departure ?? l?.plannedDeparture;
@@ -348,6 +375,18 @@ class LegAlternativeSwitcherState
             ],
           ),
           const SizedBox(height: 6),
+          // What it actually costs you if the connection breaks. Without this
+          // the warning can't be acted on: 12 minutes is worth risking, 90 is
+          // worth getting off earlier for.
+          if (_fallbackCostMinutes case final cost?) ...[
+            Text(
+              'Wenn der Anschluss platzt: ${_hm(cost)} später am Ziel'
+              '${arr != null ? ' (an ${arr.hhmm})' : ''}.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: fg, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 6),
+          ],
           Row(
             children: [
               Expanded(
