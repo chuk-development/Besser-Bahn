@@ -2,10 +2,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/station.dart';
 import '../core/app_log.dart';
 import '../models/journey.dart';
+import 'prediction_provider.dart';
 import 'service_providers.dart';
 import 'settings_provider.dart';
 
-enum JourneySortMode { departure, arrival, duration, transfers }
+enum JourneySortMode { departure, arrival, duration, transfers, reliability }
 
 /// Coarse transport categories for the multimodal filter. The journey search
 /// already returns every mode (bus, tram, U-/S-Bahn, regional, long-distance);
@@ -124,6 +125,12 @@ class JourneySearchState {
             (a.duration ?? Duration.zero).compareTo(b.duration ?? Duration.zero));
       case JourneySortMode.transfers:
         journeys.sort((a, b) => a.transfers.compareTo(b.transfers));
+      case JourneySortMode.reliability:
+        // Needs the per-journey prediction, which is async and lives in its
+        // own provider — sorted by [reliabilitySortedJourneysProvider], which
+        // starts from this (departure-ordered) list.
+        journeys.sort((a, b) =>
+            (a.departure ?? DateTime(0)).compareTo(b.departure ?? DateTime(0)));
     }
     return journeys;
   }
@@ -293,3 +300,43 @@ class JourneySearchNotifier extends Notifier<JourneySearchState> {
 final journeySearchProvider =
     NotifierProvider<JourneySearchNotifier, JourneySearchState>(
         JourneySearchNotifier.new);
+
+/// The result list the UI renders — [JourneySearchState.sortedJourneys], except
+/// in `reliability` mode, where it's re-ordered by the prediction model.
+///
+/// Separate from the state getter because the score is async: each journey's
+/// prediction is its own request. Predictions stream in, so the list settles
+/// rather than appearing sorted at once — journeys still waiting on (or
+/// missing) a score keep their departure order at the bottom instead of
+/// jumping around. The requests are the same ones the badges already make, so
+/// this mode costs nothing extra.
+final reliabilitySortedJourneysProvider =
+    Provider.autoDispose<List<Journey>>((ref) {
+  final state = ref.watch(journeySearchProvider);
+  final journeys = state.sortedJourneys;
+  if (state.sortMode != JourneySortMode.reliability) return journeys;
+
+  final scored = <({Journey journey, double? score, int order})>[
+    for (final (i, j) in journeys.indexed)
+      (
+        journey: j,
+        score: ref
+            .watch(journeyPredictionProvider(PredictionRequest(j)))
+            .asData
+            ?.value
+            ?.reliabilityScore,
+        order: i,
+      ),
+  ];
+  // The index tiebreaker keeps this stable (List.sort isn't), so equal or
+  // still-unscored connections hold their departure order instead of shuffling
+  // on every rebuild as predictions land.
+  scored.sort((a, b) {
+    if (a.score == null && b.score == null) return a.order.compareTo(b.order);
+    if (a.score == null) return 1; // unscored last — not "least reliable"
+    if (b.score == null) return -1;
+    final byScore = b.score!.compareTo(a.score!); // most reliable first
+    return byScore != 0 ? byScore : a.order.compareTo(b.order);
+  });
+  return [for (final e in scored) e.journey];
+});

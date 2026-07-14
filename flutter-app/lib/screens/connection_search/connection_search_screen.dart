@@ -117,6 +117,8 @@ class _ConnectionSearchScreenState
                 _sortItem(JourneySortMode.duration, 'Dauer', state.sortMode),
                 _sortItem(
                     JourneySortMode.transfers, 'Umstiege', state.sortMode),
+                _sortItem(JourneySortMode.reliability, 'Zuverlässigkeit',
+                    state.sortMode),
               ],
             ),
         ],
@@ -364,10 +366,14 @@ class _ConnectionSearchScreenState
       );
     }
 
-    final journeys = state.sortedJourneys;
+    // Same list as state.sortedJourneys, except in reliability mode where the
+    // prediction model re-orders it as scores arrive.
+    final journeys = ref.watch(reliabilitySortedJourneysProvider);
     return Column(
       children: [
         _productFilterBar(context, state, notifier),
+        if (state.sortMode == JourneySortMode.reliability)
+          _reliabilityNotice(context),
         Expanded(
           child: journeys.isEmpty
               ? const Center(
@@ -412,6 +418,31 @@ class _ConnectionSearchScreenState
 
   /// Horizontal multimodal filter: one chip per transport category. The search
   /// already returns all modes; tapping a chip hides/shows that mode locally.
+  /// Explains what "Zuverlässigkeit" ranks by. Without it the order looks
+  /// arbitrary — it's neither departure nor duration, and the number driving
+  /// it lives in the per-connection badges further down.
+  Widget _reliabilityNotice(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      color: scheme.surfaceContainerHighest,
+      child: Row(
+        children: [
+          Icon(Icons.shield_outlined, size: 14, color: scheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Sortiert nach Prognose: Anschluss erreicht & pünktlich an. '
+              'Ohne Prognose stehen unten.',
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _productFilterBar(BuildContext context, JourneySearchState state,
       JourneySearchNotifier notifier) {
     return SizedBox(

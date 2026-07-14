@@ -16,4 +16,19 @@ class JourneyPrediction {
       );
 
   bool get hasAny => verbindungsscore != null || puenktlichkeit != null;
+
+  /// One number to rank connections by, 0..100 — "how likely is this trip to
+  /// work out" (#11, „Zuverlässigste Verbindung").
+  ///
+  /// The two scores answer different questions (do I catch my transfers / do I
+  /// arrive roughly on time), and a trip needs BOTH to go right. They're not
+  /// independent, so multiplying them would invent a precision the model
+  /// doesn't have — the weakest link is the honest summary, and it can't rank
+  /// a connection above its own worst risk. A direct train has no transfer
+  /// score, so punctuality alone decides.
+  double? get reliabilityScore {
+    final scores = [verbindungsscore, puenktlichkeit].whereType<double>();
+    if (scores.isEmpty) return null;
+    return scores.reduce((a, b) => a < b ? a : b);
+  }
 }
