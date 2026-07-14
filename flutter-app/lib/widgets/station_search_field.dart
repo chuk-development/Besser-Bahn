@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/station.dart';
 import '../providers/library_provider.dart';
 import '../providers/station_search_provider.dart';
+import '../utils/geo_query.dart';
 
 class StationSearchField extends ConsumerStatefulWidget {
   final String hint;
@@ -111,22 +112,46 @@ class _StationSearchFieldState extends ConsumerState<StationSearchField> {
             child: Consumer(
               builder: (context, ref, _) {
                 final query = _controller.text.trim();
+                final geo = parseGeoQuery(query);
                 // Short query → suggest saved favorites and recent stations.
-                if (query.length < 2) {
+                // A coordinate is exempt: "geo:52.5,13.3" is already complete,
+                // and a pasted one can be shorter than a station name.
+                if (geo == null && query.length < 2) {
                   return _buildSuggestions(ref);
                 }
                 final results = ref.watch(stationSearchProvider);
                 return results.when(
                   data: (stations) {
-                    if (stations.isEmpty) return const SizedBox.shrink();
+                    if (stations.isEmpty) {
+                      // Say so rather than showing nothing: a coordinate in the
+                      // sea or abroad has no stops near it, and silence would
+                      // read as "still loading".
+                      return geo == null
+                          ? const SizedBox.shrink()
+                          : _geoNotice(context,
+                              'Keine Haltestellen in der Nähe dieser Koordinate.');
+                    }
                     return ConstrainedBox(
                       constraints: const BoxConstraints(maxHeight: 320),
-                      child: ListView.builder(
-                        padding: EdgeInsets.zero,
-                        shrinkWrap: true,
-                        itemCount: stations.length,
-                        itemBuilder: (context, index) =>
-                            _stationTile(ref, stations[index]),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (geo != null)
+                            _geoNotice(
+                                context,
+                                geo.label != null
+                                    ? 'Haltestellen nahe „${geo.label}"'
+                                    : 'Haltestellen in der Nähe der Koordinate'),
+                          Flexible(
+                            child: ListView.builder(
+                              padding: EdgeInsets.zero,
+                              shrinkWrap: true,
+                              itemCount: stations.length,
+                              itemBuilder: (context, index) =>
+                                  _stationTile(ref, stations[index]),
+                            ),
+                          ),
+                        ],
                       ),
                     );
                   },
@@ -186,6 +211,25 @@ class _StationSearchFieldState extends ConsumerState<StationSearchField> {
           ),
         ),
       );
+
+  /// Header above coordinate-derived results, explaining why this list is
+  /// nearby stops rather than name matches.
+  Widget _geoNotice(BuildContext context, String text) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      child: Row(
+        children: [
+          Icon(Icons.my_location, size: 15, color: scheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text,
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _stationTile(WidgetRef ref, Station station) {
     final isFav = ref.watch(libraryProvider).isStationFavorite(station.id);
