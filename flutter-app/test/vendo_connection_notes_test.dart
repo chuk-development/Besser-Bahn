@@ -136,4 +136,51 @@ void main() {
       expect(back.endsEarly, isTrue);
     });
   });
+
+  group('occupancy per class (#20)', () {
+    final svc = VendoService();
+
+    /// Live shape: both classes are always present.
+    Map<String, dynamic> connWithLoad(
+        {int? first = 2, int? second = 3}) {
+      final c = _conn();
+      final legs = (c['verbindung']
+          as Map<String, dynamic>)['verbindungsAbschnitte'] as List;
+      (legs.first as Map<String, dynamic>)['auslastungsInfos'] = [
+        if (first != null)
+          {
+            'klasse': 'KLASSE_1',
+            'stufe': first,
+            'anzeigeTextKurz': 'Mittlere Auslastung erwartet'
+          },
+        if (second != null) {'klasse': 'KLASSE_2', 'stufe': second},
+      ];
+      return c;
+    }
+
+    test('a first-class search reads the first-class load', () {
+      // This read KLASSE_2 unconditionally, so a first-class rider never saw
+      // any occupancy — despite KLASSE_1 being present on every entry probed.
+      final leg =
+          svc.parseConnection(connWithLoad(), firstClass: true).legs.first;
+      expect(leg.occupancy?.level, OccupancyLevel.medium);
+    });
+
+    test('a second-class search is unchanged', () {
+      final leg = svc.parseConnection(connWithLoad()).legs.first;
+      expect(leg.occupancy?.level, OccupancyLevel.high);
+    });
+
+    test('falls back to the other class rather than showing nothing', () {
+      final leg = svc
+          .parseConnection(connWithLoad(first: null), firstClass: true)
+          .legs
+          .first;
+      expect(leg.occupancy?.level, OccupancyLevel.high);
+    });
+
+    test('no occupancy at all stays null', () {
+      expect(svc.parseConnection(_conn()).legs.first.occupancy, isNull);
+    });
+  });
 }

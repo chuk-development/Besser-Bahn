@@ -177,7 +177,7 @@ class VendoService {
     return JourneyResult(
       journeys: conns
           .whereType<Map<String, dynamic>>()
-          .map(_parseConnection)
+          .map((c) => _parseConnection(c, firstClass: firstClass))
           .toList(),
       earlierRef: data['frueherContext'] as String?,
       laterRef: data['spaeterContext'] as String?,
@@ -196,6 +196,7 @@ class VendoService {
     required String produktGattungen,
     String? context,
     bool fahrradmitnahme = false,
+    bool firstClass = false,
   }) async {
     final body = {
       'wunsch': {
@@ -231,7 +232,7 @@ class VendoService {
     return JourneyResult(
       journeys: conns
           .whereType<Map<String, dynamic>>()
-          .map(_parseConnection)
+          .map((c) => _parseConnection(c, firstClass: firstClass))
           .toList(),
       earlierRef: data['frueherContext'] as String?,
       laterRef: data['spaeterContext'] as String?,
@@ -641,12 +642,10 @@ class VendoService {
 
   /// DB `auslastungsInfos` (per stop) → 2nd-class [OccupancyLevel], reusing the
   /// shared `stufe` mapping. Shape: `[{klasse: KLASSE_2, stufe: 1}]`.
-  OccupancyLevel _occupancyFrom(List<dynamic>? infos) {
-    if (infos == null) return OccupancyLevel.unknown;
-    for (final i in infos.whereType<Map<String, dynamic>>()) {
-      if (i['klasse'] == 'KLASSE_2') return _stufe(i['stufe'] as int?);
-    }
-    return OccupancyLevel.unknown;
+  OccupancyLevel _occupancyFrom(List<dynamic>? infos,
+      {bool firstClass = false}) {
+    return _levelForClass(infos, firstClass: firstClass) ??
+        OccupancyLevel.unknown;
   }
 
   /// Cheapest price for one split-ticket segment, via the vendo journey API
@@ -829,9 +828,11 @@ class VendoService {
   /// Public entry to the connection parser — accepts a raw vendo `verbindung`
   /// wrapper (e.g. `reise.reiseInfos.verbindung` from a booked ticket) and
   /// returns a parsed [Journey] usable by the same UI as a search result.
-  Journey parseConnection(Map<String, dynamic> c) => _parseConnection(c);
+  Journey parseConnection(Map<String, dynamic> c, {bool firstClass = false}) =>
+      _parseConnection(c, firstClass: firstClass);
 
-  Journey _parseConnection(Map<String, dynamic> c) {
+  Journey _parseConnection(Map<String, dynamic> c,
+      {bool firstClass = false}) {
     // /angebote/fahrplan wraps the connection in `verbindung`; the
     // /trip/weitereabfahrten response puts the same fields directly on the
     // connection object — fall back to `c` so both shapes parse.
@@ -839,7 +840,7 @@ class VendoService {
     final abschnitte = vb['verbindungsAbschnitte'] as List<dynamic>? ?? [];
     final legs = abschnitte
         .whereType<Map<String, dynamic>>()
-        .map(_parseLeg)
+        .map((a) => _parseLeg(a, firstClass: firstClass))
         .toList();
 
     JourneyPrice? price;
@@ -882,7 +883,7 @@ class VendoService {
     return out;
   }
 
-  JourneyLeg _parseLeg(Map<String, dynamic> a) {
+  JourneyLeg _parseLeg(Map<String, dynamic> a, {bool firstClass = false}) {
     final isWalking = a['typ'] == 'FUSSWEG';
     final origin = _stationFromVendo(
         a['abgangsOrt'] as Map<String, dynamic>? ?? const {});
@@ -986,7 +987,8 @@ class VendoService {
       isWalking: isWalking,
       cancelled: cancelled,
       stopovers: stopovers,
-      occupancy: _occupancy(a['auslastungsInfos'] as List<dynamic>?),
+      occupancy: _occupancy(a['auslastungsInfos'] as List<dynamic>?,
+          firstClass: firstClass),
       disruptions: disruptions,
       replacementDestination: ersatzZiel == null
           ? null
@@ -1030,14 +1032,28 @@ class VendoService {
     );
   }
 
-  OccupancyInfo? _occupancy(List<dynamic>? infos) {
+  /// Occupancy for the class the rider actually searched for.
+  ///
+  /// Both classes are present in the response (KLASSE_1 on 36 of 36 entries
+  /// probed), but this only ever read KLASSE_2 — so a first-class search never
+  /// showed any occupancy at all. Falls back to the other class rather than
+  /// showing nothing.
+  OccupancyInfo? _occupancy(List<dynamic>? infos, {bool firstClass = false}) {
+    final level = _levelForClass(infos, firstClass: firstClass);
+    return level == null ? null : OccupancyInfo(level: level);
+  }
+
+  OccupancyLevel? _levelForClass(List<dynamic>? infos,
+      {required bool firstClass}) {
     if (infos == null) return null;
+    final want = firstClass ? 'KLASSE_1' : 'KLASSE_2';
+    final other = firstClass ? 'KLASSE_2' : 'KLASSE_1';
+    OccupancyLevel? fallback;
     for (final i in infos.whereType<Map<String, dynamic>>()) {
-      if (i['klasse'] == 'KLASSE_2') {
-        return OccupancyInfo(level: _stufe(i['stufe'] as int?));
-      }
+      if (i['klasse'] == want) return _stufe(i['stufe'] as int?);
+      if (i['klasse'] == other) fallback ??= _stufe(i['stufe'] as int?);
     }
-    return null;
+    return fallback;
   }
 
   OccupancyLevel _stufe(int? stufe) {
