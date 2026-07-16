@@ -23,6 +23,11 @@ class BulkSplitRow {
   final double? splitPrice;
   final BulkRowStatus status;
 
+  /// The full analysis behind [splitPrice] — which tickets, where they break,
+  /// what the D-Ticket covers. Kept so tapping the row can show the same detail
+  /// as a single analysis instead of just a number (#24).
+  final TicketAnalysisResult? result;
+
   const BulkSplitRow({
     required this.journey,
     required this.label,
@@ -32,6 +37,7 @@ class BulkSplitRow {
     this.directPrice,
     this.splitPrice,
     this.status = BulkRowStatus.pending,
+    this.result,
   });
 
   /// The split genuinely beats the direct fare (more than a rounding cent).
@@ -51,6 +57,7 @@ class BulkSplitRow {
     double? directPrice,
     double? splitPrice,
     BulkRowStatus? status,
+    TicketAnalysisResult? result,
   }) =>
       BulkSplitRow(
         journey: journey,
@@ -61,6 +68,7 @@ class BulkSplitRow {
         directPrice: directPrice ?? this.directPrice,
         splitPrice: splitPrice ?? this.splitPrice,
         status: status ?? this.status,
+        result: result ?? this.result,
       );
 }
 
@@ -192,6 +200,7 @@ class BulkSplitNotifier extends Notifier<BulkSplitState> {
         k,
         directPrice: res?.directPrice,
         splitPrice: res?.splitPrice,
+        result: res,
         status: res != null ? BulkRowStatus.done : BulkRowStatus.failed,
       );
       state = state.copyWith(doneCount: k + 1);
@@ -202,13 +211,17 @@ class BulkSplitNotifier extends Notifier<BulkSplitState> {
   }
 
   void _patch(int index,
-      {double? directPrice, double? splitPrice, BulkRowStatus? status}) {
+      {double? directPrice,
+      double? splitPrice,
+      BulkRowStatus? status,
+      TicketAnalysisResult? result}) {
     final rows = [...state.rows];
     if (index < 0 || index >= rows.length) return;
     rows[index] = rows[index].copyWith(
       directPrice: directPrice,
       splitPrice: splitPrice,
       status: status,
+      result: result,
     );
     state = state.copyWith(rows: rows);
   }

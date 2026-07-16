@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../models/journey.dart';
 import '../../providers/bulk_split_provider.dart';
+import '../../providers/split_ticket_provider.dart';
 import '../../theme/app_colors.dart';
 
 /// Bulk price comparison: take the connections from one search and show, for
@@ -73,8 +75,9 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
                     state.running
                         ? 'Prüfe Split-Tickets … ${state.doneCount}/${state.total}'
                         : 'Fertig — ${state.total} Verbindungen verglichen',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   LinearProgressIndicator(
@@ -95,24 +98,30 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
                 padding: const EdgeInsets.all(14),
                 child: Row(
                   children: [
-                    Icon(Icons.savings,
-                        color: theme.colorScheme.onPrimaryContainer),
+                    Icon(
+                      Icons.savings,
+                      color: theme.colorScheme.onPrimaryContainer,
+                    ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Günstigste Abfahrt',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onPrimaryContainer
-                                      .withAlpha(190))),
+                          Text(
+                            'Günstigste Abfahrt',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onPrimaryContainer
+                                  .withAlpha(190),
+                            ),
+                          ),
                           Text(
                             '${cheapest.label}  ·  '
                             '${cheapest.bestPrice!.toStringAsFixed(2)} €'
                             '${cheapest.splitWins ? ' (Split)' : ''}',
                             style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: theme.colorScheme.onPrimaryContainer),
+                              fontWeight: FontWeight.bold,
+                              color: theme.colorScheme.onPrimaryContainer,
+                            ),
                           ),
                         ],
                       ),
@@ -129,8 +138,9 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
             child: Text(
               'Split-Tickets haben kein Anschluss-Recht — bei Verspätung liegt '
               'das Risiko beim Fahrgast.',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
               textAlign: TextAlign.center,
             ),
           ),
@@ -151,8 +161,10 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             if (row.directPrice != null)
-              Text('${row.directPrice!.toStringAsFixed(2)} €',
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              Text(
+                '${row.directPrice!.toStringAsFixed(2)} €',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
             const SizedBox(height: 4),
             const SizedBox(
               width: 14,
@@ -167,11 +179,16 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             if (row.directPrice != null)
-              Text('${row.directPrice!.toStringAsFixed(2)} €',
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-            Text('Split n/v',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: theme.colorScheme.error)),
+              Text(
+                '${row.directPrice!.toStringAsFixed(2)} €',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            Text(
+              'Split n/v',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
           ],
         );
       }
@@ -192,7 +209,9 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
             Text(
               '${row.splitPrice!.toStringAsFixed(2)} €',
               style: TextStyle(
-                  fontWeight: FontWeight.bold, color: AppColors.onTime),
+                fontWeight: FontWeight.bold,
+                color: AppColors.onTime,
+              ),
             ),
         ],
       );
@@ -209,64 +228,113 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
 
     return Card(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(row.label,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _openDetail(context, row),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          row.label,
                           style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 16)),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${_dur(row.duration)} · '
-                        '${row.transfers == 0 ? 'direkt' : '${row.transfers}× umst.'} · '
-                        '${row.trains}',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant),
-                      ),
-                    ],
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${_dur(row.duration)} · '
+                          '${row.transfers == 0 ? 'direkt' : '${row.transfers}× umst.'} · '
+                          '${row.trains}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                priceBlock(),
-              ],
-            ),
-            if (verdict().isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: splitWins
-                        ? AppColors.onTime.withAlpha(28)
-                        : theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    verdict(),
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                  const SizedBox(width: 12),
+                  priceBlock(),
+                  if (row.status == BulkRowStatus.done)
+                    Icon(
+                      Icons.chevron_right,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                ],
+              ),
+              if (verdict().isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
                       color: splitWins
-                          ? AppColors.onTime
-                          : theme.colorScheme.onSurfaceVariant,
+                          ? AppColors.onTime.withAlpha(28)
+                          : theme.colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      verdict(),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: splitWins
+                            ? AppColors.onTime
+                            : theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  /// Tapping a row shows the SAME split detail a single analysis produces —
+  /// which tickets, where they break, what the D-Ticket covers. The result is
+  /// already computed, so this only hands it to the detail screen; nothing is
+  /// re-priced (#24).
+  void _openDetail(BuildContext context, BulkSplitRow row) {
+    final messenger = ScaffoldMessenger.of(context);
+    if (row.status == BulkRowStatus.pending ||
+        row.status == BulkRowStatus.running) {
+      messenger.showSnackBar(
+        const SnackBar(
+          duration: Duration(seconds: 2),
+          content: Text('Diese Verbindung wird noch geprüft.'),
+        ),
+      );
+      return;
+    }
+    final res = row.result;
+    if (res == null) {
+      // failed, or done without a result — nothing to show but the trains.
+      context.push('/connection', extra: row.journey);
+      return;
+    }
+    ref
+        .read(splitTicketProvider.notifier)
+        .showResult(
+          res,
+          routeLabel:
+              '${row.journey.origin?.name ?? ''} → '
+              '${row.journey.destination?.name ?? ''}',
+        );
+    context.push('/split-ticket', extra: row.journey);
   }
 }

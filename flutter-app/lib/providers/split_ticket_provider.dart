@@ -78,6 +78,22 @@ class SplitTicketNotifier extends Notifier<SplitTicketState> {
     state = state.copyWith(isCancelled: true, isLoading: false);
   }
 
+  /// Show an analysis that already ran elsewhere, without re-pricing anything.
+  ///
+  /// The bulk comparison analyses every departure and used to keep only the two
+  /// prices, so its rows could show "Split −35,01 €" with no way to see which
+  /// tickets that meant (#24). It hands the whole result over here instead.
+  /// Supersedes any analysis in flight — the user asked for THIS one.
+  void showResult(TicketAnalysisResult result, {String? routeLabel}) {
+    _gen++;
+    _runningSig = null;
+    state = SplitTicketState(
+      isLoading: false,
+      result: result,
+      routeLabel: routeLabel,
+    );
+  }
+
   Future<void> analyze({
     required List<Map<String, dynamic>> stops,
     required String date,
