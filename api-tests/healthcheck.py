@@ -31,7 +31,7 @@ import sys
 import time
 import urllib.parse
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 
@@ -856,6 +856,115 @@ def check_vendo_transfer_info() -> str:
             f"verfuegbareZeit+abschnittsDauer paired")
 
 
+def check_vendo_service_days() -> str:
+    """`serviceDays.irregular` still describes the CONNECTION (#20, point 8).
+
+    The app shows this string as "Verkehrstage dieser Verbindung". That is only
+    honest while the date you're offered is never a date the string excludes —
+    which is exactly what separates it from the zuglauf's `fahrplan.
+    tageOhneFahrt`, where every sampled run was bookable on a day inside its
+    own "tageOhneFahrt" range (RE 10909 on 18 Jul: "16. bis 23. Jul 2026"), and
+    which the app therefore does NOT show.
+
+    Parses the German ranges *here* — never in the app, where the string is
+    passed through untouched — so a change in that promise trips this check
+    instead of a user reading "fährt nicht" about the train they're sitting on.
+    """
+    media = "application/x.db.vendo.mob.verbindungssuche.v9+json"
+    koeln = "A=1@O=Köln Hbf@X=6958730@Y=50943029@U=80@L=8000207@"
+    months = {"Jan": 1, "Feb": 2, "Mär": 3, "Mrz": 3, "Apr": 4, "Mai": 5,
+              "Jun": 6, "Jul": 7, "Aug": 8, "Sep": 9, "Okt": 10, "Nov": 11,
+              "Dez": 12}
+
+    def nicht_ranges(text: str, year: int):
+        """(start, end) dates of every 'nicht …' span in a serviceDays text."""
+        out = []
+        for chunk in (text or "").split(";"):
+            if "nicht" not in chunk:
+                continue
+            for m in re.finditer(
+                    r"(\d{1,2})\.\s*(?:(\w{3})\.?\s*)?(?:(\d{4})\s*)?"
+                    r"(?:bis\s*(\d{1,2})\.\s*(?:(\w{3})\.?\s*)?(?:(\d{4}))?)?",
+                    chunk.split("nicht", 1)[1]):
+                d1, m1, y1, d2, m2, y2 = m.groups()
+                mm1 = months.get((m1 or m2 or "")[:3])
+                mm2 = months.get((m2 or m1 or "")[:3]) or mm1
+                if not (d1 and mm1):
+                    continue
+                try:
+                    out.append((date(int(y1 or y2 or year), mm1, int(d1)),
+                                date(int(y2 or y1 or year), mm2, int(d2 or d1))))
+                except ValueError:
+                    continue
+        return out
+
+    checked = with_note = 0
+    for offset in (2, 30):
+        body = {
+            "autonomeReservierung": False,
+            "einstiegsTypList": ["STANDARD"],
+            "fahrverguenstigungen": {
+                "deutschlandTicketVorhanden": False,
+                "nurDeutschlandTicketVerbindungen": False,
+            },
+            "klasse": "KLASSE_2",
+            "reiseHin": {"wunsch": {
+                "abgangsLocationId": koeln,
+                "alternativeHalteBerechnung": True,
+                "verkehrsmittel": ["ALL"],
+                "zeitWunsch": {
+                    "reiseDatum": (datetime.now().astimezone()
+                                   + timedelta(days=offset)).replace(
+                        hour=9, minute=0, second=0,
+                        microsecond=0).isoformat(),
+                    "zeitPunktArt": "ABFAHRT",
+                },
+                "zielLocationId": MUNICH_LOC,
+            }},
+            "reisendenProfil": {"reisende": [{
+                "ermaessigungen": ["KEINE_ERMAESSIGUNG KLASSENLOS"],
+                "reisendenTyp": "ERWACHSENER",
+            }]},
+            "reservierungsKontingenteVorhanden": False,
+        }
+        r = _post(
+            "https://app.services-bahn.de/mob/angebote/fahrplan",
+            headers=_vendo_headers(media), data=json.dumps(body),
+            timeout=TIMEOUT,
+        )
+        r.raise_for_status()
+        for c in r.json().get("verbindungen", []):
+            vb = c["verbindung"]
+            days = vb.get("serviceDays") or []
+            if not days:
+                continue
+            if not isinstance(days, list) or not isinstance(days[0], dict):
+                raise CheckError("serviceDays is not a list of objects")
+            note = (days[0].get("irregular") or "").strip()
+            if not note:
+                continue
+            checked += 1
+            with_note += 1
+            dep = vb["verbindungsAbschnitte"][0].get("abgangsDatum")
+            if not dep:
+                continue
+            travel = datetime.fromisoformat(dep).date()
+            for start, end in nicht_ranges(note, travel.year):
+                if start <= travel <= end:
+                    raise CheckError(
+                        f"connection departs {travel} but its own serviceDays "
+                        f"excludes that date ({note!r}) — the string no longer "
+                        "describes this connection, stop showing it as "
+                        "Verkehrstage")
+        time.sleep(2)
+
+    if not with_note:
+        raise CheckError("no connection carried serviceDays.irregular — the "
+                         "Verkehrstage line can never appear")
+    return (f"{with_note} connections with an irregular text, none excluding "
+            "its own travel date")
+
+
 def check_vendo_journey_party() -> str:
     """Advanced "Reisende & Klasse" search: the app lets you build a party of
     multiple passengers (with explicit ages), a bike and a dog, pick 1st class,
@@ -1675,6 +1784,7 @@ CHECKS = [
     ("vendo verkehrsmittel filter (#18)", check_vendo_verkehrsmittel, False),
     ("vendo search options (#19)", check_vendo_search_options, False),
     ("vendo transfer info (#20.6)", check_vendo_transfer_info, False),
+    ("vendo serviceDays (#20.8)", check_vendo_service_days, False),
     ("vendo party search (pax/bike/dog/SBA)", check_vendo_journey_party, False),
     ("vendo journey pagination (context)", check_vendo_journey_pagination, False),
     ("vendo weitere abfahrten (segment)", check_vendo_weitere_abfahrten, False),

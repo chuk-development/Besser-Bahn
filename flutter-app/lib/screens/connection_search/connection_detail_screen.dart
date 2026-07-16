@@ -292,6 +292,7 @@ class _ConnectionDetailScreenState
           // Hbf entfällt. Ausstieg in Berlin-Spandau möglich.") — the legs
           // themselves sometimes carry nothing.
           _LegNotes(notes: _visibleNotes(journey.disruptions)),
+          _serviceDays(context),
           _buyButton(context, ref),
           // Live companion cards (each self-hides when not applicable):
           // Fahrgastrechte claim on a 60+ min late arrival, and one combined
@@ -747,6 +748,41 @@ class _ConnectionDetailScreenState
   List<String> _visibleNotes(List<String> notes) => notes
       .where((n) => !n.toLowerCase().contains('zugteil'))
       .toList();
+
+  /// When this connection doesn't run, in DB's words (#20, point 8) — e.g.
+  /// "nicht 22. Aug bis 4. Sep 2026".
+  ///
+  /// Neutral on purpose, and it says "diese Verbindung": the day you searched
+  /// is always a day it runs, so this is for planning the *next* trip or
+  /// re-booking, not a warning about this one. Toned as information, not as a
+  /// disruption — it isn't one.
+  Widget _serviceDays(BuildContext context) {
+    final note = journey.serviceDaysNote;
+    if (note == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.event_repeat,
+              size: 16, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              // "Verkehrstage" is DB's own label, and it stays grammatical for
+              // both shapes the string takes: a bare "nicht 20. Jul bis 11.
+              // Sep" and a period with exceptions ("16. Jul bis 30. Okt;
+              // nicht 22. Aug bis 4. Sep").
+              'Verkehrstage dieser Verbindung: $note',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   /// Tone for an available transfer time: red ≤2 min (Anschluss gefährdet),
   /// amber ≤5, else null (normal). Returns (textColor, warningText).

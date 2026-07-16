@@ -887,7 +887,29 @@ class VendoService {
       refreshToken: vb['kontext'] as String? ?? vb['checksum'] as String?,
       price: price,
       disruptions: _connectionNotes(vb),
+      serviceDaysNote: _serviceDaysNote(vb),
     );
+  }
+
+  /// When this connection doesn't run, in DB's words (#20, point 8).
+  ///
+  /// Only `serviceDays[].irregular` ("nicht 22. Aug bis 4. Sep 2026"). The
+  /// siblings are left alone on purpose:
+  ///
+  /// - `regular` says "täglich" next to a `wochentage` of [SA, SO] on the same
+  ///   object, so at least one of them doesn't mean what it reads like;
+  /// - `wochentage` is that list, and rendering "SA, SO" under a connection
+  ///   found on a Saturday adds nothing.
+  ///
+  /// `irregular` is the part that survives checking: across 34 connections the
+  /// searched date never fell inside one of its "nicht" ranges.
+  static String? _serviceDaysNote(Map<String, dynamic> vb) {
+    final days = (vb['serviceDays'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .firstOrNull;
+    final text = (days?['irregular'] as String?)?.trim();
+    if (text == null || text.isEmpty || text == 'textDefault') return null;
+    return text;
   }
 
   /// Notes about the connection as a whole ("Der Zielhalt Berlin Hbf entfällt.

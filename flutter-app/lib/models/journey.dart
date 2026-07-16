@@ -33,11 +33,27 @@ class Journey {
   /// that spells out what changed — the legs can carry nothing at all.
   final List<String> disruptions;
 
+  /// When this connection does NOT run, in DB's own words (vendo
+  /// `serviceDays[].irregular`) — e.g. "nicht 22. Aug bis 4. Sep 2026".
+  ///
+  /// About the connection's *pattern*, never about the date you searched: the
+  /// day you're offered is always a day it runs (verified over 34 connections
+  /// across two routes and three dates — the travel date never fell inside one
+  /// of these ranges). So it's shown as information for planning or re-booking,
+  /// not as a warning.
+  ///
+  /// Deliberately NOT the zuglauf's `fahrplan.tageOhneFahrt`, which reads like
+  /// the same thing and isn't: every sampled run was bookable on a day inside
+  /// its own "tageOhneFahrt" range (RE 10909 on 18 Jul says "16. bis 23. Jul").
+  /// See #20, point 8.
+  final String? serviceDaysNote;
+
   const Journey({
     required this.legs,
     this.refreshToken,
     this.price,
     this.disruptions = const [],
+    this.serviceDaysNote,
   });
 
   factory Journey.fromHafas(Map<String, dynamic> json) {
@@ -58,6 +74,7 @@ class Journey {
         'refreshToken': refreshToken,
         'price': price?.toJson(),
         'disruptions': disruptions,
+        'serviceDaysNote': serviceDaysNote,
       };
 
   factory Journey.fromJson(Map<String, dynamic> json) => Journey(
@@ -69,6 +86,7 @@ class Journey {
         disruptions: (json['disruptions'] as List<dynamic>? ?? const [])
             .whereType<String>()
             .toList(),
+        serviceDaysNote: json['serviceDaysNote'] as String?,
         price: json['price'] is Map<String, dynamic>
             ? JourneyPrice.fromJson(json['price'] as Map<String, dynamic>)
             : null,
