@@ -2491,6 +2491,50 @@ def check_db_account_endpoints_require_auth() -> str:
             f"(status={r.status_code}/{r2.status_code})")
 
 
+def check_db_account_forced_refresh_shape() -> str:
+    """Pull-to-refresh on the Profil tab fetches every account source *forced*:
+    same request as always, minus the conditional `If-None-Match` (#31).
+
+    Without that, the server answers 304 and the app re-serves the very cache
+    the pull was meant to replace — which is how a changed address or BahnBonus
+    balance stayed invisible until a logout/login.
+
+    Both shapes must reach the auth gate (401/403). A 400/415 on either would
+    mean the edge started policing the conditional header, and the app's refresh
+    (or its DB-Navigator parity) needs rethinking. Auth-gated, so this proves
+    the request shape is *accepted*, not what it returns. Soft: can't carry a
+    real token in CI."""
+    url = "https://app.services-bahn.de/mob/emobilebahncards"
+    media = "application/x.db.vendo.mob.emobilebahncards.v2+json"
+    # 429 counts as accepted: the per-client limiter sits *behind* the edge, so
+    # being rate-limited proves the route and the request shape were fine. A
+    # 429 is never evidence that the API changed (project_vendo_rate_limit).
+    ok = (401, 403, 429)
+
+    # Forced: exactly what a pull sends — no If-None-Match, call-trigger manual.
+    forced_headers = _vendo_headers(media)
+    forced_headers["call-trigger"] = "manual"
+    forced = _get(url, headers=forced_headers, timeout=TIMEOUT)
+    if forced.status_code not in ok:
+        raise CheckError(
+            f"forced refresh shape rejected (status={forced.status_code}, "
+            "expected the 401/403 auth gate)")
+
+    # Conditional: the background revalidation, which keeps sending the ETag.
+    cond_headers = _vendo_headers(media)
+    cond_headers["If-None-Match"] = 'W/"probe-not-a-real-etag"'
+    cond_headers["call-trigger"] = "auto"
+    cond = _get(url, headers=cond_headers, timeout=TIMEOUT)
+    if cond.status_code not in ok:
+        raise CheckError(
+            f"conditional refresh shape rejected (status={cond.status_code}, "
+            "expected the 401/403 auth gate)")
+
+    return ("forced (no if-none-match) + conditional refresh shapes both "
+            f"accepted, auth-gated (status={forced.status_code}/"
+            f"{cond.status_code})")
+
+
 # (name, callable, soft) — soft checks warn instead of fail.
 CHECKS = [
     ("bahn.de web API blocked (reiseloesung)", check_bahn_web_api_blocked, True),
@@ -2533,6 +2577,7 @@ CHECKS = [
     ("traewelling check-in API", check_traewelling_api, True),
     ("DB account token endpoint (kf_mobile)", check_db_account_token_endpoint, True),
     ("DB account mob endpoints (auth-gated)", check_db_account_endpoints_require_auth, True),
+    ("DB account forced refresh shape (#31)", check_db_account_forced_refresh_shape, True),
     ("HAFAS rest mirror (flaky)", check_hafas_rest, True),
     ("website journey blocked check", check_website_journey_still_blocked, True),
 ]

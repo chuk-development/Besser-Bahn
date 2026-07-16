@@ -126,11 +126,18 @@ class DbAuthState {
   final bool isLoading;
   final String? error;
 
+  /// When the account data was last pulled from the server successfully.
+  /// Surfaced in the Profil tab ("Zuletzt aktualisiert …") so a refresh that
+  /// ran but changed nothing is distinguishable from one that never ran (#31),
+  /// and used to throttle the automatic resume refresh.
+  final DateTime? lastRefreshedAt;
+
   const DbAuthState({
     this.initialized = false,
     this.profile,
     this.isLoading = false,
     this.error,
+    this.lastRefreshedAt,
   });
 
   bool get isLoggedIn => profile != null;
@@ -140,6 +147,7 @@ class DbAuthState {
     DbProfile? profile,
     bool? isLoading,
     String? error,
+    DateTime? lastRefreshedAt,
     bool clearProfile = false,
     bool clearError = false,
   }) {
@@ -148,9 +156,17 @@ class DbAuthState {
       profile: clearProfile ? null : (profile ?? this.profile),
       isLoading: isLoading ?? this.isLoading,
       error: clearError ? null : (error ?? this.error),
+      lastRefreshedAt: lastRefreshedAt ?? this.lastRefreshedAt,
     );
   }
 }
+
+/// An automatic (resume-triggered) refresh that lands within this window of the
+/// last successful one is skipped. Resume fires often — returning from the
+/// login tab, from a share sheet, from the notification shade — and each
+/// refresh is a whole set of requests the rate limiter counts (#31). A manual
+/// pull is never throttled.
+const _kAutoRefreshCooldown = Duration(seconds: 30);
 
 class DbAuthNotifier extends Notifier<DbAuthState> {
   DbAccountService get _service => ref.read(dbAccountServiceProvider);
@@ -178,7 +194,10 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
       if (has) {
         final profile = await _service.profile();
         await _ProfileCache.save(profile);
-        state = state.copyWith(initialized: true, profile: profile);
+        state = state.copyWith(
+            initialized: true,
+            profile: profile,
+            lastRefreshedAt: DateTime.now());
         _seedSearchDefaults(profile);
         AppLog.log('restore ok · ${profile.kundennummer}', tag: 'db-account');
         return;
@@ -216,7 +235,8 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
     try {
       final profile = await _service.login();
       await _ProfileCache.save(profile);
-      state = state.copyWith(isLoading: false, profile: profile);
+      state = state.copyWith(
+          isLoading: false, profile: profile, lastRefreshedAt: DateTime.now());
       _invalidateData();
       _seedSearchDefaults(profile);
     } catch (e) {
@@ -312,19 +332,34 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
     await ref.read(dbSavedReiseIdsProvider.notifier).clear();
   }
 
-  /// Re-pull the profile (e.g. pull-to-refresh on the Profile tab).
-  Future<void> reload() async {
+  /// Re-pull just the profile — name, e-mail, address. Always fresh: it's a
+  /// POST, so no ETag applies. Never throws; a failed refresh belongs in
+  /// [DbAuthState.error] where the Profil tab can show it. It used to be
+  /// swallowed entirely, so a refresh that got rate-limited looked exactly like
+  /// one that found no changes (#31).
+  ///
+  /// Refreshes the profile and nothing else — use [AccountRefresher.refresh]
+  /// (`accountRefreshProvider`) to reload the whole account.
+  Future<void> reloadProfile() async {
     if (!state.isLoggedIn) return;
     try {
       final profile = await _service.profile();
       await _ProfileCache.save(profile);
       state = state.copyWith(profile: profile, clearError: true);
     } catch (e) {
-      state = state.copyWith(error: _message(e));
+      state = state.copyWith(error: _refreshMessage(e));
     }
-    _invalidateData();
   }
 
+  /// Stamps "Zuletzt aktualisiert" once a full account refresh has completed.
+  void markRefreshed() =>
+      state = state.copyWith(lastRefreshedAt: DateTime.now());
+
+  /// Only for an identity change (login / logout) — every cached source has to
+  /// be thrown away and rebuilt for the *new* account. Never for a refresh:
+  /// invalidating there tears down the controllers mid-refresh, and their
+  /// rebuild fires a second background copy of the very requests the refresh
+  /// is already making.
   void _invalidateData() {
     ref.invalidate(bahnbonusProvider);
     ref.invalidate(bahncardsProvider);
@@ -339,10 +374,79 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
     }
     return e is DbAccountException ? e.message : 'Anmeldung fehlgeschlagen';
   }
+
+  String _refreshMessage(Object e) => e is DbAccountException
+      ? 'Aktualisieren fehlgeschlagen: ${e.message}'
+      : 'Aktualisieren fehlgeschlagen';
 }
 
 final dbAuthProvider =
     NotifierProvider<DbAuthNotifier, DbAuthState>(DbAuthNotifier.new);
+
+/// Reloads **everything the Profil tab shows** in one coordinated pass:
+/// profile (name, e-mail, address), BahnBonus, BahnCards, and the trip
+/// overview that backs the ticket list. This is what pull-to-refresh runs (#31).
+///
+/// It lives above [dbAuthProvider] rather than inside it because the account
+/// sources all watch the auth state — a notifier cannot read its own
+/// dependents.
+///
+/// Two rules it exists to keep:
+///
+/// 1. **Everything, forced.** Each source is fetched without `If-None-Match`,
+///    so the server can't answer "unchanged" and leave the user staring at the
+///    address they just corrected on bahn.de.
+/// 2. **One refresh = one set of requests.** The four fetches run concurrently
+///    on purpose: the trip overview needs the profile too, and firing them
+///    together lets the service's coalescer collapse both reads into a single
+///    POST — sequentially they'd be two. A second pull while one runs joins it,
+///    and [AccountRefresher.refresh] with `auto: true` (app resume) is
+///    throttled. Duplicate concurrent requests are what make /mob answer 429
+///    for minutes, after which every source silently serves its stale disk
+///    cache — which is the bug.
+class AccountRefresher {
+  AccountRefresher(this._ref);
+
+  final Ref _ref;
+  Future<void>? _inFlight;
+
+  Future<void> refresh({bool auto = false}) {
+    final auth = _ref.read(dbAuthProvider);
+    if (!auth.isLoggedIn) return Future.value();
+    final running = _inFlight;
+    if (running != null) return running;
+    if (auto) {
+      final last = auth.lastRefreshedAt;
+      if (last != null &&
+          DateTime.now().difference(last) < _kAutoRefreshCooldown) {
+        return Future.value();
+      }
+    }
+    final future = _run();
+    _inFlight = future;
+    return future.whenComplete(() => _inFlight = null);
+  }
+
+  /// Never throws: each source parks its own failure (the profile in
+  /// [DbAuthState.error], the rest in their AsyncValue + disk-cache fallback),
+  /// so one dead endpoint can't abort the others.
+  Future<void> _run() async {
+    await Future.wait([
+      _ref.read(dbAuthProvider.notifier).reloadProfile(),
+      _ref.read(bahnbonusProvider.notifier).refresh(),
+      _ref.read(bahncardsProvider.notifier).refresh(),
+      _ref.read(reisenuebersichtProvider.notifier).refresh(),
+    ]);
+    // The profile POST is the canary: if the client is rate-limited or the
+    // session is dead, it failed too. Don't claim a refresh that didn't happen.
+    if (_ref.read(dbAuthProvider).error == null) {
+      _ref.read(dbAuthProvider.notifier).markRefreshed();
+    }
+  }
+}
+
+final accountRefreshProvider =
+    Provider<AccountRefresher>((ref) => AccountRefresher(ref));
 
 /// On-disk BahnBonus cache. Points don't change while you're standing on a
 /// platform, so the last good value stays true enough to show — and showing
@@ -385,8 +489,13 @@ class _BahnBonusCache {
 class BahnbonusController extends AsyncNotifier<DbBahnBonus?> {
   @override
   Future<DbBahnBonus?> build() async {
-    final auth = ref.watch(dbAuthProvider);
-    if (!auth.isLoggedIn) return null;
+    // Watch *whether* an account is signed in, not the profile object. Watching
+    // the whole state meant every profile reload rebuilt this controller, and
+    // the rebuild fired a background fetch racing the refresh that caused it —
+    // two concurrent GETs of the same URL, which is how /mob gets talked into a
+    // 429 (#31).
+    final loggedIn = ref.watch(dbAuthProvider.select((s) => s.isLoggedIn));
+    if (!loggedIn) return null;
     final cached = await _BahnBonusCache.load();
     if (cached != null) {
       _refreshInBackground();
@@ -395,11 +504,13 @@ class BahnbonusController extends AsyncNotifier<DbBahnBonus?> {
     return _fetchAndPersist();
   }
 
-  /// Foreground refresh (pull-to-refresh). Falls back to the cache rather
-  /// than erroring out, so a transient failure can't empty the card.
+  /// Foreground refresh (pull-to-refresh) — forced, so an unchanged-looking
+  /// ETag can't answer 304 and hand back the very cache we're replacing. Falls
+  /// back to the cache rather than erroring out, so a transient failure can't
+  /// empty the card.
   Future<void> refresh() async {
     try {
-      final fresh = await _fetchAndPersist();
+      final fresh = await _fetchAndPersist(forceFresh: true);
       if (fresh != null) state = AsyncData(fresh);
     } catch (e, st) {
       final cached = await _BahnBonusCache.load();
@@ -407,16 +518,20 @@ class BahnbonusController extends AsyncNotifier<DbBahnBonus?> {
     }
   }
 
-  Future<DbBahnBonus?> _fetchAndPersist() async {
-    final fresh = await ref.read(dbAccountServiceProvider).bahnbonus();
-    // A 404 means "no BahnBonus programme on this account" — the service
-    // maps it to null. Don't overwrite a good cache with that; it's also
-    // what a rate-limited or half-broken response looks like.
+  Future<DbBahnBonus?> _fetchAndPersist({bool forceFresh = false}) async {
+    final fresh = await ref
+        .read(dbAccountServiceProvider)
+        .bahnbonus(forceFresh: forceFresh);
+    // null = no BahnBonus programme (404) or "unchanged" (304). Don't overwrite
+    // a good cache with that; it's also what a rate-limited or half-broken
+    // response looks like.
     if (fresh == null) return _BahnBonusCache.load();
     await _BahnBonusCache.save(fresh);
     return fresh;
   }
 
+  /// Background revalidation stays conditional (ETag) — cheap 304s are exactly
+  /// what DB Navigator does, and nobody is waiting on the answer.
   void _refreshInBackground() {
     Future.microtask(() async {
       try {
@@ -441,8 +556,9 @@ final bahnbonusProvider =
 class BahncardsController extends AsyncNotifier<List<DbBahnCard>> {
   @override
   Future<List<DbBahnCard>> build() async {
-    final auth = ref.watch(dbAuthProvider);
-    if (!auth.isLoggedIn) {
+    // Login state only — see BahnbonusController.build (#31).
+    final loggedIn = ref.watch(dbAuthProvider.select((s) => s.isLoggedIn));
+    if (!loggedIn) {
       // Don't surface a signed-out account's cache.
       return const [];
     }
@@ -471,13 +587,18 @@ class BahncardsController extends AsyncNotifier<List<DbBahnCard>> {
     return DateTime.now().isAfter(until);
   }
 
-  /// Foreground refresh — the Profile "Aktualisieren" button. Sends
-  /// `call-trigger: manual` so the request looks like a user-initiated pull
-  /// in DB Navigator's telemetry, not a background poll.
+  /// Foreground refresh — the Profile "Aktualisieren" button and pull-to-
+  /// refresh. Sends `call-trigger: manual` so the request looks like a
+  /// user-initiated pull in DB Navigator's telemetry, not a background poll,
+  /// and skips the conditional header so it comes back with real data instead
+  /// of a 304 (#31).
   Future<void> refresh() async {
-    state = const AsyncLoading();
+    // Deliberately no AsyncLoading: the pull's own spinner is the progress
+    // indicator, and dropping to loading would blank the whole BahnCard
+    // section for the length of the request. The state moves straight from the
+    // old cards to the new ones.
     try {
-      final fresh = await _fetchAndPersist(trigger: 'manual');
+      final fresh = await _fetchAndPersist(trigger: 'manual', forceFresh: true);
       state = AsyncData(fresh);
     } catch (e, st) {
       // Keep showing the cache on failure so the rider isn't stranded.
@@ -490,9 +611,11 @@ class BahncardsController extends AsyncNotifier<List<DbBahnCard>> {
     }
   }
 
-  Future<List<DbBahnCard>> _fetchAndPersist({required String trigger}) async {
-    final fresh =
-        await ref.read(dbAccountServiceProvider).bahncards(trigger: trigger);
+  Future<List<DbBahnCard>> _fetchAndPersist(
+      {required String trigger, bool forceFresh = false}) async {
+    final fresh = await ref
+        .read(dbAccountServiceProvider)
+        .bahncards(trigger: trigger, forceFresh: forceFresh);
     // 304 Not Modified → server confirms our cache is still authoritative;
     // re-save isn't needed, just hand the cached entry back.
     if (fresh == null) {
@@ -503,6 +626,7 @@ class BahncardsController extends AsyncNotifier<List<DbBahnCard>> {
     return fresh;
   }
 
+  /// Background revalidation stays conditional — see BahnbonusController.
   void _refreshInBackground({required String trigger}) {
     Future.microtask(() async {
       try {
@@ -563,8 +687,9 @@ class _ReisenCache {
 class ReisenUebersichtController extends AsyncNotifier<DbReisenUebersicht> {
   @override
   Future<DbReisenUebersicht> build() async {
-    final auth = ref.watch(dbAuthProvider);
-    if (!auth.isLoggedIn) return const DbReisenUebersicht();
+    // Login state only — see BahnbonusController.build (#31).
+    final loggedIn = ref.watch(dbAuthProvider.select((s) => s.isLoggedIn));
+    if (!loggedIn) return const DbReisenUebersicht();
     final cached = await _ReisenCache.load();
     if (cached != null) {
       _refreshInBackground();
@@ -573,10 +698,15 @@ class ReisenUebersichtController extends AsyncNotifier<DbReisenUebersicht> {
     return _fetchAndPersist();
   }
 
+  /// Foreground refresh — pull-to-refresh, and after we changed the account's
+  /// trips ourselves. Forced: a conditional GET could answer 304 and hide the
+  /// booking (or the "Reise merken") that prompted the refresh (#31).
   Future<void> refresh() async {
-    state = const AsyncLoading();
+    // No AsyncLoading — see BahncardsController.refresh. It also mattered here:
+    // the Reisen tab reads this through `asData`, which nulls out on loading,
+    // so every pull briefly emptied the trip list.
     try {
-      state = AsyncData(await _fetchAndPersist());
+      state = AsyncData(await _fetchAndPersist(forceFresh: true));
     } catch (e, st) {
       final cached = await _ReisenCache.load();
       if (cached != null) {
@@ -587,10 +717,10 @@ class ReisenUebersichtController extends AsyncNotifier<DbReisenUebersicht> {
     }
   }
 
-  Future<DbReisenUebersicht> _fetchAndPersist() async {
+  Future<DbReisenUebersicht> _fetchAndPersist({bool forceFresh = false}) async {
     final data = await ref
         .read(dbAccountServiceProvider)
-        .reisenuebersichtJson(onlyCurrent: false);
+        .reisenuebersichtJson(onlyCurrent: false, forceFresh: forceFresh);
     if (data == null) {
       // 304 — disk cache is still authoritative.
       return (await _ReisenCache.load()) ?? const DbReisenUebersicht();
@@ -599,6 +729,7 @@ class ReisenUebersichtController extends AsyncNotifier<DbReisenUebersicht> {
     return DbAccountService.parseReisenuebersicht(data);
   }
 
+  /// Background revalidation stays conditional — see BahnbonusController.
   void _refreshInBackground() {
     Future.microtask(() async {
       try {
@@ -741,8 +872,11 @@ final savedReiseJourneyProvider =
 /// Server-side Bahnhof favorites — read-only sync on login.
 final dbStationFavoritesProvider =
     FutureProvider<List<DbStationFavorite>>((ref) async {
-  final auth = ref.watch(dbAuthProvider);
-  if (!auth.isLoggedIn) return const [];
+  // Login state only — see BahnbonusController.build (#31). This one also
+  // fetches the profile internally, so a whole-state watch re-fetched it on
+  // every profile reload.
+  final loggedIn = ref.watch(dbAuthProvider.select((s) => s.isLoggedIn));
+  if (!loggedIn) return const [];
   return ref.read(dbAccountServiceProvider).stationFavorites();
 });
 

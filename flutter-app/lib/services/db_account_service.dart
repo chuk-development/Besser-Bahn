@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/app_log.dart';
 import '../core/constants.dart';
+import '../core/request_coalescer.dart';
 import '../models/db_account.dart';
 import '../models/db_ticket.dart';
 
@@ -40,8 +41,11 @@ class DbAccountException implements Exception {
 /// token is the only thing persisted (platform secure store); the 5-minute
 /// access token is refreshed transparently on a 401.
 class DbAccountService {
-  DbAccountService({FlutterSecureStorage? storage})
-      : _storage = storage ??
+  /// [client] is injectable so tests can drive the real request path
+  /// (coalescing, ETags, retries) against a mock transport.
+  DbAccountService({FlutterSecureStorage? storage, http.Client? client})
+      : _client = client ?? http.Client(),
+        _storage = storage ??
             const FlutterSecureStorage(
               // On iOS, allow reads after the device has been unlocked once
               // since boot — required so a token refresh fired by the app's
@@ -54,8 +58,13 @@ class DbAccountService {
             );
 
   final FlutterSecureStorage _storage;
-  final http.Client _client = http.Client();
+  final http.Client _client;
   final _rng = Random();
+
+  /// Guarantees "one refresh = one set of requests": concurrent reads of the
+  /// same resource share a single call instead of racing each other into a 429
+  /// that then answers everything from the stale cache (#31).
+  final _coalescer = RequestCoalescer();
 
   static const _kAccess = 'db_access_token';
   static const _kRefresh = 'db_refresh_token';
@@ -402,6 +411,18 @@ class DbAccountService {
   /// (sent as both Accept and, for bodied requests, Content-Type).
   /// [extraHeaders] are merged on top of the default ones — used for the
   /// `call-trigger: login` header some endpoints require.
+  ///
+  /// [bypassEtag] drops the conditional `If-None-Match` for this one call, so a
+  /// user-pulled refresh can't be answered 304 and handed back the cache it was
+  /// meant to replace (#31). Navigator parity holds: a request without
+  /// `if-none-match` is exactly what the official app sends whenever it has no
+  /// cached ETag for the URL (every first launch), so the shape stays inside
+  /// the natural distribution.
+  ///
+  /// GETs are coalesced by URL: they're idempotent reads, so two callers asking
+  /// at once share one round-trip rather than racing into a per-client 429.
+  /// Mutations (POST/DELETE bodies) always dispatch on their own — collapsing
+  /// two deliberate writes into one would lose a write.
   Future<http.Response> _send(
     String method,
     String url, {
@@ -409,6 +430,39 @@ class DbAccountService {
     List<int>? body,
     bool retryOn401 = true,
     Map<String, String> extraHeaders = const {},
+    bool bypassEtag = false,
+  }) {
+    if (method != 'GET') {
+      return _dispatch(method, url,
+          media: media,
+          body: body,
+          retryOn401: retryOn401,
+          extraHeaders: extraHeaders,
+          bypassEtag: bypassEtag);
+    }
+    // Forced and conditional reads must not share: joining a conditional call
+    // could answer a forced refresh with a 304.
+    return _coalescer.run(
+      'GET $url${bypassEtag ? ' !etag' : ''}',
+      () => _dispatch(method, url,
+          media: media,
+          body: body,
+          retryOn401: retryOn401,
+          extraHeaders: extraHeaders,
+          bypassEtag: bypassEtag),
+    );
+  }
+
+  /// The actual round-trip behind [_send] — never coalesced, because its own
+  /// 401/429 retries recurse into it and would otherwise wait on themselves.
+  Future<http.Response> _dispatch(
+    String method,
+    String url, {
+    required String media,
+    List<int>? body,
+    bool retryOn401 = true,
+    Map<String, String> extraHeaders = const {},
+    bool bypassEtag = false,
   }) async {
     // First-touch wiring: device info + per-install correlation-id. Cheap
     // (cached after first call) and required so the first request already
@@ -443,8 +497,9 @@ class DbAccountService {
     // ETag conditional GET — matches DB Navigator (the captured trace shows
     // `if-none-match` on every cached endpoint). Server replies 304 + empty
     // body when nothing changed; the caller layer above then re-uses the
-    // stored cache instead of re-parsing.
-    if (method == 'GET') {
+    // stored cache instead of re-parsing. A forced refresh skips it: the whole
+    // point of the pull is to not be told "unchanged" (#31).
+    if (method == 'GET' && !bypassEtag) {
       final etag = await _readEtag(url);
       if (etag != null) headers['If-None-Match'] = etag;
     }
@@ -481,9 +536,9 @@ class DbAccountService {
       AppLog.log('429 on ${Uri.parse(url).path} → backoff ${delay.inSeconds}s',
           tag: 'db-account');
       await Future.delayed(delay);
-      return _send(method, url,
+      return _dispatch(method, url,
           media: media, body: body, retryOn401: false,
-          extraHeaders: extraHeaders);
+          extraHeaders: extraHeaders, bypassEtag: bypassEtag);
     }
 
     // DB's mob backend returns **403** (not 401) when the access token has
@@ -495,7 +550,9 @@ class DbAccountService {
           tag: 'db-account');
       final r = await _refresh();
       if (r == _RefreshOutcome.success) {
-        return _send(method, url, media: media, body: body, retryOn401: false);
+        return _dispatch(method, url,
+            media: media, body: body, retryOn401: false,
+            extraHeaders: extraHeaders, bypassEtag: bypassEtag);
       }
       // Only wipe the stored tokens when Keycloak EXPLICITLY rejected the
       // refresh — the previous behaviour wiped them on any failure (incl. a
@@ -542,25 +599,41 @@ class DbAccountService {
 
   /// The signed-in profile. `POST` with an empty body (the DB app does the
   /// same), path keyed by the JWT's `kundenkontoid`.
+  ///
+  /// Always fresh — a POST never carries `If-None-Match`, so there's no
+  /// `forceFresh` to ask for. It *is* coalesced: this endpoint is the hub of
+  /// the account (the trip overview and the favorites both look up their id
+  /// through it), so a refresh used to fire it three or four times at once and
+  /// rate-limit itself (#31).
   Future<DbProfile> profile() async {
     final id = await _kontoId();
     if (id == null) {
       throw const DbAccountException('Kundenkonto-ID unbekannt', 401);
     }
-    final res = await _send('POST', '${DbAccountConstants.mobBase}/kundenkonten/$id',
-        media: DbAccountConstants.profileMedia, body: const []);
-    final profile = DbProfile.fromJson(_decode(res, 'kundenkonto'));
-    AppLog.log('profile ${profile.kundennummer}', tag: 'db-account');
-    return profile;
+    final url = '${DbAccountConstants.mobBase}/kundenkonten/$id';
+    return _coalescer.run('PROFILE $url', () async {
+      final res = await _dispatch('POST', url,
+          media: DbAccountConstants.profileMedia, body: const []);
+      final profile = DbProfile.fromJson(_decode(res, 'kundenkonto'));
+      AppLog.log('profile ${profile.kundennummer}', tag: 'db-account');
+      return profile;
+    });
   }
 
-  Future<DbBahnBonus?> bahnbonus() async {
+  /// BahnBonus status. Returns null when the account has no BahnBonus (404) or
+  /// when the server says our cache is still current (304) — either way the
+  /// caller keeps what it has. [forceFresh] drops the conditional header so a
+  /// user-pulled refresh gets the real current points.
+  Future<DbBahnBonus?> bahnbonus({bool forceFresh = false}) async {
     final id = await _kontoId();
     if (id == null) return null;
     final res = await _send(
         'GET', '${DbAccountConstants.mobBase}/kundenkonten/$id/bbStatus',
-        media: DbAccountConstants.bahnbonusMedia);
+        media: DbAccountConstants.bahnbonusMedia, bypassEtag: forceFresh);
     if (res.statusCode == 404) return null;
+    // 304 used to fall into _decode and throw "bbStatus HTTP 304" — an error
+    // the UI then had to paper over with the cache. It's not an error.
+    if (res.statusCode == 304) return null;
     return DbBahnBonus.fromJson(_decode(res, 'bbStatus'));
   }
 
@@ -568,14 +641,17 @@ class DbAccountService {
   /// (the on-disk cache is still authoritative — caller keeps using it).
   /// [trigger] is sent as `call-trigger` and mirrors DB Navigator's per-
   /// context value: `login` on cold-start restore, `manual` on user-pulled
-  /// refresh, `auto` on background revalidation.
-  Future<List<DbBahnCard>?> bahncards({String trigger = 'login'}) async {
+  /// refresh, `auto` on background revalidation. [forceFresh] skips the
+  /// conditional header so a `manual` pull can't be answered 304.
+  Future<List<DbBahnCard>?> bahncards(
+      {String trigger = 'login', bool forceFresh = false}) async {
     AppLog.log('bahncards: GET emobilebahncards trigger=$trigger…',
         tag: 'db-account');
     final res = await _send(
         'GET', '${DbAccountConstants.mobBase}/emobilebahncards',
         media: DbAccountConstants.bahncardsMedia,
-        extraHeaders: {'call-trigger': trigger});
+        extraHeaders: {'call-trigger': trigger},
+        bypassEtag: forceFresh);
     AppLog.log(
         'bahncards HTTP ${res.statusCode} (${res.bodyBytes.length}B)',
         tag: 'db-account');
@@ -609,9 +685,11 @@ class DbAccountService {
   /// includes past entries.
   /// Raw `reisenuebersicht` JSON — exposed so callers can persist it
   /// byte-identically to disk (offline-friendly Reisen tab) and re-parse with
-  /// [parseReisenuebersicht]. Returns null on 304 Not Modified.
+  /// [parseReisenuebersicht]. Returns null on 304 Not Modified. [forceFresh]
+  /// skips the conditional header — used by pull-to-refresh, and after we
+  /// ourselves changed the account's trips (a 304 would hide our own write).
   Future<Map<String, dynamic>?> reisenuebersichtJson(
-      {bool onlyCurrent = false}) async {
+      {bool onlyCurrent = false, bool forceFresh = false}) async {
     final p = await profile();
     final profilId = p.kundenprofilId;
     if (profilId == null) {
@@ -623,7 +701,7 @@ class DbAccountService {
       'nurAktuelleAuftraege': onlyCurrent.toString(),
     });
     final res = await _send('GET', uri.toString(),
-        media: DbAccountConstants.reisenMedia);
+        media: DbAccountConstants.reisenMedia, bypassEtag: forceFresh);
     if (res.statusCode == 304) return null;
     return _decode(res, 'reisenuebersicht');
   }
