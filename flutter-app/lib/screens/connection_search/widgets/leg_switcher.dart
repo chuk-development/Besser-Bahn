@@ -632,6 +632,36 @@ class LegAlternativeSwitcherState
     }
 
     final options = _alight?.options ?? const <EarlierAlightOption>[];
+    // We didn't get to look properly (in practice: the backend rate-limited
+    // us). Claiming "bringt nichts" here would talk the rider out of a rescue
+    // that might exist — say what actually happened and let them retry.
+    if (_alight?.complete == false && options.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Frühere Ausstiege konnten nicht geprüft werden.',
+                style: theme.textTheme.bodySmall?.copyWith(color: fg),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                setState(() => _alightTried = false);
+                _ensureAlightLoaded();
+              },
+              style: TextButton.styleFrom(
+                foregroundColor: fg,
+                visualDensity: VisualDensity.compact,
+              ),
+              child: const Text('Erneut'),
+            ),
+          ],
+        ),
+      );
+    }
+
     // Say it plainly instead of leaving a gap the rider reads as "still
     // loading": we looked, and riding on really is the best there is.
     if (options.isEmpty) {

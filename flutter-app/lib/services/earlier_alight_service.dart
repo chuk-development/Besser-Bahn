@@ -13,12 +13,30 @@ class EarlierAlightResult {
   final Journey? fallback;
 
   /// Suggestions that genuinely beat [fallback], best first. Empty is a real
-  /// answer: getting off early doesn't always help.
+  /// answer — getting off early doesn't always help — but ONLY when
+  /// [complete]. See there.
   final List<EarlierAlightOption> options;
 
-  const EarlierAlightResult({this.fallback, this.options = const []});
+  /// Every stop we meant to search was actually searched.
+  ///
+  /// False means a request failed (in practice: the rate limit) and the
+  /// fan-out stopped early, so an empty [options] proves nothing. The
+  /// difference matters to the rider: "we looked, riding on is genuinely best"
+  /// and "we couldn't look" are opposite advice, and showing the first when
+  /// the second is true talks someone out of a rescue that may well exist.
+  final bool complete;
 
+  const EarlierAlightResult({
+    this.fallback,
+    this.options = const [],
+    this.complete = true,
+  });
+
+  /// Nothing to offer, and we know it.
   static const empty = EarlierAlightResult();
+
+  /// We couldn't find out.
+  static const failed = EarlierAlightResult(complete: false);
 }
 
 /// Finds "get off earlier and go another way" rescues for a transfer that's
@@ -151,7 +169,7 @@ class EarlierAlightService {
     // The baseline first: without it there's no "earlier than what?" and the
     // issue's whole filter ("nur was früher am Ziel ist") can't be applied.
     final baseline = await search(changeStation.vendoLocationId, readyAt);
-    if (baseline == null) return EarlierAlightResult.empty;
+    if (baseline == null) return EarlierAlightResult.failed;
     final fallback = pickFallbackJourney(
       journeys: baseline,
       readyAt: readyAt,
@@ -165,6 +183,7 @@ class EarlierAlightService {
     }
 
     final options = <EarlierAlightOption>[];
+    var complete = true;
     for (final stop in candidates) {
       final arr = stop.arrival;
       final fromId = stop.station.vendoLocationId;
@@ -173,9 +192,10 @@ class EarlierAlightService {
       // The request itself failed — almost always the rate limit. Carrying on
       // through the remaining stops would fire more requests at a backend
       // that just told us to stop, and turn a 4-minute block into a longer
-      // one for the whole app. Show what we have.
+      // one for the whole app. Show what we have, and admit it's partial.
       if (journeys == null) {
         AppLog.log('aborting fan-out after a failed search', tag: 'alight');
+        complete = false;
         break;
       }
       // Only the earliest arrival per stop can win — the rest are strictly
@@ -204,6 +224,7 @@ class EarlierAlightService {
     return EarlierAlightResult(
       fallback: fallback,
       options: rankEarlierAlightOptions(options),
+      complete: complete,
     );
   }
 

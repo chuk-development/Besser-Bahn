@@ -256,6 +256,22 @@ void main() {
     expect(calls, 2);
     expect(res.fallback, isNotNull);
     expect(res.options, isEmpty);
+    // …and it must not pass that off as "we looked, nothing helps".
+    expect(res.complete, isFalse);
+  });
+
+  test('an empty answer only means "nothing helps" when we really looked',
+      () async {
+    // Everything searched, nothing beats the fallback → a real, complete "no".
+    final svc = EarlierAlightService(VendoService(client: MockClient((_) async {
+      return http.Response.bytes(
+          utf8.encode(_searchBody(dep: _at(12, 45), arr: _at(15, 0))), 200);
+    })));
+
+    final res = await run(svc);
+
+    expect(res.options, isEmpty);
+    expect(res.complete, isTrue);
   });
 
   test('a failed baseline is not cached — a later retry may still work',
