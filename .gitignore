@@ -26,3 +26,6 @@ api-tests/probe_*.py
 
 # Local agent session pointers — dev artefact, never useful to anyone else
 session.txt
+
+# Agent worktrees — never part of the repo
+.claude/worktrees/
