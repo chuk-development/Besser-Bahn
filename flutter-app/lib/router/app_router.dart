@@ -162,11 +162,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       // Bulk price comparison: split-ticket every connection of a search at
       // once, so the rider can compare departure times by total price.
+      // `?dticket=1` opens the same comparison as the D-Ticket-Optimierer —
+      // ordered by what each connection costs on top of the ticket (#28).
       GoRoute(
         path: '/split-compare',
         parentNavigatorKey: _rootNavigatorKey,
         builder: (context, state) => BulkSplitScreen(
-            journeys: (state.extra as List<Journey>?) ?? const []),
+          journeys: (state.extra as List<Journey>?) ?? const [],
+          dTicketMode: state.uri.queryParameters['dticket'] == '1',
+        ),
       ),
       // Bestpreis calendar: what this trip costs across the whole day (#21).
       GoRoute(

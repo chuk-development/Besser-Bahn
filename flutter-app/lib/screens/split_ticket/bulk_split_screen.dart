@@ -6,21 +6,38 @@ import '../../models/journey.dart';
 import '../../providers/bulk_split_provider.dart';
 import '../../providers/split_ticket_provider.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/dticket_optimizer.dart';
 
 /// Bulk price comparison: take the connections from one search and show, for
 /// each departure, the direct fare vs the cheapest split — so the rider can
 /// pick the cheapest time at a glance. Each row fills in as its analysis lands.
+///
+/// With a Deutschlandticket the interesting question isn't the total but what
+/// comes ON TOP of the ticket already paid for, so the same finished analyses
+/// can be re-read and re-ordered by surcharge (#28). Same numbers, same engine,
+/// different question — no second run, no second pricing path.
 class BulkSplitScreen extends ConsumerStatefulWidget {
   /// Connections to compare — the results currently shown for the search.
   final List<Journey> journeys;
 
-  const BulkSplitScreen({super.key, required this.journeys});
+  /// Open straight in D-Ticket mode (ordered by surcharge). Only honoured when
+  /// the run actually priced with a D-Ticket — otherwise there is no surcharge
+  /// to show and the mode silently stays off.
+  final bool dTicketMode;
+
+  const BulkSplitScreen({
+    super.key,
+    required this.journeys,
+    this.dTicketMode = false,
+  });
 
   @override
   ConsumerState<BulkSplitScreen> createState() => _BulkSplitScreenState();
 }
 
 class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
+  late bool _dTicket = widget.dTicketMode;
+
   @override
   void initState() {
     super.initState();
@@ -38,21 +55,55 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
     return h > 0 ? '$h:${m.toString().padLeft(2, '0')} h' : '$m min';
   }
 
+  /// What [row] costs on top of the D-Ticket, or null while it's unproven.
+  /// Reads the flag off the run, not off the live setting — see
+  /// [BulkSplitState.deutschlandTicket].
+  DTicketQuote? _quoteOf(BulkSplitRow row, BulkSplitState state) =>
+      row.status == BulkRowStatus.done
+          ? dTicketQuoteFrom(row.result,
+              deutschlandTicket: state.deutschlandTicket)
+          : null;
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(bulkSplitProvider);
     final theme = Theme.of(context);
 
-    // Cheapest fully-analysed departure, for the headline.
-    BulkSplitRow? cheapest;
-    for (final r in state.rows) {
-      if (r.status != BulkRowStatus.done || r.bestPrice == null) continue;
-      if (cheapest == null || r.bestPrice! < cheapest.bestPrice!) cheapest = r;
+    // The mode only exists for someone who holds the ticket — without one there
+    // is no "on top of" to compute (#28).
+    final offerDTicket = state.deutschlandTicket;
+    final dMode = _dTicket && offerDTicket;
+
+    final rows = dMode
+        ? sortByDTicketSurcharge(
+            state.rows,
+            quoteOf: (r) => _quoteOf(r, state),
+            durationOf: (r) => r.duration,
+          )
+        : state.rows;
+
+    // The headline pick: lowest surcharge in D-Ticket mode, cheapest total
+    // otherwise. Only fully-analysed rows can win it.
+    BulkSplitRow? best;
+    DTicketQuote? bestQuote;
+    for (final r in rows) {
+      if (r.status != BulkRowStatus.done) continue;
+      if (dMode) {
+        final q = _quoteOf(r, state);
+        if (q == null) continue;
+        if (bestQuote == null || q.surcharge < bestQuote.surcharge) {
+          best = r;
+          bestQuote = q;
+        }
+      } else {
+        if (r.bestPrice == null) continue;
+        if (best == null || r.bestPrice! < best.bestPrice!) best = r;
+      }
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Preisvergleich'),
+        title: Text(dMode ? 'D-Ticket-Optimierer' : 'Preisvergleich'),
         actions: [
           if (state.running)
             IconButton(
@@ -65,6 +116,29 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
       body: ListView(
         padding: const EdgeInsets.only(bottom: 32),
         children: [
+          if (offerDTicket)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(
+                    value: false,
+                    label: Text('Gesamtpreis'),
+                    icon: Icon(Icons.euro, size: 16),
+                  ),
+                  ButtonSegment(
+                    value: true,
+                    label: Text('Zuzahlung'),
+                    icon: Icon(Icons.confirmation_number_outlined, size: 16),
+                  ),
+                ],
+                selected: {dMode},
+                showSelectedIcon: false,
+                onSelectionChanged: (s) =>
+                    setState(() => _dTicket = s.first),
+              ),
+            ),
+
           if (state.total > 0)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -73,7 +147,8 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
                 children: [
                   Text(
                     state.running
-                        ? 'Prüfe Split-Tickets … ${state.doneCount}/${state.total}'
+                        ? '${dMode ? 'Prüfe Zuzahlung' : 'Prüfe Split-Tickets'} '
+                              '… ${state.doneCount}/${state.total}'
                         : 'Fertig — ${state.total} Verbindungen verglichen',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
@@ -89,8 +164,8 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
               ),
             ),
 
-          // Headline: cheapest departure overall.
-          if (cheapest != null)
+          // Headline: the pick under the current question.
+          if (best != null)
             Card(
               margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               color: theme.colorScheme.primaryContainer,
@@ -99,7 +174,7 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
                 child: Row(
                   children: [
                     Icon(
-                      Icons.savings,
+                      dMode ? Icons.confirmation_number : Icons.savings,
                       color: theme.colorScheme.onPrimaryContainer,
                     ),
                     const SizedBox(width: 12),
@@ -108,16 +183,21 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Günstigste Abfahrt',
+                            dMode
+                                ? 'Geringste Zuzahlung'
+                                : 'Günstigste Abfahrt',
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onPrimaryContainer
                                   .withAlpha(190),
                             ),
                           ),
                           Text(
-                            '${cheapest.label}  ·  '
-                            '${cheapest.bestPrice!.toStringAsFixed(2)} €'
-                            '${cheapest.splitWins ? ' (Split)' : ''}',
+                            dMode
+                                ? '${best.label}  ·  '
+                                      '${bestQuote!.fullyCovered ? 'D-Ticket reicht' : '+${bestQuote.surchargeFormatted}'}'
+                                : '${best.label}  ·  '
+                                      '${best.bestPrice!.toStringAsFixed(2)} €'
+                                      '${best.splitWins ? ' (Split)' : ''}',
                             style: theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.bold,
                               color: theme.colorScheme.onPrimaryContainer,
@@ -131,13 +211,17 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
               ),
             ),
 
-          for (final row in state.rows) _buildRow(context, row),
+          for (final row in rows) _buildRow(context, row, state, dMode),
 
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
             child: Text(
-              'Split-Tickets haben kein Anschluss-Recht — bei Verspätung liegt '
-              'das Risiko beim Fahrgast.',
+              dMode
+                  ? 'Zuzahlung = was zusätzlich zum Deutschlandticket zu '
+                        'kaufen ist. Split-Tickets haben kein Anschluss-Recht — '
+                        'bei Verspätung liegt das Risiko beim Fahrgast.'
+                  : 'Split-Tickets haben kein Anschluss-Recht — bei Verspätung '
+                        'liegt das Risiko beim Fahrgast.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -149,9 +233,15 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
     );
   }
 
-  Widget _buildRow(BuildContext context, BulkSplitRow row) {
+  Widget _buildRow(
+    BuildContext context,
+    BulkSplitRow row,
+    BulkSplitState state,
+    bool dMode,
+  ) {
     final theme = Theme.of(context);
     final splitWins = row.splitWins;
+    final quote = dMode ? _quoteOf(row, state) : null;
 
     Widget priceBlock() {
       if (row.status == BulkRowStatus.running ||
@@ -184,9 +274,42 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
             Text(
-              'Split n/v',
+              dMode ? 'Zuzahlung n/v' : 'Split n/v',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.error,
+              ),
+            ),
+          ],
+        );
+      }
+      if (dMode) {
+        // Done, but the surcharge couldn't be established — say so instead of
+        // printing a 0 that would sort straight to the top.
+        if (quote == null) {
+          return Text(
+            'Zuzahlung unklar',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (quote.savesMoney && row.directPrice != null)
+              Text(
+                '${row.directPrice!.toStringAsFixed(2)} €',
+                style: TextStyle(
+                  decoration: TextDecoration.lineThrough,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            Text(
+              quote.fullyCovered ? '0.00 €' : '+${quote.surchargeFormatted}',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: quote.fullyCovered ? AppColors.onTime : null,
               ),
             ),
           ],
@@ -217,14 +340,27 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
       );
     }
 
-    String verdict() {
-      if (row.status != BulkRowStatus.done) return '';
+    // (text, "this is a win") — a win gets the green treatment.
+    (String, bool) verdict() {
+      if (row.status != BulkRowStatus.done) return ('', false);
+      if (dMode) {
+        if (quote == null) return ('', false);
+        if (quote.fullyCovered) return ('D-Ticket reicht', true);
+        if (quote.savesMoney) {
+          return ('D-Ticket spart −${quote.saving!.toStringAsFixed(2)} €', true);
+        }
+        // Pure long-distance: the ticket is worth nothing here. Better said out
+        // loud than dressed up as a saving.
+        return ('D-Ticket bringt hier nichts', false);
+      }
       if (splitWins) {
         final save = (row.directPrice! - row.splitPrice!).toStringAsFixed(2);
-        return 'Split −$save €';
+        return ('Split −$save €', true);
       }
-      return 'Direkt am günstigsten';
+      return ('Direkt am günstigsten', false);
     }
+
+    final (verdictText, verdictWin) = verdict();
 
     return Card(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -270,7 +406,7 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
                     ),
                 ],
               ),
-              if (verdict().isNotEmpty) ...[
+              if (verdictText.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Align(
                   alignment: Alignment.centerLeft,
@@ -280,17 +416,17 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
                       vertical: 3,
                     ),
                     decoration: BoxDecoration(
-                      color: splitWins
+                      color: verdictWin
                           ? AppColors.onTime.withAlpha(28)
                           : theme.colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
-                      verdict(),
+                      verdictText,
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: splitWins
+                        color: verdictWin
                             ? AppColors.onTime
                             : theme.colorScheme.onSurfaceVariant,
                       ),

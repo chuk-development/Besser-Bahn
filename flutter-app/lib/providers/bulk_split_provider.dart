@@ -79,12 +79,19 @@ class BulkSplitState {
   final int total;
   final List<BulkSplitRow> rows;
 
+  /// Whether this run priced with the Deutschlandticket. Recorded when the run
+  /// starts, because the result can't be asked afterwards and the setting can
+  /// change mid-run — reading it live would relabel finished totals as
+  /// surcharges (or the reverse) without re-pricing anything (#28).
+  final bool deutschlandTicket;
+
   const BulkSplitState({
     this.running = false,
     this.cancelled = false,
     this.doneCount = 0,
     this.total = 0,
     this.rows = const [],
+    this.deutschlandTicket = false,
   });
 
   BulkSplitState copyWith({
@@ -93,6 +100,7 @@ class BulkSplitState {
     int? doneCount,
     int? total,
     List<BulkSplitRow>? rows,
+    bool? deutschlandTicket,
   }) =>
       BulkSplitState(
         running: running ?? this.running,
@@ -100,6 +108,7 @@ class BulkSplitState {
         doneCount: doneCount ?? this.doneCount,
         total: total ?? this.total,
         rows: rows ?? this.rows,
+        deutschlandTicket: deutschlandTicket ?? this.deutschlandTicket,
       );
 }
 
@@ -166,6 +175,7 @@ class BulkSplitNotifier extends Notifier<BulkSplitState> {
       total: rows.length,
       doneCount: 0,
       rows: rows,
+      deutschlandTicket: settings.hasDeutschlandTicket,
     );
 
     for (var k = 0; k < rows.length; k++) {

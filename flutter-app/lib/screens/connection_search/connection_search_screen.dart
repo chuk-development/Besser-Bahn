@@ -132,6 +132,20 @@ class _ConnectionSearchScreenState
               onPressed: () =>
                   context.push('/split-compare', extra: state.sortedJourneys),
             ),
+          // D-Ticket-Optimierer: same comparison, ordered by what each
+          // connection costs ON TOP of the Deutschlandticket (#28). Pointless
+          // without one, so it follows the setting — like "Nur D-Ticket".
+          if (state.result != null &&
+              state.sortedJourneys.isNotEmpty &&
+              ref.watch(settingsProvider).hasDeutschlandTicket)
+            IconButton(
+              icon: const Icon(Icons.confirmation_number_outlined),
+              tooltip: 'D-Ticket-Optimierer (nach Zuzahlung)',
+              onPressed: () => context.push(
+                '/split-compare?dticket=1',
+                extra: state.sortedJourneys,
+              ),
+            ),
           if (state.result != null)
             PopupMenuButton<JourneySortMode>(
               icon: const Icon(Icons.sort),
