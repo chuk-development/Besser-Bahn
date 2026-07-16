@@ -233,21 +233,29 @@ class _DepartureTile extends StatelessWidget {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       leading: SizedBox(
         width: 44,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              time,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                decoration:
-                    departure.cancelled ? TextDecoration.lineThrough : null,
+        // Time + badge want ~43 px; the dense ListTile caps leading at 40, so
+        // a delayed/cancelled row overflowed by 3 px. scaleDown shrinks the
+        // pair to fit only when the badge is there — a plain row is untouched.
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                time,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  decoration:
+                      departure.cancelled ? TextDecoration.lineThrough : null,
+                ),
               ),
-            ),
-            DelayBadge(
-                delaySeconds: departure.delay, cancelled: departure.cancelled),
-          ],
+              DelayBadge(
+                  delaySeconds: departure.delay,
+                  cancelled: departure.cancelled),
+            ],
+          ),
         ),
       ),
       title: Row(
