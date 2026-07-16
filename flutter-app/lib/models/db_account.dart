@@ -34,10 +34,8 @@ class DbProfile {
     this.bahnbonusStatus,
   });
 
-  String get fullName => [vorname, nachname]
-      .where((s) => s.trim().isNotEmpty)
-      .join(' ')
-      .trim();
+  String get fullName =>
+      [vorname, nachname].where((s) => s.trim().isNotEmpty).join(' ').trim();
 
   String get anredeText => switch (anrede) {
         'HR' => 'Herr',
@@ -75,8 +73,7 @@ class DbProfile {
         'nachname': nachname,
         if (anrede != null) 'anrede': anrede,
         if (geburtsdatum != null) 'geburtsdatum': geburtsdatum,
-        if (kundendatensatzId != null)
-          'kundendatensatzId': kundendatensatzId,
+        if (kundendatensatzId != null) 'kundendatensatzId': kundendatensatzId,
         if (bahnbonusStatus != null) 'bahnbonusStatus': bahnbonusStatus,
         if (adresse != null)
           'hauptadresse': {
@@ -89,7 +86,7 @@ class DbProfile {
           {
             if (kundenprofilId != null) 'id': kundenprofilId,
             if (email != null) 'kontaktmailadresse': {'email': email},
-          }
+          },
         ],
       };
 }
@@ -199,6 +196,55 @@ class DbBahnBonus {
         'statusLevel': statusLevel,
         'bbSubscription': subscription,
         if (loyaltyNumber != null) 'loyaltyNumber': loyaltyNumber,
+      };
+}
+
+/// The signed-in user's official current-year CO₂ balance from the BahnBonus
+/// app. All emission values are kilograms; [travelDistanceKm] is kilometres.
+class DbBahnBonusCo2Balance {
+  final int year;
+  final String startDate;
+  final String endDate;
+  final double trainEmissionKg;
+  final double carEmissionKg;
+  final double reductionKg;
+  final double travelDistanceKm;
+
+  const DbBahnBonusCo2Balance({
+    required this.year,
+    required this.startDate,
+    required this.endDate,
+    required this.trainEmissionKg,
+    required this.carEmissionKg,
+    required this.reductionKg,
+    required this.travelDistanceKm,
+  });
+
+  factory DbBahnBonusCo2Balance.fromJson(Map<String, dynamic> j) {
+    final period = j['periodOfTime'] as Map<String, dynamic>? ?? const {};
+    final emissions = j['emissions'] as Map<String, dynamic>? ?? const {};
+    final startDate = (period['startDate'] ?? '').toString();
+    return DbBahnBonusCo2Balance(
+      year: int.tryParse(startDate.split('-').first) ?? DateTime.now().year,
+      startDate: startDate,
+      endDate: (period['endDate'] ?? '').toString(),
+      trainEmissionKg:
+          (emissions['co2EmissionTravelByTrain'] as num?)?.toDouble() ?? 0,
+      carEmissionKg:
+          (emissions['co2EmissionTravelByCar'] as num?)?.toDouble() ?? 0,
+      reductionKg: (emissions['co2Reduction'] as num?)?.toDouble() ?? 0,
+      travelDistanceKm: (j['travelDistance'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'periodOfTime': {'startDate': startDate, 'endDate': endDate},
+        'emissions': {
+          'co2EmissionTravelByTrain': trainEmissionKg,
+          'co2EmissionTravelByCar': carEmissionKg,
+          'co2Reduction': reductionKg,
+        },
+        'travelDistance': travelDistanceKm,
       };
 }
 

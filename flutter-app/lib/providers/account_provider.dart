@@ -43,9 +43,8 @@ class _BahnCardCache {
         final ts = data['fetchedAtMs'] as int?;
         return (
           cards: list,
-          fetchedAt: ts != null
-              ? DateTime.fromMillisecondsSinceEpoch(ts)
-              : null
+          fetchedAt:
+              ts != null ? DateTime.fromMillisecondsSinceEpoch(ts) : null,
         );
       }
       // Migrate v1 (bare list) → v2 wrapper.
@@ -72,7 +71,9 @@ class _BahnCardCache {
           'cards': cards.map((c) => c.toJson()).toList(),
         }),
       );
-    } catch (_) {/* best effort */}
+    } catch (_) {
+      /* best effort */
+    }
   }
 
   static Future<void> clear() async {
@@ -190,8 +191,9 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
       // platform keyring) must NOT wipe a valid refresh token, or the user is
       // forced to log in again on every cold start.
       AppLog.log(
-          'restore DbAccountException status=${e.status} msg=${e.message}',
-          tag: 'db-account');
+        'restore DbAccountException status=${e.status} msg=${e.message}',
+        tag: 'db-account',
+      );
       if (e.status == 401) await _service.logout();
     } catch (e) {
       // Network/platform hiccup — keep tokens AND the cached profile so the
@@ -221,7 +223,10 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
       _seedSearchDefaults(profile);
     } catch (e) {
       state = state.copyWith(
-          isLoading: false, error: _message(e), clearProfile: true);
+        isLoading: false,
+        error: _message(e),
+        clearProfile: true,
+      );
     }
   }
 
@@ -235,7 +240,8 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
       final dt = DateTime.tryParse(geb);
       if (dt != null) {
         final now = DateTime.now();
-        age = now.year - dt.year -
+        age = now.year -
+            dt.year -
             ((now.month < dt.month ||
                     (now.month == dt.month && now.day < dt.day))
                 ? 1
@@ -250,11 +256,12 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
       // the user saw "BahnCard nicht ladbar · 429".
       final cards = await ref.read(bahncardsProvider.future);
       if (cards.isNotEmpty) card = _toBahnCardType(cards.first);
-    } catch (_) {/* no cards / network — leave settings untouched */}
-    ref.read(settingsProvider.notifier).applyFromDbAccount(
-          age: age,
-          card: card,
-        );
+    } catch (_) {
+      /* no cards / network — leave settings untouched */
+    }
+    ref
+        .read(settingsProvider.notifier)
+        .applyFromDbAccount(age: age, card: card);
     // Pull the DB account's Bahnhof-Favoriten into the local library so
     // they show up in the search Schnellauswahl without re-entering them.
     try {
@@ -264,14 +271,15 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
         final stations = favs.map(_stationFromFavorite).toList();
         ref.read(libraryProvider.notifier).mergeServerFavorites(stations);
       }
-    } catch (_) {/* offline / endpoint changed — local library untouched */}
+    } catch (_) {
+      /* offline / endpoint changed — local library untouched */
+    }
   }
 
   Station _stationFromFavorite(DbStationFavorite f) => Station(
         id: f.evaNr ?? '',
         name: f.displayName,
-        locationId:
-            f.locationId.contains('@') ? f.locationId : null,
+        locationId: f.locationId.contains('@') ? f.locationId : null,
         latitude: f.lat,
         longitude: f.lng,
       );
@@ -308,6 +316,7 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
     await _DbTicketCache.clearAll();
     await _ProfileCache.clear();
     await _BahnBonusCache.clear();
+    await _BahnBonusCo2Cache.clear();
     // The key→rkUuid map points at the previous holder's saved trips.
     await ref.read(dbSavedReiseIdsProvider.notifier).clear();
   }
@@ -327,6 +336,7 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
 
   void _invalidateData() {
     ref.invalidate(bahnbonusProvider);
+    ref.invalidate(bahnbonusCo2Provider);
     ref.invalidate(bahncardsProvider);
     ref.invalidate(reisenuebersichtProvider);
     ref.invalidate(dbStationFavoritesProvider);
@@ -341,8 +351,9 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
   }
 }
 
-final dbAuthProvider =
-    NotifierProvider<DbAuthNotifier, DbAuthState>(DbAuthNotifier.new);
+final dbAuthProvider = NotifierProvider<DbAuthNotifier, DbAuthState>(
+  DbAuthNotifier.new,
+);
 
 /// On-disk BahnBonus cache. Points don't change while you're standing on a
 /// platform, so the last good value stays true enough to show — and showing
@@ -366,7 +377,9 @@ class _BahnBonusCache {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kKey, json.encode(b.toJson()));
-    } catch (_) {/* best effort */}
+    } catch (_) {
+      /* best effort */
+    }
   }
 
   static Future<void> clear() async {
@@ -423,7 +436,10 @@ class BahnbonusController extends AsyncNotifier<DbBahnBonus?> {
         final fresh = await _fetchAndPersist();
         if (fresh != null) state = AsyncData(fresh);
       } catch (e) {
-        AppLog.log('bahnbonus background refresh failed: $e', tag: 'db-account');
+        AppLog.log(
+          'bahnbonus background refresh failed: $e',
+          tag: 'db-account',
+        );
       }
     });
   }
@@ -431,7 +447,105 @@ class BahnbonusController extends AsyncNotifier<DbBahnBonus?> {
 
 final bahnbonusProvider =
     AsyncNotifierProvider<BahnbonusController, DbBahnBonus?>(
-        BahnbonusController.new);
+  BahnbonusController.new,
+);
+
+/// Persisted last-good official CO₂ balance. Like points and BahnCards, this is
+/// personal account data and is wiped on logout.
+class _BahnBonusCo2Cache {
+  static const _kKey = 'db_bahnbonus_co2_v1';
+
+  static Future<DbBahnBonusCo2Balance?> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kKey);
+      if (raw == null || raw.isEmpty) return null;
+      final data = json.decode(raw);
+      if (data is Map<String, dynamic>) {
+        return DbBahnBonusCo2Balance.fromJson(data);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<void> save(DbBahnBonusCo2Balance balance) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kKey, json.encode(balance.toJson()));
+    } catch (_) {
+      /* best effort */
+    }
+  }
+
+  static Future<void> clear() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kKey);
+    } catch (_) {}
+  }
+}
+
+/// Official current-year CO₂ balance from BahnBonus, with the same
+/// stale-while-revalidate behaviour as the points card.
+class BahnbonusCo2Controller extends AsyncNotifier<DbBahnBonusCo2Balance?> {
+  Future<DbBahnBonusCo2Balance?> _currentCached() async {
+    final cached = await _BahnBonusCo2Cache.load();
+    return cached?.year == DateTime.now().year ? cached : null;
+  }
+
+  @override
+  Future<DbBahnBonusCo2Balance?> build() async {
+    final auth = ref.watch(dbAuthProvider);
+    if (!auth.isLoggedIn) return null;
+    final cached = await _currentCached();
+    if (cached != null) {
+      _refreshInBackground();
+      return cached;
+    }
+    return _fetchAndPersist();
+  }
+
+  Future<void> refresh() async {
+    if (!ref.read(dbAuthProvider).isLoggedIn) {
+      state = const AsyncData(null);
+      return;
+    }
+    try {
+      final fresh = await _fetchAndPersist();
+      state = AsyncData(fresh);
+    } catch (e, st) {
+      final cached = await _currentCached();
+      state = cached != null ? AsyncData(cached) : AsyncError(e, st);
+    }
+  }
+
+  Future<DbBahnBonusCo2Balance?> _fetchAndPersist() async {
+    final fresh =
+        await ref.read(dbAccountServiceProvider).bahnbonusCo2Balance();
+    if (fresh == null) return _currentCached();
+    await _BahnBonusCo2Cache.save(fresh);
+    return fresh;
+  }
+
+  void _refreshInBackground() {
+    Future.microtask(() async {
+      try {
+        final fresh = await _fetchAndPersist();
+        if (fresh != null) state = AsyncData(fresh);
+      } catch (e) {
+        AppLog.log(
+          'CO2 balance background refresh failed: $e',
+          tag: 'db-account',
+        );
+      }
+    });
+  }
+}
+
+final bahnbonusCo2Provider =
+    AsyncNotifierProvider<BahnbonusCo2Controller, DbBahnBonusCo2Balance?>(
+  BahnbonusCo2Controller.new,
+);
 
 /// The user's BahnCards — stale-while-revalidate. On startup the on-disk
 /// cache returns instantly so the BahnCard / Kontrollansicht works offline;
@@ -509,8 +623,10 @@ class BahncardsController extends AsyncNotifier<List<DbBahnCard>> {
         final fresh = await _fetchAndPersist(trigger: trigger);
         state = AsyncData(fresh);
       } catch (e) {
-        AppLog.log('bahncards background refresh failed: $e',
-            tag: 'db-account');
+        AppLog.log(
+          'bahncards background refresh failed: $e',
+          tag: 'db-account',
+        );
       }
     });
   }
@@ -518,7 +634,8 @@ class BahncardsController extends AsyncNotifier<List<DbBahnCard>> {
 
 final bahncardsProvider =
     AsyncNotifierProvider<BahncardsController, List<DbBahnCard>>(
-        BahncardsController.new);
+  BahncardsController.new,
+);
 
 /// On-disk cache for the full Meine-Reisen overview. Restores the Reisen tab
 /// instantly across cold starts + completely offline; a background refresh
@@ -535,7 +652,9 @@ class _ReisenCache {
       if (data is Map<String, dynamic>) {
         return DbAccountService.parseReisenuebersicht(data);
       }
-    } catch (_) {/* fall through */}
+    } catch (_) {
+      /* fall through */
+    }
     return null;
   }
 
@@ -543,7 +662,9 @@ class _ReisenCache {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kKey, json.encode(data));
-    } catch (_) {/* best effort */}
+    } catch (_) {
+      /* best effort */
+    }
   }
 
   static Future<void> clear() async {
@@ -604,15 +725,14 @@ class ReisenUebersichtController extends AsyncNotifier<DbReisenUebersicht> {
       try {
         state = AsyncData(await _fetchAndPersist());
       } catch (e) {
-        AppLog.log('reisenuebersicht bg refresh failed: $e',
-            tag: 'db-account');
+        AppLog.log('reisenuebersicht bg refresh failed: $e', tag: 'db-account');
       }
     });
   }
 }
 
-final reisenuebersichtProvider = AsyncNotifierProvider<
-    ReisenUebersichtController, DbReisenUebersicht>(
+final reisenuebersichtProvider =
+    AsyncNotifierProvider<ReisenUebersichtController, DbReisenUebersicht>(
   ReisenUebersichtController.new,
 );
 
@@ -687,40 +807,49 @@ final ticketTripsProvider = FutureProvider<List<DbTicketTrip>>((ref) async {
       try {
         final parsed = vendo.parseConnection(t.verbindungJson!);
         if (parsed.legs.isNotEmpty) j = parsed;
-      } catch (_) {/* keep the ticket, just without a trip */}
+      } catch (_) {
+        /* keep the ticket, just without a trip */
+      }
     }
     return DbTicketTrip(index: i, ticketKey: key, ticket: t, journey: j);
   }
 
-  final trips = (await Future.wait(indices.map(resolve)))
+  final trips = (await Future.wait(
+    indices.map(resolve),
+  ))
       .whereType<DbTicketTrip>()
       .toList();
   // Upcoming first (soonest departure), then past (most recent first) — same
   // order the local saved trips use.
-  int? depMs(DbTicketTrip t) =>
-      (t.journey?.plannedDeparture ?? t.journey?.departure ?? t.ticket?.gueltigAb)
-          ?.millisecondsSinceEpoch;
+  int? depMs(DbTicketTrip t) => (t.journey?.plannedDeparture ??
+          t.journey?.departure ??
+          t.ticket?.gueltigAb)
+      ?.millisecondsSinceEpoch;
   final upcoming = trips.where((t) => !t.isPast).toList()
     ..sort((a, b) => (depMs(a) ?? 0).compareTo(depMs(b) ?? 0));
   final past = trips.where((t) => t.isPast).toList()
-    ..sort((a, b) => (b.endTime ?? DateTime(0)).compareTo(a.endTime ?? DateTime(0)));
+    ..sort(
+      (a, b) => (b.endTime ?? DateTime(0)).compareTo(a.endTime ?? DateTime(0)),
+    );
   return [...upcoming, ...past];
 });
 
 /// Tracked-but-unpaid trips (reiseIndizes, "Reise merken"), newest start first.
-final savedReisenProvider =
-    FutureProvider<List<DbSavedReiseIndex>>((ref) async {
+final savedReisenProvider = FutureProvider<List<DbSavedReiseIndex>>((
+  ref,
+) async {
   final uebersicht = await ref.watch(reisenuebersichtProvider.future);
   return uebersicht.saved;
 });
 
 /// The Journey parsed from one saved DB Reise (`/mob/reisen/{rkUuid}`), cached
 /// per rkUuid. Feeds the Reisen tile's JourneyCard.
-final savedReiseJourneyProvider =
-    FutureProvider.family<Journey?, String>((ref, rkUuid) async {
-  final wrap = await ref
-      .read(dbAccountServiceProvider)
-      .savedReiseVerbindung(rkUuid);
+final savedReiseJourneyProvider = FutureProvider.family<Journey?, String>((
+  ref,
+  rkUuid,
+) async {
+  final wrap =
+      await ref.read(dbAccountServiceProvider).savedReiseVerbindung(rkUuid);
   if (wrap == null) return null;
   try {
     final journey = ref.read(vendoServiceProvider).parseConnection(wrap);
@@ -739,8 +868,9 @@ final savedReiseJourneyProvider =
 });
 
 /// Server-side Bahnhof favorites — read-only sync on login.
-final dbStationFavoritesProvider =
-    FutureProvider<List<DbStationFavorite>>((ref) async {
+final dbStationFavoritesProvider = FutureProvider<List<DbStationFavorite>>((
+  ref,
+) async {
   final auth = ref.watch(dbAuthProvider);
   if (!auth.isLoggedIn) return const [];
   return ref.read(dbAccountServiceProvider).stationFavorites();
@@ -774,8 +904,9 @@ class _DbTicketCache {
   static Future<void> clearAll() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final hits =
-          prefs.getKeys().where((k) => k.startsWith('db_ticket_raw_v1:'));
+      final hits = prefs.getKeys().where(
+            (k) => k.startsWith('db_ticket_raw_v1:'),
+          );
       for (final k in hits) {
         await prefs.remove(k);
       }
@@ -801,8 +932,10 @@ Future<bool> isTicketCachedOffline(String ticketKey) async =>
 ///
 /// Implemented as a FutureProvider.family because Riverpod 3 doesn't ship
 /// `FamilyAsyncNotifier` — the cache-first logic is just the provider body.
-final ticketProvider =
-    FutureProvider.family<DbTicket, String>((ref, key) async {
+final ticketProvider = FutureProvider.family<DbTicket, String>((
+  ref,
+  key,
+) async {
   final cached = await _DbTicketCache.load(key);
   if (cached != null) {
     // Best-effort background revalidation so future opens reflect any
@@ -825,9 +958,8 @@ final ticketProvider =
     return DbTicket.fromJson(cached);
   }
   final parts = key.split('/');
-  final fresh = await ref
-      .read(dbAccountServiceProvider)
-      .ticketJson(parts[0], parts[1]);
+  final fresh =
+      await ref.read(dbAccountServiceProvider).ticketJson(parts[0], parts[1]);
   if (fresh == null) {
     final retry = await _DbTicketCache.load(key);
     if (retry != null) return DbTicket.fromJson(retry);
@@ -872,7 +1004,9 @@ class DbSavedReiseIds extends Notifier<Map<String, String>> {
         // Don't clobber anything registered while the read was in flight.
         state = {...restored, ...state};
       }
-    } catch (_) {/* best effort */}
+    } catch (_) {
+      /* best effort */
+    }
   }
 
   Future<void> _persist() async {
@@ -880,7 +1014,9 @@ class DbSavedReiseIds extends Notifier<Map<String, String>> {
       await _restored;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kKey, json.encode(state));
-    } catch (_) {/* best effort */}
+    } catch (_) {
+      /* best effort */
+    }
   }
 
   void put(String key, String rkUuid) {
@@ -924,5 +1060,4 @@ class DbSavedReiseIds extends Notifier<Map<String, String>> {
 }
 
 final dbSavedReiseIdsProvider =
-    NotifierProvider<DbSavedReiseIds, Map<String, String>>(
-        DbSavedReiseIds.new);
+    NotifierProvider<DbSavedReiseIds, Map<String, String>>(DbSavedReiseIds.new);
