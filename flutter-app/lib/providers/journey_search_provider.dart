@@ -70,6 +70,12 @@ class JourneySearchState {
   /// part of the search the rider steers (#19).
   final SearchOptions options;
 
+  /// Bumped once per [JourneySearchNotifier.search] that lands results.
+  /// Deliberately NOT touched by "Früher"/"Später", which also replace
+  /// [result] — the search form folds itself away on a fresh search, and a
+  /// form the rider just reopened must survive them paging the list.
+  final int resultSerial;
+
   JourneySearchState({
     this.from,
     this.to,
@@ -82,6 +88,7 @@ class JourneySearchState {
     this.onlyDeutschlandTicket = false,
     this.transferProfileRelaxed = false,
     this.options = const SearchOptions(),
+    this.resultSerial = 0,
     Set<ProductCategory>? products,
   }) : products = products ?? ProductCategory.values.toSet();
 
@@ -103,6 +110,7 @@ class JourneySearchState {
     bool? onlyDeutschlandTicket,
     bool? transferProfileRelaxed,
     SearchOptions? options,
+    int? resultSerial,
     bool clearDateTime = false,
   }) {
     return JourneySearchState(
@@ -120,6 +128,7 @@ class JourneySearchState {
       transferProfileRelaxed:
           transferProfileRelaxed ?? this.transferProfileRelaxed,
       options: options ?? this.options,
+      resultSerial: resultSerial ?? this.resultSerial,
     );
   }
 
@@ -299,7 +308,10 @@ class JourneySearchNotifier extends Notifier<JourneySearchState> {
       AppLog.log('vendo result: ${result.journeys.length} journeys'
           '${relaxed ? " (profile relaxed)" : ""}', tag: 'journey');
       state = state.copyWith(
-          result: result, isLoading: false, transferProfileRelaxed: relaxed);
+          result: result,
+          isLoading: false,
+          transferProfileRelaxed: relaxed,
+          resultSerial: state.resultSerial + 1);
     } catch (e) {
       AppLog.log('search FAILED: $e', tag: 'journey');
       state = state.copyWith(error: 'Fehler: $e', isLoading: false);
