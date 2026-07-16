@@ -662,6 +662,104 @@ def check_vendo_split_scope() -> str:
             "rider's destination)")
 
 
+def check_vendo_earlier_alight() -> str:
+    """Rescue option B (#26): get off earlier and go another way.
+
+    The feature rests on two properties of the journey search, and both fail
+    silently rather than loudly if DB changes them — the app would just stop
+    offering rescues, or worse, offer ones timed off the timetable while the
+    train is an hour down.
+
+      * a leg's intermediate `halte` carry their own arrival, with the realtime
+        one in `ezAnkunftsZeitpunkt`/`ezAnkunftsDatum` where it exists. The app
+        picks candidate exits by LIVE arrival (utils/earlier_alight.dart —
+        `AlightStop.arrival`); a plan-only halt list makes that impossible.
+      * an intermediate halt's `ort` is usable as a search origin: the whole
+        fan-out is one search per earlier stop, keyed on the halt's own
+        locationId/evaNr. If those stop round-tripping, every candidate search
+        returns nothing and option B quietly disappears.
+
+    Kiel → Berlin, whose ICE/IC legs have plenty of intermediate stops.
+    """
+    media = "application/x.db.vendo.mob.verbindungssuche.v9+json"
+    when = (datetime.now().astimezone() + timedelta(days=1)).replace(
+        hour=9, minute=0, second=0, microsecond=0)
+
+    def search(from_loc: str, to_loc: str, at) -> list:
+        body = {
+            "autonomeReservierung": False,
+            "einstiegsTypList": ["STANDARD"],
+            "fahrverguenstigungen": {"deutschlandTicketVorhanden": False,
+                                     "nurDeutschlandTicketVerbindungen": False},
+            "klasse": "KLASSE_2",
+            "reiseHin": {"wunsch": {
+                "abgangsLocationId": from_loc,
+                "alternativeHalteBerechnung": True,
+                "verkehrsmittel": ["ALL"],
+                "zeitWunsch": {"reiseDatum": at.isoformat(),
+                               "zeitPunktArt": "ABFAHRT"},
+                "zielLocationId": to_loc,
+            }},
+            "reisendenProfil": {"reisende": [
+                {"ermaessigungen": ["KEINE_ERMAESSIGUNG KLASSENLOS"],
+                 "reisendenTyp": "ERWACHSENER"}]},
+            "reservierungsKontingenteVorhanden": False,
+        }
+        r = _post("https://app.services-bahn.de/mob/angebote/fahrplan",
+                  headers=_vendo_headers(media), data=json.dumps(body),
+                  timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.json().get("verbindungen", [])
+
+    conns = search(KIEL_LOC, BERLIN_LOC, when)
+    if not conns:
+        raise CheckError("no Kiel → Berlin connections")
+
+    # A train leg with intermediate stops = one you could get off early from.
+    for c in conns:
+        for leg in c["verbindung"]["verbindungsAbschnitte"]:
+            if leg.get("typ") == "FUSSWEG":
+                continue
+            if len(leg.get("halte") or []) >= 3:
+                break
+        else:
+            continue
+        break
+    else:
+        raise CheckError("no train leg with intermediate halte — the app has "
+                         "no earlier stop to offer as an exit")
+
+    halte = leg["halte"]
+    # Intermediate stops only: the first has no arrival (you board there) and
+    # the last is the planned change, which is never an "earlier" exit.
+    inner = halte[1:-1]
+    timed = [h for h in inner
+             if h.get("ankunftsZeitpunkt") or h.get("ankunftsDatum")]
+    if not timed:
+        raise CheckError(
+            "no intermediate halt carries an arrival time — picking an exit by "
+            "live arrival is impossible")
+    ez = sum(1 for h in inner
+             if h.get("ezAnkunftsZeitpunkt") or h.get("ezAnkunftsDatum"))
+
+    # The exit must be usable as the origin of the next search.
+    exit_halt = timed[-1]
+    ort = exit_halt.get("ort") or {}
+    loc_id = ort.get("locationId")
+    if not loc_id:
+        raise CheckError(f"halt {ort.get('name')} has no locationId — it can't "
+                         "be searched from")
+    onward = search(loc_id, BERLIN_LOC,
+                    datetime.now().astimezone() + timedelta(days=1, hours=11))
+    if not onward:
+        raise CheckError(f"no onward connections from the intermediate halt "
+                         f"{ort.get('name')} — option B would find nothing")
+
+    return (f"{leg.get('mitteltext')}: {len(inner)} intermediate halte "
+            f"({len(timed)} with arrival, {ez} with realtime); "
+            f"{ort.get('name')} → Berlin re-searchable ({len(onward)} conns)")
+
+
 def check_vendo_verkehrsmittel() -> str:
     """The `verkehrsmittel` filter must be honoured server-side.
 
@@ -2111,6 +2209,7 @@ CHECKS = [
     ("mob endpoint surface reachable (67)", check_mob_surface, True),
     ("vendo journey + prices (v9)", check_vendo_journey, False),
     ("vendo split scope: leg vs zuglauf (#22)", check_vendo_split_scope, False),
+    ("vendo earlier alight (#26)", check_vendo_earlier_alight, False),
     ("vendo verkehrsmittel filter (#18)", check_vendo_verkehrsmittel, False),
     ("vendo search options (#19)", check_vendo_search_options, False),
     ("vendo transfer info (#20.6)", check_vendo_transfer_info, False),

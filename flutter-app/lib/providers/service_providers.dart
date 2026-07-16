@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/hafas_service.dart';
 import '../services/coach_sequence_service.dart';
+import '../services/earlier_alight_service.dart';
 import '../services/db_api_service.dart';
 import '../services/location_service.dart';
 import '../services/station_map_service.dart';
@@ -31,6 +32,11 @@ final locationServiceProvider =
     Provider<LocationService>((ref) => LocationService());
 
 final vendoServiceProvider = Provider<VendoService>((ref) => VendoService());
+
+/// App-lifetime on purpose: it carries the search cache that keeps the
+/// rescue-option-B fan-out off the rate-limited /mob backend (#26).
+final earlierAlightServiceProvider = Provider<EarlierAlightService>(
+    (ref) => EarlierAlightService(ref.watch(vendoServiceProvider)));
 
 final traewellingServiceProvider =
     Provider<TraewellingService>((ref) => TraewellingService());
