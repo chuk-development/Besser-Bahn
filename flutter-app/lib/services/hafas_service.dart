@@ -6,6 +6,7 @@ import '../core/polyline_cache.dart';
 import '../models/station.dart';
 import '../models/departure.dart';
 import '../models/trip.dart';
+import 'offline_store.dart';
 import 'vendo_service.dart';
 
 /// Station search, departure boards and trip detail. Backed by the DB Vendo
@@ -96,12 +97,43 @@ class HafasService {
       AppLog.log(
           'Vendo zuglauf failed ${sw.elapsedMilliseconds}ms ($e) → trying HAFAS',
           tag: 'trip');
-      final trip = await _getTripHafas(tripId);
-      AppLog.log('getTrip via HAFAS ok ${sw.elapsedMilliseconds}ms', tag: 'trip');
-      if (trip.polyline != null && trip.polyline!.isNotEmpty) {
-        await PolylineCache.instance.put(trip.routeKey, trip.polyline!);
+      try {
+        final trip = await _getTripHafas(tripId);
+        AppLog.log('getTrip via HAFAS ok ${sw.elapsedMilliseconds}ms',
+            tag: 'trip');
+        if (trip.polyline != null && trip.polyline!.isNotEmpty) {
+          await PolylineCache.instance.put(trip.routeKey, trip.polyline!);
+        }
+        return trip;
+      } catch (e2) {
+        // Both live sources are gone. If the rider packed this journey for
+        // offline use, replay the run we stored instead of failing — the screen
+        // says how old it is (#29). Last resort by design: a stored run has no
+        // realtime in it, so it must never pre-empt a reachable backend.
+        final offline = await _offlineTrip(tripId);
+        if (offline != null) {
+          AppLog.log('getTrip served from offline package', tag: 'offline');
+          return offline;
+        }
+        rethrow;
       }
-      return trip;
+    }
+  }
+
+  /// The stored `/mob/zuglauf` payload for [tripId], re-parsed. Null when no
+  /// package carries this leg.
+  Future<Trip?> _offlineTrip(String tripId) async {
+    try {
+      final raw = await OfflineStore.instance.readPlan(tripId);
+      if (raw == null) return null;
+      final trip = _vendo.parseTrip(raw, tripId);
+      if (trip.polyline != null && trip.polyline!.isNotEmpty) return trip;
+      final cached = await PolylineCache.instance.get(trip.routeKey);
+      return (cached != null && cached.isNotEmpty)
+          ? trip.copyWith(polyline: cached)
+          : trip;
+    } catch (_) {
+      return null;
     }
   }
 

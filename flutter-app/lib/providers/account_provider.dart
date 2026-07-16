@@ -783,6 +783,16 @@ class _DbTicketCache {
   }
 }
 
+/// Whether the raw payload for [ticketKey] (`auftragsnummer/kundenwunschId`) is
+/// already on disk — barcode included, since the PNG rides along inside the
+/// cached ticket HTML.
+///
+/// Exposed for the offline package (#29), which reports the ticket rather than
+/// re-downloading it: tickets are cached by this layer the first time they're
+/// opened, and a package should say so instead of duplicating them.
+Future<bool> isTicketCachedOffline(String ticketKey) async =>
+    await _DbTicketCache.load(ticketKey) != null;
+
 /// A single booked ticket — stale-while-revalidate per
 /// `auftragsnummer/kundenwunschId`. Cold start returns the cached parse
 /// instantly so the Reisen tile renders as a real JourneyCard from the first

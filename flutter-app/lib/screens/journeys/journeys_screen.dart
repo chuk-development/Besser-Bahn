@@ -9,9 +9,11 @@ import '../../models/db_ticket.dart';
 import '../../models/travel_stats.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/library_provider.dart';
+import '../../providers/offline_package_provider.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/travel_stats_provider.dart';
 import '../../widgets/app_menu_button.dart';
+import '../../widgets/offline_package_bar.dart';
 import '../../widgets/trip_progress_card.dart';
 import '../connection_search/widgets/journey_card.dart';
 
@@ -240,6 +242,8 @@ class JourneysScreen extends ConsumerWidget {
         // bookmark, and re-saving it then created duplicates. Delete both
         // sides — that half-deleted state is what started #15.
         _deleteDbReise(ref, saved.key);
+        // The trip is gone, so its offline package is just orphaned bytes.
+        ref.read(offlinePackagesProvider.notifier).delete(saved.key);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
               duration: Duration(seconds: 2), content: Text('Reise entfernt')),
@@ -252,6 +256,13 @@ class JourneysScreen extends ConsumerWidget {
           children: [
             _dateLabel(context, saved),
             JourneyCard(journey: saved.journey),
+            // Only for trips still ahead: packing a trip you've already taken
+            // is pure noise (and would auto-refresh nothing).
+            if (!past)
+              OfflinePackageBar(
+                journey: saved.journey,
+                journeyKey: saved.key,
+              ),
           ],
         ),
       ),
@@ -377,15 +388,27 @@ class _SavedReiseTile extends ConsumerWidget {
           // Both sides, so this can't recreate the half-deleted state.
           ref.read(libraryProvider.notifier).removeJourney(key);
           _deleteDbReise(ref, key);
+          ref.read(offlinePackagesProvider.notifier).delete(key);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
                 duration: Duration(seconds: 2),
                 content: Text('Reise entfernt')),
           );
         },
-        child: JourneyCard(
-          journey: j,
-          onTap: () => context.push('/connection', extra: j),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            JourneyCard(
+              journey: j,
+              onTap: () => context.push('/connection', extra: j),
+            ),
+            // Same journey key derivation the delete path above uses, so a
+            // package always belongs to exactly one trip however it was saved.
+            OfflinePackageBar(
+              journey: j,
+              journeyKey: SavedJourney(journey: j, savedAtMs: 0).key,
+            ),
+          ],
         ),
       );
     }
@@ -464,7 +487,20 @@ class _OfficialTicketTile extends ConsumerWidget {
         ),
       );
     }
-    if (!past) return tile;
+    if (!past) {
+      // A booked upcoming trip is the strongest case for an offline package —
+      // and the only one where the ticket part can actually report a ticket.
+      final j = trip.journey;
+      final key = trip.journeyKey;
+      if (j == null || key == null) return tile;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          tile,
+          OfflinePackageBar(journey: j, journeyKey: key),
+        ],
+      );
+    }
     final dep = trip.journey?.plannedDeparture ??
         trip.journey?.departure ??
         t?.gueltigAb;

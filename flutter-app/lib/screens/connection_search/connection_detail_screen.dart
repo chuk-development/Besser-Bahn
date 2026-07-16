@@ -29,6 +29,7 @@ import '../../utils/earlier_alight.dart';
 import '../../utils/split_stops.dart';
 import '../../widgets/departure_card.dart';
 import '../../widgets/fahrgastrechte_card.dart';
+import '../../widgets/offline_package_bar.dart';
 import '../../widgets/prediction_badge.dart';
 import '../../widgets/product_badge.dart';
 import '../../widgets/trip_progress_inline.dart';
@@ -356,6 +357,13 @@ class _ConnectionDetailScreenState
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
           _summary(context),
+          // Offline, the legs below are replayed from this journey's package
+          // (see the fallbacks in HafasService/CoachSequenceService/
+          // StationMapService). Say how old they are — cached data presented
+          // without its age is exactly what makes people distrust it (#29).
+          OfflineDataNotice(
+            journeyKey: SavedJourney(journey: journey, savedAtMs: 0).key,
+          ),
           if (journey.hasCancelledLeg)
             const _JourneyCancelBanner(partial: false)
           else if (journey.hasPartialCancellation)

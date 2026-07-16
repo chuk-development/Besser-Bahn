@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/constants.dart';
+import '../../core/offline_package.dart';
 import '../../models/split_ticket.dart';
 import '../../models/transfer_profile.dart';
 import '../../models/traewelling_models.dart';
+import '../../providers/offline_package_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/traewelling_provider.dart';
 import '../../services/notification_service.dart';
@@ -263,6 +265,10 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
 
+          _sectionHeader(context, 'Offline'),
+
+          const _OfflineStorageCard(),
+
           _sectionHeader(context, 'Erweitert'),
 
           Card(
@@ -433,5 +439,70 @@ class SettingsScreen extends ConsumerWidget {
             ),
       ),
     );
+  }
+}
+
+/// What the offline travel packages (#29) cost in storage, and the way out.
+///
+/// Packages are deleted per trip from the Reisen list, but a package outlives
+/// nothing else that shows it — a trip can be swiped away, the app reinstalled,
+/// a download half-finished. Without one place that names the total and can
+/// clear it, "downloaded a few trips" quietly becomes tens of megabytes nobody
+/// can find.
+class _OfflineStorageCard extends ConsumerWidget {
+  const _OfflineStorageCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final packages = ref.watch(offlinePackagesProvider);
+    final bytes = ref.watch(offlinePackagesSizeProvider);
+    final count = packages.length;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.offline_pin_outlined),
+            title: const Text('Offline-Reisepakete'),
+            subtitle: Text(count == 0
+                ? 'Nichts gespeichert. In „Reisen" pro Reise speichern.'
+                : '$count ${count == 1 ? 'Reise' : 'Reisen'} · '
+                    '${offlineSizeLabel(bytes)}'),
+            trailing: count == 0
+                ? null
+                : TextButton(
+                    onPressed: () => _confirmClear(context, ref, count),
+                    child: const Text('Löschen'),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmClear(
+      BuildContext context, WidgetRef ref, int count) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Alle Offline-Pakete löschen?'),
+        content: Text('$count gespeicherte ${count == 1 ? 'Reise' : 'Reisen'} '
+            'werden entfernt. Die Reisen selbst bleiben — nur die offline '
+            'verfügbaren Daten sind dann weg.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Löschen'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await ref.read(offlinePackagesProvider.notifier).deleteAll();
   }
 }

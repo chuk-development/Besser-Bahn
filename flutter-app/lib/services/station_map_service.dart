@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import '../core/app_log.dart';
 import '../core/constants.dart';
 import '../models/station_map.dart';
+import 'offline_store.dart';
 
 /// Scrapes the live indoor-map dataset for a station from bahnhof.de.
 ///
@@ -159,6 +160,35 @@ class StationMapService {
   Future<StationMap> fetchBySlug(String slug, {bool background = false}) async {
     final hit = _cache[slug];
     if (hit != null) return hit;
+    try {
+      return (await fetchRawBySlug(slug, background: background)).map;
+    } catch (e) {
+      // Offline (or bahnhof.de is unreachable) — replay an offline package's
+      // copy if the rider downloaded one, rather than showing a bare error at
+      // the exact moment they're standing on the platform looking for their
+      // coach. `_noMap` verdicts are permanent and intentionally not overridden.
+      final body = await OfflineStore.instance.readStationMap(slug);
+      if (body != null) {
+        try {
+          final map = parsePersistedBody(slug, body);
+          AppLog.log('station map "$slug" served from offline package',
+              tag: 'offline');
+          return map;
+        } catch (_) {/* unusable payload → surface the original failure */}
+      }
+      rethrow;
+    }
+  }
+
+  /// Fetch a station map AND hand back the exact body it was parsed from, so the
+  /// offline package (#29) can persist those bytes and replay them via
+  /// [parsePersistedBody] with no network. [StationMap] has no `toJson`, so
+  /// storing the scraped body is the only way to keep a station map offline
+  /// without duplicating the parser's model as a serialisation.
+  ///
+  /// Always hits the network — the session cache holds parsed maps, not bodies.
+  Future<({String body, StationMap map})> fetchRawBySlug(String slug,
+      {bool background = false}) async {
     if (_noMap.contains(slug)) {
       // Already known to have no map — fail instantly, no network.
       throw StationMapException('Bahnhof "$slug" hat keine Karte.',
@@ -195,7 +225,7 @@ class StationMapService {
         _logParsed(slug, 'rsc', map, sw.elapsedMilliseconds, res.bodyBytes.length);
       }
       _cache[slug] = map;
-      return map;
+      return (body: res.body, map: map);
     } on StationMapException {
       // RSC stream lacked the poi data (unexpected server shape) — fall back to
       // the full HTML document and reassemble the __next_f chunks the old way,
@@ -221,7 +251,7 @@ class StationMapService {
               slug, 'html', map, sw.elapsedMilliseconds, html.bodyBytes.length);
         }
         _cache[slug] = map;
-        return map;
+        return (body: html.body, map: map);
       } on StationMapException {
         // No poi in the HTML either → this station genuinely has no map data.
         _noMap.add(slug);
@@ -244,6 +274,19 @@ class StationMapService {
         '${map.platforms.length} platforms, $cubes sector-cubes, '
         '${map.platformAnchors.length} anchors, ${map.levels.length} levels',
         tag: 'map');
+  }
+
+  /// Replay a body persisted by [fetchRawBySlug] — the offline path. Warms the
+  /// session cache so everything downstream (`cachedByName`, `fetchByStationName`)
+  /// serves it exactly like a live fetch.
+  ///
+  /// Runs the parse inline rather than via `compute`: an offline replay happens
+  /// once per station while a screen is already waiting, and spawning an isolate
+  /// per stop costs more than the parse itself.
+  StationMap parsePersistedBody(String slug, String body) {
+    final map = _parseBody(slug, body);
+    _cache[slug] = map;
+    return map;
   }
 
   /// Resolve a DB station name to a bahnhof.de slug.

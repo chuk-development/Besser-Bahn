@@ -2257,6 +2257,79 @@ def check_basemap_tiles() -> str:
     return f"OpenFreeMap Positron ok (vector tiles: {tiles[0].split('/data/')[-1]})"
 
 
+def check_basemap_offline_bundle() -> str:
+    """The offline travel package (#29) rebuilds the basemap Style from a cached
+    copy of the *style bundle*, because vector_map_tiles' StyleReader re-fetches
+    style JSON + source TileJSON + sprite JSON + sprite PNG on every cold start
+    and caches none of them — so without all four the map is blank offline no
+    matter how many tiles were prefetched.
+
+    Covers what core/basemap_style_cache.dart + TileCache.prefetchVectorTiles
+    actually do, which the plain basemap check above does not:
+      * every layer draws from a *vector* source (we only wire vector sources; a
+        raster-sourced layer would trip VectorTileLayer's own assert),
+      * the sprite bundle serves as JSON + PNG (icons vanish silently without it),
+      * a real .pbf resolves through the {z}/{x}/{y} template the prefetcher
+        builds by hand (it deliberately bypasses NetworkVectorTileProvider to
+        reuse the app's connection-capped client).
+    Soft: same reasoning as the basemap check — losing this degrades the map, it
+    doesn't break travel data.
+    """
+    hdr = {"User-Agent": DBNAV_UA}
+    style = _get("https://tiles.openfreemap.org/styles/positron",
+                 headers=hdr, timeout=TIMEOUT)
+    style.raise_for_status()
+    s = style.json()
+
+    sources = s.get("sources", {})
+    vector_names = {n for n, v in sources.items() if v.get("type") == "vector"}
+    layer_sources = {lyr["source"] for lyr in s.get("layers", []) if lyr.get("source")}
+    non_vector = layer_sources - vector_names
+    if non_vector:
+        raise CheckError(
+            f"positron layers now draw from non-vector source(s) {sorted(non_vector)} — "
+            "basemap_style_cache.dart only wires vector sources")
+
+    sprite = s.get("sprite")
+    if not sprite:
+        raise CheckError("positron style lost its sprite — map icons would vanish offline")
+    sj = _get(f"{sprite}.json", headers=hdr, timeout=TIMEOUT)
+    sj.raise_for_status()
+    icons = sj.json()
+    if not isinstance(icons, dict) or not icons:
+        raise CheckError("sprite index is empty or not a JSON object")
+    sp = _get(f"{sprite}.png", headers=hdr, timeout=TIMEOUT)
+    sp.raise_for_status()
+    if not sp.content.startswith(b"\x89PNG"):
+        raise CheckError("sprite atlas is not a PNG")
+
+    tj = _get(sources["openmaptiles"]["url"], headers=hdr, timeout=TIMEOUT)
+    tj.raise_for_status()
+    tj = tj.json()
+    template = (tj.get("tiles") or [None])[0]
+    if not template:
+        raise CheckError("openmaptiles TileJSON has no tile template")
+    for token in ("{z}", "{x}", "{y}"):
+        if token not in template:
+            raise CheckError(f"tile template lost {token} — prefetchVectorTiles "
+                             "substitutes these by hand")
+    # Berlin Hbf at z12 — the exact tile core/offline_package.dart's
+    # tileForLatLng test pins, so the two stay in agreement.
+    url = template.replace("{z}", "12").replace("{x}", "2200").replace("{y}", "1343")
+    tile = _get(url, headers=hdr, timeout=TIMEOUT)
+    tile.raise_for_status()
+    if not tile.content:
+        raise CheckError("z12 Berlin vector tile is empty")
+
+    maxzoom = tj.get("maxzoom")
+    if maxzoom is None or int(maxzoom) < 11:
+        raise CheckError(f"openmaptiles maxzoom {maxzoom} < the offline corridor's z11")
+
+    return (f"style bundle ok — {len(layer_sources)} vector source(s), sprite "
+            f"{len(icons)} icons + {len(sp.content) // 1024} KB atlas, z12 Berlin "
+            f"pbf {len(tile.content) // 1024} KB, maxzoom {maxzoom}")
+
+
 def check_traewelling_api() -> str:
     """Träwelling REST host the check-in flow rides on. The endpoints we call
     (station autocomplete, departures, trip, checkin) all require a Bearer token
@@ -2374,6 +2447,7 @@ CHECKS = [
      check_wagenreihung_transfer_sectors, True),
     ("osm platform geometry (overpass)", check_osm_platform_geometry, False),
     ("basemap (OpenFreeMap Positron vector)", check_basemap_tiles, True),
+    ("basemap offline style bundle (#29)", check_basemap_offline_bundle, True),
     ("bahnhof.de station map (karte)", check_bahnhof_map, False),
     ("map bay ↔ departures link", check_bay_departure_link, True),
     ("map Gleis ↔ departures (normalised)", check_gleis_departure_link, False),

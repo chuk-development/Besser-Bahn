@@ -1,6 +1,7 @@
 import '../core/api_client.dart';
 import '../core/constants.dart';
 import '../models/coach_sequence.dart';
+import 'offline_store.dart';
 
 /// Service for the Deutsche Bahn Wagenreihung (coach sequence) API
 class CoachSequenceService {
@@ -26,11 +27,35 @@ class CoachSequenceService {
     required DateTime date,
     required DateTime time,
   }) async {
+    final raw = await getCoachSequenceRaw(
+      category: category,
+      number: number,
+      stationEva: stationEva,
+      date: date,
+      time: time,
+    );
+    return CoachSequence.fromJson(raw);
+  }
+
+  /// The raw vehicle-sequence response, before parsing.
+  ///
+  /// Exists so the offline package (#29) can persist the backend's own JSON and
+  /// replay it through [CoachSequence.fromJson] with no network. [CoachSequence]
+  /// has no `toJson`, and giving it one would mean keeping a second
+  /// serialisation in step with the parser forever — storing the raw payload
+  /// avoids that entirely.
+  Future<Map<String, dynamic>> getCoachSequenceRaw({
+    required String category,
+    required int number,
+    required String stationEva,
+    required DateTime date,
+    required DateTime time,
+  }) async {
     final dateStr =
         '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
     final timeStr = time.toUtc().toIso8601String();
 
-    final result = await _client.get(
+    return await _client.get(
       '$_base/reisebegleitung/wagenreihung/vehicle-sequence',
       queryParams: {
         'administrationId': '80',
@@ -41,7 +66,55 @@ class CoachSequenceService {
         'time': timeStr,
       },
     );
-    return CoachSequence.fromJson(result);
+  }
+
+  /// Normalise a leg's product + train number the way the vehicle-sequence
+  /// endpoint expects, or null when this train has no sequence to fetch
+  /// (S-Bahn/bus/tram, or an unparseable number). Shared so the offline package
+  /// decides "is there a Wagenreihung here at all?" by exactly the same rule the
+  /// live fetch uses — otherwise a package would report a part as missing that
+  /// was never fetchable.
+  static ({String category, int number})? sequenceKeyFor(
+      String category, String trainNumber) {
+    final cat = category.toUpperCase().trim();
+    final number = int.tryParse(trainNumber.trim());
+    if (number == null || !_coachCategories.contains(cat)) return null;
+    return (category: cat, number: number);
+  }
+
+  /// The session/offline cache key for one train at one stop. Single definition
+  /// so the live cache, the offline package and the offline replay can never
+  /// disagree about what identifies a Wagenreihung.
+  static String cacheKeyFor({
+    required String category,
+    required int number,
+    required String stationEva,
+    required DateTime departureTime,
+  }) =>
+      '$category|$number|$stationEva|${departureTime.toUtc().toIso8601String()}';
+
+  /// Seed the session cache from a persisted payload, so an offline package's
+  /// Wagenreihung is served exactly like a freshly fetched one.
+  void seedFromRaw({
+    required String category,
+    required String trainNumber,
+    required String stationEva,
+    required DateTime departureTime,
+    required Map<String, dynamic> raw,
+  }) {
+    final seq = sequenceKeyFor(category, trainNumber);
+    if (seq == null) return;
+    try {
+      _cache[cacheKeyFor(
+        category: seq.category,
+        number: seq.number,
+        stationEva: stationEva,
+        departureTime: departureTime,
+      )] = CoachSequence.fromJson(raw);
+    } catch (_) {
+      // A payload we can't parse is simply not seeded; the caller's package
+      // state already reflects what's actually on disk.
+    }
   }
 
   /// Categories the vehicle-sequence endpoint actually serves. Long-distance
@@ -67,18 +140,22 @@ class CoachSequenceService {
   }) async {
     if (departureTime == null) return null;
 
-    final cat = category.toUpperCase().trim();
-    final number = int.tryParse(trainNumber.trim());
-    if (number == null || !_coachCategories.contains(cat)) return null;
+    final seq = sequenceKeyFor(category, trainNumber);
+    if (seq == null) return null;
 
-    final key = '$cat|$number|$stationEva|${departureTime.toUtc().toIso8601String()}';
+    final key = cacheKeyFor(
+      category: seq.category,
+      number: seq.number,
+      stationEva: stationEva,
+      departureTime: departureTime,
+    );
     final cached = _cache[key];
     if (cached != null) return cached;
 
     try {
       final cs = await getCoachSequence(
-        category: cat,
-        number: number,
+        category: seq.category,
+        number: seq.number,
         stationEva: stationEva,
         date: departureTime,
         time: departureTime,
@@ -86,6 +163,17 @@ class CoachSequenceService {
       _cache[key] = cs;
       return cs;
     } catch (_) {
+      // Network is gone (or DB is refusing) — fall back to an offline package's
+      // copy if the rider downloaded one. Better a Wagenreihung from this
+      // morning than none at all on the platform; the screen states its age.
+      final raw = await OfflineStore.instance.readCoach(key);
+      if (raw != null) {
+        try {
+          final cs = CoachSequence.fromJson(raw);
+          _cache[key] = cs;
+          return cs;
+        } catch (_) {/* unusable payload → same as no data */}
+      }
       return null;
     }
   }
@@ -101,12 +189,14 @@ class CoachSequenceService {
     required DateTime? departureTime,
   }) {
     if (departureTime == null) return null;
-    final cat = category.toUpperCase().trim();
-    final number = int.tryParse(trainNumber.trim());
-    if (number == null || !_coachCategories.contains(cat)) return null;
-    final key =
-        '$cat|$number|$stationEva|${departureTime.toUtc().toIso8601String()}';
-    return _cache[key];
+    final seq = sequenceKeyFor(category, trainNumber);
+    if (seq == null) return null;
+    return _cache[cacheKeyFor(
+      category: seq.category,
+      number: seq.number,
+      stationEva: stationEva,
+      departureTime: departureTime,
+    )];
   }
 
   /// Warm the cache for every stop of one train (fire-and-forget) so opening any

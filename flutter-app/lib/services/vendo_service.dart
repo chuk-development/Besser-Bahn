@@ -666,7 +666,18 @@ class VendoService {
   // track polyline, so the map needs no second request.
   // ==========================================================================
 
-  Future<Trip> getTrip(String zuglaufId) async {
+  Future<Trip> getTrip(String zuglaufId) async =>
+      parseTrip(await getTripRaw(zuglaufId), zuglaufId);
+
+  /// The raw `/mob/zuglauf/{id}` response, before parsing.
+  ///
+  /// Exists so the offline package (#29) can persist the backend's own JSON
+  /// verbatim and replay it through [parseTrip] later — the same
+  /// "store the raw API response, re-parse on read" shape the ticket cache uses.
+  /// Storing raw rather than a serialised [Trip] means a parser improvement
+  /// benefits already-downloaded packages instead of being locked out by a
+  /// stale model snapshot.
+  Future<Map<String, dynamic>> getTripRaw(String zuglaufId) async {
     final url = '$_base/zuglauf/${Uri.encodeComponent(zuglaufId)}';
     // Serialised + rate-limit aware: a connection detail screen fires one of
     // these per leg at once, and again on every resume/refresh. Unthrottled,
@@ -676,9 +687,12 @@ class VendoService {
     final res = await _zuglaufGate.run(
       () => _getWithRetry(url, _zuglaufMedia, tag: 'zuglauf'),
     );
-    final data = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
-    return _parseTripFromZuglauf(data, zuglaufId);
+    return json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
   }
+
+  /// Parse a `/mob/zuglauf/{id}` payload — live or replayed from disk.
+  Trip parseTrip(Map<String, dynamic> data, String zuglaufId) =>
+      _parseTripFromZuglauf(data, zuglaufId);
 
   /// GET honouring 429 + `Retry-After`. The backend answers a tripped limit
   /// with `{"domain":"MOB","code":"RETRY","status":"ERROR"}` and a
