@@ -14,6 +14,13 @@ const _dTicketProducts = {
   'ferry',
 };
 
+/// Does the Deutschlandticket cover a train of this [product]?
+///
+/// Null (an onward train we couldn't identify) is deliberately false: an
+/// unidentified ICE must never read as free.
+bool isDTicketProduct(String? product) =>
+    product != null && _dTicketProducts.contains(product);
+
 /// Is the segment from stop [i] to stop [j] of [stops] entirely travelled on
 /// trains the Deutschlandticket covers?
 ///
@@ -29,7 +36,7 @@ bool isSegmentDTicketCovered(
     // '' = no train on this hop (transfer gap) → fare-neutral, keep checking.
     if (product == '') continue;
     // null = an onward train we couldn't identify → assume it needs a ticket.
-    if (product is! String || !_dTicketProducts.contains(product)) return false;
+    if (product is! String || !isDTicketProduct(product)) return false;
   }
   return true;
 }

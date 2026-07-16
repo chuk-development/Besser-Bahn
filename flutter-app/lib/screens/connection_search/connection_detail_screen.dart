@@ -25,6 +25,7 @@ import '../../providers/station_map_provider.dart';
 import '../../services/db_api_service.dart';
 import '../../services/notification_service.dart';
 import '../../theme/app_colors.dart';
+import '../../utils/earlier_alight.dart';
 import '../../utils/split_stops.dart';
 import '../../widgets/departure_card.dart';
 import '../../widgets/fahrgastrechte_card.dart';
@@ -115,6 +116,65 @@ class _ConnectionDetailScreenState
         content: Text('Fahrt ersetzt · Preis ggf. neu suchen'),
       ),
     );
+  }
+
+  /// Rescue option B for the transfer into leg [i] (#26): what the switcher
+  /// needs to offer getting off [prev] earlier and going another way.
+  ///
+  /// Null when there's no train to get off (first leg) or no known
+  /// destination. The stop list is built HERE because only this screen holds
+  /// the trip cache — the freshest live times of the ridden train, re-fetched
+  /// around every stop, versus the search's realtime snapshot.
+  EarlierAlightInput? _earlierAlightInput(
+      List<JourneyLeg> legs, int i, JourneyLeg? prev) {
+    if (prev == null) return null;
+    final destination = journey.destination;
+    if (destination == null || destination.vendoLocationId.isEmpty) return null;
+    final prevIndex = legs.indexOf(prev);
+    if (prevIndex < 0) return null;
+    final trip = prev.tripId != null ? _tripCache[prev.tripId] : null;
+    final stops = alightStopsOfLeg(prev, trip: trip);
+    if (stops.length < 3) return null; // no stop between board and change
+    return EarlierAlightInput(
+      journey: journey,
+      currentLeg: prev,
+      currentLegIndex: prevIndex,
+      stops: stops,
+      destination: destination,
+      onApply: (option) => _applyEarlierAlight(prevIndex, option),
+    );
+  }
+
+  /// Take a "get off earlier" suggestion: cut the ridden train short at the
+  /// new exit and graft the found route on.
+  ///
+  /// Same deal as [_replaceLeg] — the price/recon of the booked journey no
+  /// longer describe what's on screen, so they're dropped and said so. The
+  /// ticket warning is repeated here on purpose: this is the moment the rider
+  /// commits to leaving a possibly train-bound fare behind.
+  void _applyEarlierAlight(int currentLegIndex, EarlierAlightOption option) {
+    final legs = rerouteViaEarlierAlight(
+      legs: _journey.legs,
+      currentLegIndex: currentLegIndex,
+      option: option,
+    );
+    if (legs == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Route konnte nicht übernommen werden.'),
+      ));
+      return;
+    }
+    setState(() {
+      _journey = Journey(legs: legs); // price/refreshToken intentionally dropped
+      _refreshTick++;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      duration: const Duration(seconds: 5),
+      content: Text(
+        'Neue Route ab ${option.stop.station.name}'
+        '${option.ticketNote == AlightTicketNote.dTicketCovered ? '' : ' · ${option.ticketNote.label}'}',
+      ),
+    ));
   }
 
   /// First non-walking leg after [i], or null — the train this leg connects to.
@@ -340,6 +400,7 @@ class _ConnectionDetailScreenState
                   readyAt: readyAt,
                   transferStationName: prev?.destination.name,
                   samePlatformTransfer: journey.samePlatformTransferInto(legs[i]),
+                  earlierAlight: _earlierAlightInput(legs, i, prev),
                   // A fresh trip fetch carries live delays → recompute the
                   // transfer windows above so a shrunk gap shows immediately.
                   onTripUpdated: () {
@@ -1150,6 +1211,9 @@ class _LegSection extends ConsumerStatefulWidget {
   /// walk to price (#20, point 6).
   final bool samePlatformTransfer;
 
+  /// Everything the "get off earlier and go another way" rescue needs (#26).
+  final EarlierAlightInput? earlierAlight;
+
   const _LegSection({
     super.key,
     required this.leg,
@@ -1161,6 +1225,7 @@ class _LegSection extends ConsumerStatefulWidget {
     this.readyAt,
     this.transferStationName,
     this.samePlatformTransfer = false,
+    this.earlierAlight,
   });
 
   @override
@@ -1415,6 +1480,7 @@ class _LegSectionState extends ConsumerState<_LegSection>
               samePlatformTransfer: widget.samePlatformTransfer,
               readyAt: widget.readyAt,
               transferStationName: widget.transferStationName,
+              earlierAlight: widget.earlierAlight,
             )
           : null;
       final detail = TrainDetailView(

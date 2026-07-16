@@ -3,23 +3,68 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/extensions.dart';
 import '../../../models/journey.dart';
+import '../../../models/station.dart';
 import '../../../models/transfer_profile.dart';
 import '../../../providers/service_providers.dart';
 import '../../../providers/settings_provider.dart';
+import '../../../services/earlier_alight_service.dart';
 import '../../../services/vendo_service.dart';
+import '../../../utils/earlier_alight.dart';
+
+/// What the switcher needs to offer rescue option B — "get off earlier and go
+/// another way" (#26). Bundled because it's all one question, and passing six
+/// loose fields down two widgets would invite them to drift apart.
+class EarlierAlightInput {
+  /// The journey as booked — decides the ticket note (a Sparpreis on a booked
+  /// ICE is bound, whatever pass the rider also owns).
+  final Journey journey;
+
+  /// The train being ridden into the tight transfer, and where it sits in
+  /// [journey] — that's the leg to cut short.
+  final JourneyLeg currentLeg;
+  final int currentLegIndex;
+
+  /// [currentLeg]'s stops with LIVE times ([alightStopsOfLeg]), built by the
+  /// parent because only it holds the refreshed trip cache.
+  final List<AlightStop> stops;
+
+  /// Where the rider is actually going — the whole journey's end, not this
+  /// leg's.
+  final Station destination;
+
+  /// Take this suggestion: rebuild the journey around the earlier exit.
+  final void Function(EarlierAlightOption option) onApply;
+
+  const EarlierAlightInput({
+    required this.journey,
+    required this.currentLeg,
+    required this.currentLegIndex,
+    required this.stops,
+    required this.destination,
+    required this.onApply,
+  });
+}
 
 /// A compact bar on a train leg that lets you step through the OTHER departures
 /// on the same segment — chevrons or a left/right swipe — and swap the shown
 /// train in place (the old one is removed, the new one takes over).
 ///
 /// When the transfer INTO this train is tight ([incomingGapMinutes] small), it
-/// also proactively surfaces the best reachable next train with a one-tap
-/// "Wechseln", so a likely-missed connection immediately offers the fix instead
-/// of leaving you to dig for it.
+/// also proactively surfaces the two rescues:
+///
+///  * option A — the best reachable next train from the planned change
+///    station, one tap to "Wechseln";
+///  * option B — get off the train you're on EARLIER and go another way
+///    ([earlierAlight], #26), which often beats A because the transfer is
+///    never missed at all.
 class LegAlternativeSwitcher extends ConsumerStatefulWidget {
   final JourneyLeg leg;
   final int index;
   final void Function(int index, JourneyLeg newLeg) onReplace;
+
+  /// Everything needed for rescue option B. Null on the first leg (no train to
+  /// get off) or when the journey's destination is unknown.
+  final EarlierAlightInput? earlierAlight;
 
   /// Minutes available for the transfer into this train (live). Null = not a
   /// transfer (e.g. the first leg) or unknown.
@@ -42,6 +87,7 @@ class LegAlternativeSwitcher extends ConsumerStatefulWidget {
     required this.leg,
     required this.index,
     required this.onReplace,
+    this.earlierAlight,
     this.incomingGapMinutes,
     this.readyAt,
     this.transferStationName,
@@ -74,12 +120,23 @@ class LegAlternativeSwitcherState
   bool get _atRisk => _gap != null && _gap! <= 2;
   bool get _tight => _gap != null && _gap! <= 5;
 
+  /// Rescue option B (#26). Separate state from [_alts] because it costs a
+  /// fan-out of searches, not one.
+  EarlierAlightResult? _alight;
+  bool _alightLoading = false;
+  bool _alightTried = false;
+
   @override
   void initState() {
     super.initState();
     // Tight transfer → load eagerly so the "next reachable train" offer is
     // there the moment you look. Otherwise wait until the user reaches for it.
     if (_tight) _ensureLoaded();
+    // Option B costs up to five searches against a backend that answers a
+    // burst with minutes of 429s, so it does NOT ride along with every tight
+    // transfer: only a genuinely at-risk one (the case the issue is about)
+    // spends them unasked. A merely tight one gets a button.
+    if (_atRisk) _ensureAlightLoaded();
   }
 
   @override
@@ -88,6 +145,8 @@ class LegAlternativeSwitcherState
     // A live delay just turned a comfortable transfer into a tight one → load
     // the alternatives now so the offer can appear.
     if (_tight && !_loaded && !_loading) _ensureLoaded();
+    // Same for option B, once the transfer is actually at risk.
+    if (_atRisk && !_alightTried && !_alightLoading) _ensureAlightLoaded();
     // The shown train just changed (a swipe/step swapped the leg) → warm the
     // NEW neighbours so the next swipe in either direction is instant too.
     if (_loaded && oldWidget.leg.tripId != widget.leg.tripId) {
@@ -131,6 +190,45 @@ class LegAlternativeSwitcherState
       if (mounted) setState(() => _error = 'Konnte nicht laden.');
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Kick off rescue option B: from every earlier stop of the train we're on,
+  /// search a fresh way to the real destination and keep only what beats
+  /// missing the connection. The service does the pacing/caching; the pure
+  /// utils do the judging.
+  Future<void> _ensureAlightLoaded() async {
+    final input = widget.earlierAlight;
+    final readyAt = widget.readyAt;
+    if (input == null || readyAt == null) return;
+    if (_alightTried || _alightLoading) return;
+    setState(() => _alightLoading = true);
+    final settings = ref.read(settingsProvider);
+    try {
+      final res = await ref.read(earlierAlightServiceProvider).findOptions(
+            currentLeg: input.currentLeg,
+            onwardLeg: widget.leg,
+            original: input.journey,
+            destination: input.destination,
+            stops: input.stops,
+            readyAt: readyAt,
+            profile: settings.transferProfile,
+            hasDeutschlandTicket: settings.searchParty.deutschlandTicket,
+            reisende: settings.searchParty.toReisendeJson(),
+            firstClass: settings.searchParty.firstClass,
+            apiDelayMs: settings.apiDelayMs,
+          );
+      if (!mounted) return;
+      setState(() => _alight = res);
+    } catch (_) {
+      // Nothing to show is the honest outcome — never a fake suggestion.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _alightLoading = false;
+          _alightTried = true;
+        });
+      }
     }
   }
 
@@ -316,17 +414,24 @@ class LegAlternativeSwitcherState
     final theme = Theme.of(context);
     final best = _loaded ? _bestReachable : null;
     final showRiskOffer = _tight && best != null;
+    // Deliberately NOT gated on option A having found something: when no next
+    // train exists from the planned change station at all, getting off earlier
+    // is the ONLY rescue left — the last moment to hide it (#26). The gap
+    // alone says the transfer is tight, so this needs no network to decide.
+    final showAlight =
+        _tight && widget.earlierAlight != null && widget.readyAt != null;
+    final warn = showRiskOffer || showAlight;
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       decoration: BoxDecoration(
-        color: showRiskOffer
+        color: warn
             ? (_atRisk
                 ? theme.colorScheme.errorContainer
                 : const Color(0xFFFFF3E0))
             : theme.colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(10),
-        border: showRiskOffer
+        border: warn
             ? Border.all(
                 color: _atRisk
                     ? theme.colorScheme.error
@@ -345,6 +450,12 @@ class LegAlternativeSwitcherState
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (showRiskOffer) _riskOffer(theme, best),
+            if (showAlight)
+              Padding(
+                padding: EdgeInsets.fromLTRB(4, showRiskOffer ? 0 : 4, 4, 6),
+                child: _earlierAlight(theme, _riskFg(theme),
+                    standalone: !showRiskOffer),
+              ),
             _stepper(theme),
           ],
         ),
@@ -361,12 +472,18 @@ class LegAlternativeSwitcherState
     return m == 0 ? '$h Std' : '$h:${m.toString().padLeft(2, '0')} Std';
   }
 
+  /// Readable-on-the-banner foreground, shared by both rescue offers so they
+  /// can't drift apart.
+  Color _riskFg(ThemeData theme) => _atRisk
+      ? theme.colorScheme.onErrorContainer
+      : const Color(0xFF7A4E00);
+
   Widget _riskOffer(ThemeData theme, Journey best) {
     final l = best.legs.firstOrNull;
     final dep = l?.departure ?? l?.plannedDeparture;
     final arr = l?.arrival ?? l?.plannedArrival;
     final name = l?.line?.titleWithNumber ?? l?.line?.displayName ?? 'Zug';
-    final fg = _atRisk ? theme.colorScheme.onErrorContainer : const Color(0xFF7A4E00);
+    final fg = _riskFg(theme);
     final station = widget.transferStationName;
     // The PLANNED gap, not the profile-scaled one: that's the number on the
     // platform display, and contradicting it would just look wrong. The
@@ -437,6 +554,193 @@ class LegAlternativeSwitcherState
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Rescue option B (#26): the second way out, right under option A so the
+  /// two can be compared at a glance — ride on and lose the fallback cost, or
+  /// get off early and lose less.
+  ///
+  /// [standalone] means option A found nothing, so this block carries the
+  /// warning headline itself instead of hanging under one.
+  Widget _earlierAlight(ThemeData theme, Color fg, {bool standalone = false}) {
+    if (widget.earlierAlight == null || widget.readyAt == null) {
+      return const SizedBox.shrink();
+    }
+    if (standalone) {
+      final station = widget.transferStationName;
+      final gap = widget.incomingGapMinutes;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, size: 18, color: fg),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Anschluss${station != null ? ' in $station' : ''} '
+                  'gefährdet${gap != null ? ' · nur $gap min' : ''}',
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(fontWeight: FontWeight.w700, color: fg),
+                ),
+              ),
+            ],
+          ),
+          _earlierAlight(theme, fg),
+        ],
+      );
+    }
+
+    if (_alightLoading) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(strokeWidth: 2, color: fg),
+            ),
+            const SizedBox(width: 8),
+            Text('Suche frühere Ausstiege…',
+                style: theme.textTheme.bodySmall?.copyWith(color: fg)),
+          ],
+        ),
+      );
+    }
+
+    // Not searched yet (a merely tight transfer doesn't spend the requests
+    // unasked) → let the rider ask for it.
+    if (!_alightTried) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: _ensureAlightLoaded,
+          icon: const Icon(Icons.logout, size: 16),
+          label: const Text('Früher aussteigen prüfen'),
+          style: TextButton.styleFrom(
+            foregroundColor: fg,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+          ),
+        ),
+      );
+    }
+
+    final options = _alight?.options ?? const <EarlierAlightOption>[];
+    // Say it plainly instead of leaving a gap the rider reads as "still
+    // loading": we looked, and riding on really is the best there is.
+    if (options.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Text(
+          'Früher aussteigen bringt hier nichts — keine Route ist schneller '
+          'als der nächste Zug.',
+          style: theme.textTheme.bodySmall?.copyWith(color: fg),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Divider(height: 1, color: fg.withValues(alpha: 0.25)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(Icons.alt_route, size: 16, color: fg),
+              const SizedBox(width: 6),
+              Text('Oder früher aussteigen',
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(fontWeight: FontWeight.w700, color: fg)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          // Two at most: this is a decision to take in the next few minutes on
+          // a moving train, not a result list to browse.
+          for (final o in options.take(2)) _alightOption(theme, fg, o),
+        ],
+      ),
+    );
+  }
+
+  Widget _alightOption(ThemeData theme, Color fg, EarlierAlightOption o) {
+    final first = o.onward.legs.where((l) => !l.isWalking).firstOrNull;
+    final name = first?.line?.titleWithNumber ??
+        first?.line?.displayName ??
+        'Weiterfahrt';
+    final changes = o.onward.transfers;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Aussteigen in ${o.stop.station.name} · an ${o.alightArrival.hhmm}',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(fontWeight: FontWeight.w700, color: fg),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Weiter mit $name · ${_hm(o.waitMinutes)} Umstieg · '
+            '${changes <= 0 ? 'direkt' : '$changes× umsteigen'}',
+            style: theme.textTheme.bodySmall?.copyWith(color: fg),
+          ),
+          const SizedBox(height: 2),
+          // The number the whole feature exists for: what it saves against
+          // riding on and missing the connection.
+          Text(
+            'Am Ziel ${o.arrival.hhmm} — ${_hm(o.gainMinutes)} früher als der '
+            'nächste Zug',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(fontWeight: FontWeight.w700, color: fg),
+          ),
+          const SizedBox(height: 6),
+          // Never optional (#26): a Sparpreis is bound to the booked trains, so
+          // a suggestion to leave one early without saying so sends riders
+          // into a Fahrpreisnacherhebung.
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                  o.ticketNote == AlightTicketNote.dTicketCovered
+                      ? Icons.check_circle_outline
+                      : Icons.confirmation_number_outlined,
+                  size: 14,
+                  color: fg),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '${o.ticketNote.label} — ${o.ticketNote.detail}',
+                  style: theme.textTheme.labelSmall?.copyWith(color: fg),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              onPressed: () => widget.earlierAlight?.onApply(o),
+              icon: const Icon(Icons.alt_route, size: 16),
+              label: const Text('Route übernehmen'),
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                backgroundColor: theme.colorScheme.primary,
+              ),
+            ),
           ),
         ],
       ),
