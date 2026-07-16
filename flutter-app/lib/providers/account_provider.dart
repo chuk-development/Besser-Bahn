@@ -622,6 +622,91 @@ final ticketIndicesProvider = FutureProvider<List<DbReiseIndex>>((ref) async {
   return uebersicht.orders;
 });
 
+/// A bought ticket with its trip resolved — the order index alone carries no
+/// travel date (only `aenderungsDatum`, when the booking last changed), so
+/// "is this trip over?" can only be answered once the ticket detail is in.
+class DbTicketTrip {
+  final DbReiseIndex index;
+
+  /// `auftragsnummer/kundenwunschId` — the [ticketProvider] family key.
+  final String ticketKey;
+  final DbTicket? ticket;
+  final Journey? journey;
+
+  const DbTicketTrip({
+    required this.index,
+    required this.ticketKey,
+    this.ticket,
+    this.journey,
+  });
+
+  /// When the trip is over. The connection's arrival is the truth; `gueltigBis`
+  /// is only a fallback for a ticket whose Verbindung won't parse — and a loose
+  /// one (a Flexpreis stays valid all day).
+  DateTime? get endTime =>
+      journey?.arrival ?? journey?.plannedArrival ?? ticket?.gueltigBis;
+
+  /// Past only when we actually know it is. A ticket we couldn't resolve stays
+  /// upcoming: showing a live trip too low is worse than showing a stale one
+  /// too high.
+  bool get isPast {
+    final end = endTime;
+    return end != null && end.isBefore(DateTime.now());
+  }
+
+  /// The identity a local bookmark of this very trip would have, so the twin
+  /// can be dropped instead of listed a second time (#23).
+  String? get journeyKey => journey == null
+      ? null
+      : SavedJourney(journey: journey!, savedAtMs: 0).key;
+}
+
+/// Bought tickets WITH their trip resolved, upcoming first, then past — the
+/// Reisen tab needs the date to file them, and the index doesn't have one.
+///
+/// Every ticket detail is disk-cached by [ticketProvider], so this is usually
+/// instant after the first load. A ticket that fails to load or parse still
+/// yields an entry (journey null) rather than dropping out of the list.
+final ticketTripsProvider = FutureProvider<List<DbTicketTrip>>((ref) async {
+  final indices = await ref.watch(ticketIndicesProvider.future);
+  final vendo = ref.read(vendoServiceProvider);
+
+  Future<DbTicketTrip?> resolve(DbReiseIndex i) async {
+    final kwId = i.kundenwunschIds.isNotEmpty ? i.kundenwunschIds.first : '';
+    if (kwId.isEmpty) return null;
+    final key = '${i.auftragsnummer}/$kwId';
+    final DbTicket t;
+    try {
+      t = await ref.watch(ticketProvider(key).future);
+    } catch (e) {
+      AppLog.log('ticket $key failed to load: $e', tag: 'db-account');
+      return DbTicketTrip(index: i, ticketKey: key);
+    }
+    Journey? j;
+    if (t.verbindungJson != null) {
+      try {
+        final parsed = vendo.parseConnection(t.verbindungJson!);
+        if (parsed.legs.isNotEmpty) j = parsed;
+      } catch (_) {/* keep the ticket, just without a trip */}
+    }
+    return DbTicketTrip(index: i, ticketKey: key, ticket: t, journey: j);
+  }
+
+  final trips = (await Future.wait(indices.map(resolve)))
+      .whereType<DbTicketTrip>()
+      .toList();
+  // Upcoming first (soonest departure), then past (most recent first) — same
+  // order the local saved trips use.
+  int? depMs(DbTicketTrip t) =>
+      (t.journey?.plannedDeparture ?? t.journey?.departure ?? t.ticket?.gueltigAb)
+          ?.millisecondsSinceEpoch;
+  final upcoming = trips.where((t) => !t.isPast).toList()
+    ..sort((a, b) => (depMs(a) ?? 0).compareTo(depMs(b) ?? 0));
+  final past = trips.where((t) => t.isPast).toList()
+    ..sort((a, b) => (b.endTime ?? DateTime(0)).compareTo(a.endTime ?? DateTime(0)));
+  return [...upcoming, ...past];
+});
+
 /// Tracked-but-unpaid trips (reiseIndizes, "Reise merken"), newest start first.
 final savedReisenProvider =
     FutureProvider<List<DbSavedReiseIndex>>((ref) async {

@@ -30,17 +30,29 @@ class JourneysScreen extends ConsumerWidget {
     // fill in as the "Gemerkte Reisen" tiles resolve their journeys, so a
     // duplicate can flash on first paint and then collapse.
     final dbKeys = ref.watch(dbSavedReiseIdsProvider).keys.toSet();
-    bool shownAsDbTrip(SavedJourney j) => dbKeys.contains(j.key);
+    // When signed into a DB account, the user's REAL booked tickets lead the
+    // list. Logged out, only the local/offline saved trips show — that fallback
+    // stays exactly as before.
+    final loggedIn = ref.watch(dbAuthProvider).isLoggedIn;
+    final tickets = loggedIn ? ref.watch(ticketTripsProvider) : null;
+    final ticketTrips = tickets?.asData?.value ?? const <DbTicketTrip>[];
+    // A trip that's ALSO a bought ticket renders as that ticket — bookmarking
+    // it locally used to list it twice, once per section (#23). Same rule the
+    // "Gemerkte Reisen" twins already follow (#15).
+    final ticketKeys = {
+      for (final t in ticketTrips)
+        if (t.journeyKey != null) t.journeyKey!
+    };
+    bool shownAsDbTrip(SavedJourney j) =>
+        dbKeys.contains(j.key) || ticketKeys.contains(j.key);
     final upcoming =
         lib.upcomingJourneys.where((j) => !shownAsDbTrip(j)).toList();
     final past = lib.pastJourneys.where((j) => !shownAsDbTrip(j)).toList();
     final stats = ref.watch(travelStatsProvider);
-    // When signed into a DB account, the user's REAL booked tickets lead the
-    // list (active + past, newest first). Logged out, only the local/offline
-    // saved trips show — that fallback stays exactly as before.
-    final loggedIn = ref.watch(dbAuthProvider).isLoggedIn;
-    final tickets =
-        loggedIn ? ref.watch(ticketIndicesProvider) : null;
+    // A ticket for a trip that's over belongs under "Vergangene Reisen", not on
+    // top as if it were today's (#23).
+    final upcomingTickets = ticketTrips.where((t) => !t.isPast).toList();
+    final pastTickets = ticketTrips.where((t) => t.isPast).toList();
     final savedReisen =
         loggedIn ? ref.watch(savedReisenProvider) : null;
     final hasLocal = upcoming.isNotEmpty || past.isNotEmpty;
@@ -80,15 +92,17 @@ class JourneysScreen extends ConsumerWidget {
                     TripProgressCard(
                         journey: upcoming.first.journey, activeOnly: true),
                   if (!stats.isEmpty) _statsTeaser(context, stats),
-                  // Official DB tickets (bought on the account). No section
-                  // header — tickets render directly so the surface stays
-                  // glanceable, the way DB Navigator's Reisen tab does.
+                  // Official DB tickets (bought on the account) whose trip is
+                  // still ahead. No section header — tickets render directly so
+                  // the surface stays glanceable, the way DB Navigator's Reisen
+                  // tab does. The ones already travelled drop to the bottom.
                   if (loggedIn && tickets != null)
                     tickets.when(
-                      data: (list) => Column(
+                      data: (_) => Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          for (final t in list) _OfficialTicketTile(index: t),
+                          for (final t in upcomingTickets)
+                            _OfficialTicketTile(trip: t),
                         ],
                       ),
                       loading: () => const Padding(
@@ -128,15 +142,30 @@ class JourneysScreen extends ConsumerWidget {
                   ],
                   // (past trips below — a DB trip that already rendered above
                   // is filtered out of `upcoming`, see the build header.)
-                  if (past.isNotEmpty) ...[
-                    _sectionHeader(
-                        context, 'Vergangene Reisen', past.length),
-                    for (final j in past) _entry(context, ref, j, past: true),
+                  if (past.isNotEmpty || pastTickets.isNotEmpty) ...[
+                    _sectionHeader(context, 'Vergangene Reisen',
+                        past.length + pastTickets.length),
+                    ..._pastRows(context, ref, past, pastTickets),
                   ],
                 ],
               ),
             ),
     );
+  }
+
+  /// "Vergangene Reisen": bought tickets and local bookmarks in ONE list, most
+  /// recent first — a trip that's over is a trip that's over, whichever side it
+  /// came from (#23).
+  List<Widget> _pastRows(BuildContext context, WidgetRef ref,
+      List<SavedJourney> past, List<DbTicketTrip> tickets) {
+    final rows = <({DateTime? end, Widget child})>[
+      for (final t in tickets)
+        (end: t.endTime, child: _OfficialTicketTile(trip: t, past: true)),
+      for (final j in past)
+        (end: j.endTime, child: _entry(context, ref, j, past: true)),
+    ]..sort((a, b) =>
+        (b.end ?? DateTime(0)).compareTo(a.end ?? DateTime(0)));
+    return [for (final r in rows) r.child];
   }
 
   /// Compact lifetime-stats banner that taps through to the full screen.
@@ -376,66 +405,87 @@ class _SavedReiseTile extends ConsumerWidget {
   }
 }
 
-/// A booked official ticket in the Reisen list. Lazily loads the ticket
-/// detail (cached by [ticketProvider]) and, once the trip plan is parsed,
-/// renders the same [JourneyCard] used in search — so a bought ticket looks
-/// exactly like a found connection, just routed to the ticket detail on tap.
-/// Falls back to a compact placeholder tile while the ticket is loading.
+/// A booked official ticket in the Reisen list. The trip plan is already
+/// resolved by [ticketTripsProvider]; once it parsed, this renders the same
+/// [JourneyCard] used in search — so a bought ticket looks exactly like a found
+/// connection, just routed to the ticket detail on tap. Falls back to a compact
+/// placeholder tile when the Verbindung can't be parsed.
+///
+/// [past] dims it and prefixes the travel date, matching a past local trip —
+/// a ticket for last week's trip used to sit on top looking current (#23).
 class _OfficialTicketTile extends ConsumerWidget {
-  final DbReiseIndex index;
-  const _OfficialTicketTile({required this.index});
+  final DbTicketTrip trip;
+  final bool past;
+  const _OfficialTicketTile({required this.trip, this.past = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final index = trip.index;
     final kwId =
         index.kundenwunschIds.isNotEmpty ? index.kundenwunschIds.first : '';
     if (kwId.isEmpty) return const SizedBox.shrink();
-    final key = '${index.auftragsnummer}/$kwId';
-    final ticket = ref.watch(ticketProvider(key));
     void onTap() => context.push('/ticket', extra: {
           'auftragsnummer': index.auftragsnummer,
           'kundenwunschId': kwId,
         });
 
-    final t = ticket.asData?.value;
-    if (t != null && t.verbindungJson != null) {
-      try {
-        final journey =
-            ref.read(vendoServiceProvider).parseConnection(t.verbindungJson!);
-        if (journey.legs.isNotEmpty) {
-          return JourneyCard(journey: journey, onTap: onTap);
-        }
-      } catch (_) {/* fall through to placeholder */}
-    }
-
-    // Placeholder while loading / when verbindung can't be parsed.
+    final t = trip.ticket;
     final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: ListTile(
-        leading: Icon(Icons.confirmation_number_outlined,
-            color: theme.colorScheme.primary),
-        title: Text(
-          t != null && (t.vonName != null || t.nachName != null)
-              ? '${t.vonName ?? '—'} → ${t.nachName ?? '—'}'
-              : 'Auftrag ${index.auftragsnummer}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+    final Widget tile;
+    if (trip.journey != null) {
+      tile = JourneyCard(journey: trip.journey!, onTap: onTap);
+    } else {
+      // Placeholder while loading / when verbindung can't be parsed.
+      tile = Card(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        child: ListTile(
+          leading: Icon(Icons.confirmation_number_outlined,
+              color: theme.colorScheme.primary),
+          title: Text(
+            t != null && (t.vonName != null || t.nachName != null)
+                ? '${t.vonName ?? '—'} → ${t.nachName ?? '—'}'
+                : 'Auftrag ${index.auftragsnummer}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            [
+              if ((t?.gueltigAb ?? index.aenderungsDatum) != null)
+                DateFormat('dd.MM.yyyy')
+                    .format(t?.gueltigAb ?? index.aenderungsDatum!),
+              if (t != null) t.firstClass ? '1. Kl.' : '2. Kl.',
+              if (t?.angebotsname != null) t!.angebotsname!,
+            ].where((s) => s.isNotEmpty).join(' · '),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: onTap,
         ),
-        subtitle: Text(
-          [
-            if ((t?.gueltigAb ?? index.aenderungsDatum) != null)
-              DateFormat('dd.MM.yyyy')
-                  .format(t?.gueltigAb ?? index.aenderungsDatum!),
-            if (t != null) t.firstClass ? '1. Kl.' : '2. Kl.',
-            if (t?.angebotsname != null) t!.angebotsname!,
-            if (ticket is AsyncLoading) 'lädt…',
-          ].where((s) => s.isNotEmpty).join(' · '),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: onTap,
+      );
+    }
+    if (!past) return tile;
+    final dep = trip.journey?.plannedDeparture ??
+        trip.journey?.departure ??
+        t?.gueltigAb;
+    return Opacity(
+      opacity: 0.7,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (dep != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 16, 0),
+              child: Text(
+                DateFormat('dd.MM.yyyy').format(dep),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          tile,
+        ],
       ),
     );
   }
