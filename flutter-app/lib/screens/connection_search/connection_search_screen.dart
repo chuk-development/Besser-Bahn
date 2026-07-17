@@ -820,17 +820,21 @@ class _ConnectionSearchScreenState
               onSelected: (_) => notifier.toggleOnlyDeutschlandTicket(),
             ),
           ),
-        for (final cat in ProductCategory.values)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 3),
-            child: FilterChip(
-              label: Text(cat.label),
-              selected: state.products.contains(cat),
-              visualDensity: VisualDensity.compact,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              onSelected: (_) => notifier.toggleProduct(cat),
+        // "Nur D-Ticket" is its own search mode — Fernverkehr/Regional/… make no
+        // sense alongside it, so hide them while it's on rather than showing two
+        // contradictory filter sets at once (#47).
+        if (!state.onlyDeutschlandTicket)
+          for (final cat in ProductCategory.values)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 3),
+              child: FilterChip(
+                label: Text(cat.label),
+                selected: state.products.contains(cat),
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                onSelected: (_) => notifier.toggleProduct(cat),
+              ),
             ),
-          ),
     ];
   }
 
