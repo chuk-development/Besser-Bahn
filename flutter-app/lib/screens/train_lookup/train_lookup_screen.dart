@@ -203,37 +203,42 @@ class _TrainLookupScreenState extends ConsumerState<TrainLookupScreen>
                 prefixIcon: const Icon(Icons.train, size: 18),
                 prefixIconConstraints:
                     const BoxConstraints(minWidth: 36, minHeight: 36),
-                          // The spinner takes the suffix while a lookup runs —
-                          // with no search button left, this is the only place
-                          // the field itself can say it is working.
-                          suffixIcon: state.isLoading
-                              ? const Padding(
-                                  padding: EdgeInsets.all(14),
-                                  child: SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
-                                  ),
-                                )
-                              : IconButton(
-                                  icon: Icon(
-                                    _showStationField
-                                        ? Icons.location_off
-                                        : Icons.location_on_outlined,
-                                    size: 20,
-                                  ),
-                                  tooltip: 'Haltestelle angeben (für Busse)',
-                                  onPressed: () {
-                                    setState(() {
-                                      _showStationField = !_showStationField;
-                                      if (!_showStationField) {
-                                        _fromStation = null;
-                                      }
-                                    });
-                                  },
-                                ),
-                ),
+                // Keep the suffix inside the dense field's height (an
+                // unconstrained IconButton is 48 px and taller than the field,
+                // which made the Zug search bar bigger than the other two).
+                suffixIconConstraints:
+                    const BoxConstraints(minWidth: 36, minHeight: 36),
+                // The spinner takes the suffix while a lookup runs — with no
+                // search button left, this is the only place the field itself
+                // can say it is working.
+                suffixIcon: state.isLoading
+                    ? const Padding(
+                        padding: EdgeInsets.all(9),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : IconButton(
+                        visualDensity: VisualDensity.compact,
+                        icon: Icon(
+                          _showStationField
+                              ? Icons.location_off
+                              : Icons.location_on_outlined,
+                          size: 18,
+                        ),
+                        tooltip: 'Haltestelle angeben (für Busse)',
+                        onPressed: () {
+                          setState(() {
+                            _showStationField = !_showStationField;
+                            if (!_showStationField) {
+                              _fromStation = null;
+                            }
+                          });
+                        },
+                      ),
+              ),
                 textInputAction: TextInputAction.search,
                 onChanged: _onQueryChanged,
                 // Still honoured, and it beats the debounce: a rider who

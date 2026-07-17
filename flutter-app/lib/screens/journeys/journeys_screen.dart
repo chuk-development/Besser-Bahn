@@ -63,13 +63,10 @@ class JourneysScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Reisen'),
-        actions: [
-          IconButton(
-            tooltip: 'Reisestatistik',
-            icon: const Icon(Icons.insights),
-            onPressed: () => context.push('/stats'),
-          ),
-          const AppMenuButton(),
+        actions: const [
+          // The big "deine Reisestatistik" card below is the way to the stats —
+          // the AppBar icon was a second button to the same screen.
+          AppMenuButton(),
         ],
       ),
       body: (!loggedIn && !hasLocal)
