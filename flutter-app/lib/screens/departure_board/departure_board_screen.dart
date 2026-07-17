@@ -6,6 +6,7 @@ import '../../models/departure.dart';
 import '../../providers/departure_board_provider.dart';
 import '../../providers/nearby_tab_provider.dart';
 import '../../providers/train_lookup_provider.dart';
+import '../../widgets/bahnhof_search_bar.dart';
 import '../../widgets/app_nav_bar.dart';
 import '../../widgets/station_search_field.dart';
 import '../../widgets/delay_badge.dart';
@@ -76,22 +77,16 @@ class _DepartureBoardScreenState extends ConsumerState<DepartureBoardScreen>
             ),
       body: Column(
         children: [
-          // Station search
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: StationSearchField(
-                    hint: 'Bahnhof suchen...',
-                    prefixIcon: Icons.location_city,
-                    initialStation: state.station,
-                    onSelected: notifier.setStation,
-                    dense: true,
-                  ),
-                ),
-                ...actions,
-              ],
+          // Station search — the shared Bahnhof search bar (same on Zug/Karte).
+          BahnhofSearchBar(
+            trailing: actions,
+            child: StationSearchField(
+              hint: 'Bahnhof suchen...',
+              prefixIcon: Icons.location_city,
+              initialStation: state.station,
+              onSelected: notifier.setStation,
+              dense: true,
+              bare: true,
             ),
           ),
 
