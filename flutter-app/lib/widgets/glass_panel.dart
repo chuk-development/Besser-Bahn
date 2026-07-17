@@ -19,10 +19,20 @@ import '../vendor/chuk_ui/chuk_squircle.dart';
 /// content (a [Stack], not a [Column]) or it is just a tinted box over the
 /// scaffold background.
 class GlassPanel extends StatelessWidget {
-  const GlassPanel({super.key, required this.child, this.radius = _radius});
+  const GlassPanel({
+    super.key,
+    required this.child,
+    this.radius = _radius,
+    this.flush = false,
+  });
 
   /// Content laid over the glass.
   final Widget child;
+
+  /// A full-bleed band instead of a floating panel: square corners, no rim, no
+  /// drop shadow — so an edge-to-edge strip (the transport filter) reads as
+  /// glass laid *behind* its chips, not as a pill hovering over the page (#38).
+  final bool flush;
 
   /// Corner radius of the squircle. [SquircleBorder] clamps it to half the
   /// short edge, so [pillRadius] turns any low strip into a pill without the
@@ -75,23 +85,25 @@ class GlassPanel extends StatelessWidget {
     final isLight = theme.brightness == Brightness.light;
 
     return ChukGlass(
-      shape: SquircleBorder(radius: radius),
+      shape: SquircleBorder(radius: flush ? 0 : radius),
       fill: colors.surfaceContainerHigh.withValues(
         alpha: isLight ? _tintOpacityLight : _tintOpacityDark,
       ),
-      highlight: isLight
+      highlight: (isLight && !flush)
           ? colors.surfaceBright.withValues(alpha: _rimOpacity)
           : const Color(0x00000000),
       blurSigma: _blurSigma,
-      shadow: [
-        BoxShadow(
-          color: colors.shadow.withValues(
-            alpha: isLight ? _shadowOpacityLight : _shadowOpacityDark,
-          ),
-          blurRadius: 28,
-          offset: const Offset(0, 10),
-        ),
-      ],
+      shadow: flush
+          ? const []
+          : [
+              BoxShadow(
+                color: colors.shadow.withValues(
+                  alpha: isLight ? _shadowOpacityLight : _shadowOpacityDark,
+                ),
+                blurRadius: 28,
+                offset: const Offset(0, 10),
+              ),
+            ],
       child: child,
     );
   }

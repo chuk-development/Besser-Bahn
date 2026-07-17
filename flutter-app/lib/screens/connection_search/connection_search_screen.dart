@@ -837,8 +837,28 @@ class _ConnectionSearchScreenState
     JourneySearchState state,
     JourneySearchNotifier notifier,
   ) {
-    return _glassStrip(
-      children: [
+    // Full-bleed frosted band, not a floating pill: spans edge-to-edge with no
+    // rounding, rim or shadow, so the glass reads as sitting *behind* the
+    // chips instead of hovering over the page (#38).
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: GlassPanel(
+        flush: true,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(children: _productFilterChips(context, state, notifier)),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _productFilterChips(
+    BuildContext context,
+    JourneySearchState state,
+    JourneySearchNotifier notifier,
+  ) {
+    return [
         // Only meaningful for someone who holds the ticket, so it follows
         // the Deutschlandticket setting rather than sitting there dead.
         if (ref.watch(settingsProvider).hasDeutschlandTicket)
@@ -863,8 +883,7 @@ class _ConnectionSearchScreenState
               onSelected: (_) => notifier.toggleProduct(cat),
             ),
           ),
-      ],
-    );
+    ];
   }
 
   Widget _paginationButton(
