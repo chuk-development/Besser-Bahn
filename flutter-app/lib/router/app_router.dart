@@ -16,7 +16,7 @@ import '../screens/connection_search/best_price_screen.dart';
 import '../screens/station_map/station_map_screen.dart';
 import '../screens/connection_search/connection_detail_screen.dart';
 import '../models/journey.dart';
-import 'tab_slide.dart';
+import 'tab_pager.dart';
 import '../screens/split_ticket/split_ticket_screen.dart';
 import '../screens/split_ticket/bulk_split_screen.dart';
 import '../screens/settings/settings_screen.dart';
@@ -28,7 +28,14 @@ import '../screens/traewelling/traewelling_friends_screen.dart';
 import '../screens/traewelling/traewelling_checkin_screen.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
-final _shellNavigatorKey = GlobalKey<NavigatorState>();
+
+/// One Navigator per tab — that is what makes them branches and not pages: each
+/// keeps its own stack and its own state while the others are parked off to the
+/// side of the strip.
+final _searchNavigatorKey = GlobalKey<NavigatorState>();
+final _journeysNavigatorKey = GlobalKey<NavigatorState>();
+final _nearbyNavigatorKey = GlobalKey<NavigatorState>();
+final _profileNavigatorKey = GlobalKey<NavigatorState>();
 
 /// The app router, exposed as a provider so its first-run redirect can react to
 /// the onboarding-seen state. Built once; the redirect re-runs whenever that
@@ -61,54 +68,69 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         parentNavigatorKey: _rootNavigatorKey,
         builder: (context, state) => const OnboardingScreen(),
       ),
-      ShellRoute(
-        navigatorKey: _shellNavigatorKey,
-        builder: (context, state, child) => HomeScreen(child: child),
-        routes: [
-          GoRoute(
-            path: '/search',
-            pageBuilder: (context, state) => CustomTransitionPage(
-              key: state.pageKey,
-              transitionDuration: TabSlide.duration,
-              reverseTransitionDuration: TabSlide.duration,
-              transitionsBuilder: (context, animation, _, child) =>
-                  TabSlide.build(0, animation, child),
-              child: const ConnectionSearchScreen(),
-            ),
+      // The four tabs, as branches of one stateful shell. Their order here is
+      // the order they lie on the strip and the order the nav bar shows them —
+      // it is the only place that decides which tab is index 2.
+      StatefulShellRoute(
+        builder: (context, state, navigationShell) =>
+            HomeScreen(navigationShell: navigationShell),
+        // The tabs side by side, panned between — see `tab_pager.dart`.
+        navigatorContainerBuilder: (context, navigationShell, children) =>
+            TabPager(navigationShell: navigationShell, children: children),
+        branches: [
+          // Every branch is preloaded, and the pager is why. A jump pans the
+          // strip *across* the tabs in between, and a swipe drags the next tab
+          // in under the finger — both put a tab on screen before it is the
+          // route. A branch that has not been loaded yet has no Navigator, and
+          // renders as an empty box: you'd pan over blank screens, and drag a
+          // blank page in behind your thumb.
+          //
+          // The cost is small and worth naming: preloading builds the branch's
+          // *Navigator widget*, it does not mount the screen. Each tab's
+          // `initState` still waits until the pager first lays that page out —
+          // so nothing fetches at startup, only when a tab is actually
+          // travelled to or over.
+          StatefulShellBranch(
+            navigatorKey: _searchNavigatorKey,
+            preload: true,
+            routes: [
+              GoRoute(
+                path: '/search',
+                builder: (context, state) => const ConnectionSearchScreen(),
+              ),
+            ],
           ),
-          GoRoute(
-            path: '/journeys',
-            pageBuilder: (context, state) => CustomTransitionPage(
-              key: state.pageKey,
-              transitionDuration: TabSlide.duration,
-              reverseTransitionDuration: TabSlide.duration,
-              transitionsBuilder: (context, animation, _, child) =>
-                  TabSlide.build(1, animation, child),
-              child: const JourneysScreen(),
-            ),
+          StatefulShellBranch(
+            navigatorKey: _journeysNavigatorKey,
+            preload: true,
+            routes: [
+              GoRoute(
+                path: '/journeys',
+                builder: (context, state) => const JourneysScreen(),
+              ),
+            ],
           ),
-          // Combined Zug + Abfahrten + Karte screen (internal tab bar).
-          GoRoute(
-            path: '/nearby',
-            pageBuilder: (context, state) => CustomTransitionPage(
-              key: state.pageKey,
-              transitionDuration: TabSlide.duration,
-              reverseTransitionDuration: TabSlide.duration,
-              transitionsBuilder: (context, animation, _, child) =>
-                  TabSlide.build(2, animation, child),
-              child: const NearbyScreen(),
-            ),
+          // Combined Zug + Abfahrten + Karte screen (internal tab bar) — the
+          // one tab the strip cannot be swiped off, see [TabPager.swipeBlocked].
+          StatefulShellBranch(
+            navigatorKey: _nearbyNavigatorKey,
+            preload: true,
+            routes: [
+              GoRoute(
+                path: '/nearby',
+                builder: (context, state) => const NearbyScreen(),
+              ),
+            ],
           ),
-          GoRoute(
-            path: '/profile',
-            pageBuilder: (context, state) => CustomTransitionPage(
-              key: state.pageKey,
-              transitionDuration: TabSlide.duration,
-              reverseTransitionDuration: TabSlide.duration,
-              transitionsBuilder: (context, animation, _, child) =>
-                  TabSlide.build(3, animation, child),
-              child: const ProfileScreen(),
-            ),
+          StatefulShellBranch(
+            navigatorKey: _profileNavigatorKey,
+            preload: true,
+            routes: [
+              GoRoute(
+                path: '/profile',
+                builder: (context, state) => const ProfileScreen(),
+              ),
+            ],
           ),
         ],
       ),

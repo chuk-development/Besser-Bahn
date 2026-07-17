@@ -1,4 +1,5 @@
 import 'package:besser_bahn/providers/connectivity_provider.dart';
+import 'package:besser_bahn/router/tab_pager.dart';
 import 'package:besser_bahn/screens/home/home_screen.dart';
 import 'package:besser_bahn/theme/app_theme.dart';
 import 'package:besser_bahn/widgets/app_nav_bar.dart';
@@ -26,16 +27,33 @@ Widget _shortTab() => ListView(
   children: const [SizedBox(height: 40, child: Text('Nichts hier'))],
 );
 
-/// Boots the real shell over the given tab bodies, keyed by route.
+/// The shell's four branch paths, in nav-bar order — the shell always has all
+/// four (the bar can reach any of them), so a test only names the ones it cares
+/// about and the rest stand in as an empty page.
+const _paths = ['/search', '/journeys', '/nearby', '/profile'];
+
+/// Boots the real shell — nav bar, pager and all — over the given tab bodies,
+/// keyed by route.
 Widget _app(Map<String, Widget> tabs) {
   final router = GoRouter(
-    initialLocation: tabs.keys.first,
+    initialLocation: _paths.first,
     routes: [
-      ShellRoute(
-        builder: (_, _, child) => HomeScreen(child: child),
-        routes: [
-          for (final tab in tabs.entries)
-            GoRoute(path: tab.key, builder: (_, _) => tab.value),
+      StatefulShellRoute(
+        builder: (_, _, shell) => HomeScreen(navigationShell: shell),
+        navigatorContainerBuilder: (_, shell, children) =>
+            TabPager(navigationShell: shell, children: children),
+        branches: [
+          for (final path in _paths)
+            StatefulShellBranch(
+              preload: true,
+              routes: [
+                GoRoute(
+                  path: path,
+                  builder: (_, _) =>
+                      tabs[path] ?? const SizedBox.expand(child: Text('leer')),
+                ),
+              ],
+            ),
         ],
       ),
     ],
@@ -119,8 +137,8 @@ void main() {
       await tester.tap(find.byIcon(Icons.train_outlined));
       await tester.pumpAndSettle();
 
-// The tab slide used to clash GlobalKeys here; it now runs on the
-      // router's pages, so a tab switch must throw nothing at all.
+      // The tab change used to clash GlobalKeys here; the tabs are now separate
+      // branch Navigators on one strip, so it must throw nothing at all.
       expect(tester.takeException(), isNull);
 
       // The new tab starts at its own top and cannot scroll — it will never
