@@ -628,6 +628,11 @@ class BahnbonusCo2Controller extends AsyncNotifier<DbBahnBonusCo2Balance?> {
       _needsAuthorization = false;
       return null;
     }
+    final service = ref.read(dbAccountServiceProvider);
+    if (!await service.hasBahnBonusAuthorization()) {
+      _needsAuthorization = true;
+      return null;
+    }
     _needsAuthorization = false;
 
     // Serve this year's cached balance instantly (offline cold start still
@@ -637,9 +642,6 @@ class BahnbonusCo2Controller extends AsyncNotifier<DbBahnBonusCo2Balance?> {
       _refreshInBackground();
       return cached;
     }
-    // No pre-gate on BahnBonus authorization: the service tries the existing DB
-    // session first and only *needs* the browser link if that's rejected — in
-    // which case it throws and we flip to the connect prompt.
     try {
       return await _fetchAndPersist();
     } on DbBahnBonusAuthorizationRequired {

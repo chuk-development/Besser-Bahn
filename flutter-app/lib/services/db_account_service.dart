@@ -867,29 +867,6 @@ class DbAccountService {
         'endDate': date,
       },
     );
-    // 1) Try the EXISTING DB (kf_mobile) session first — no browser, no second
-    // login. The co2-service gateway just needs the BahnBonus app's own
-    // DB-Client-Id/DB-Api-Key (reverse-engineered) alongside the bearer.
-    // retryOn401:false is critical: a gateway rejection here must NEVER trigger
-    // a token refresh/logout of the DB session.
-    final direct = await _send('GET', uri.toString(),
-        media: 'application/json',
-        retryOn401: false,
-        extraHeaders: const {
-          'DB-Client-Id': 'b4ceb052260d1df18955c9769f2f6ee1',
-          'DB-Api-Key': 'af42968e4445cf550ad06f8b114f0cda',
-        });
-    if (direct.statusCode == 200) {
-      AppLog.log('CO2 via kf_mobile session (no BahnBonus login)',
-          tag: 'db-account');
-      return _parseCo2(direct, today);
-    }
-    AppLog.log(
-      'CO2 kf_mobile → ${direct.statusCode}; falling back to BahnBonus OAuth',
-      tag: 'db-account',
-    );
-
-    // 2) Fall back to the dedicated BahnBonus client (one-time browser link).
     final res = await _sendBahnBonus(uri, connect: connect);
     if (res.statusCode == 304 || res.statusCode == 404) return null;
     return _parseCo2(res, today);
