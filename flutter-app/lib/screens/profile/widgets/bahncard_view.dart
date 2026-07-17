@@ -7,6 +7,9 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart'
     show AndroidWebViewController;
 
+import '../../../core/bahncard_art.dart';
+import '../../../core/bahncard_art_cache.dart';
+import '../../../core/bahncard_webview_cache.dart';
 import '../../../models/db_account.dart';
 import '../../../providers/account_provider.dart';
 
@@ -17,12 +20,23 @@ bool get _webViewSupported =>
     (defaultTargetPlatform == TargetPlatform.android ||
         defaultTargetPlatform == TargetPlatform.iOS);
 
-/// Renders one BahnCard. The official `bildSicht` is an HTML document (a
-/// `<div>` with the card art as `background-image` and CSS-positioned text
-/// for the holder name, BC number, and validity dates) — rendered inside a
-/// WebView so it matches DB Navigator pixel-for-pixel. Falls back to a
-/// styled card on platforms without a WebView (or when the API doesn't
-/// supply HTML).
+/// Renders one BahnCard.
+///
+/// The official `bildSicht` is an HTML document (a `<div>` with the card art as
+/// `background-image` and CSS-positioned text for the holder name, BC number
+/// and validity dates). We render it three ways, best first:
+///
+/// 1. **Native** — [BahnCardArt] pulls the artwork out of the CSS data URI and
+///    reads the text fields' geometry, and we paint an [Image] with [Positioned]
+///    text on top. Nothing to boot, nothing to re-decode: the card is on the
+///    first frame. This is the whole point — the WebView was never waiting on
+///    the network (the bytes ship inside the 283 KB payload), it was waiting on
+///    Android to stand up a browser and re-parse a quarter megabyte of base64.
+/// 2. **WebView** — DB's markup rendered verbatim, exactly as before. Used
+///    whenever the parse finds anything it doesn't recognise, so a change to
+///    DB's HTML costs us the speed-up and nothing else.
+/// 3. **Styled placeholder** — platforms with no WebView (Linux/Windows/web),
+///    or an account whose API response carried no HTML at all.
 class BahnCardView extends StatelessWidget {
   final DbBahnCard card;
   const BahnCardView({super.key, required this.card});
@@ -31,26 +45,40 @@ class BahnCardView extends StatelessWidget {
   Widget build(BuildContext context) {
     final radius = BorderRadius.circular(16);
     final hasControl = card.kontrollSichtHtml != null;
-    final canRenderHtml = _webViewSupported && card.bildSichtHtml != null;
-    final child = canRenderHtml
-        ? ClipRRect(
-            borderRadius: radius,
-            child: AspectRatio(
-              // DB's bildSicht is laid out at ~1.538:1 (the CSS uses
-              // padding-top:65% of width). The injected fill-CSS in
-              // [_BahnCardHtml] then stretches .image to 100% height so the
-              // PNG covers the entire AspectRatio box without trailing
-              // whitespace.
-              aspectRatio: 1 / 0.65,
-              // Stretched to fill: tile is a single WebView, no overlay
-              // chip — tapping anywhere on the card opens the Kontrolle
-              // (the obvious affordance for the card surface).
-              child: IgnorePointer(
-                child: _BahnCardHtml(html: card.bildSichtHtml!, fill: true),
-              ),
+
+    final art = BahnCardArtCache.of(card);
+    final Widget child;
+    if (art != null) {
+      child = ClipRRect(
+        borderRadius: radius,
+        child: BahnCardArtView(art: art),
+      );
+    } else if (_webViewSupported && card.bildSichtHtml != null) {
+      child = ClipRRect(
+        borderRadius: radius,
+        child: AspectRatio(
+          // DB's bildSicht is laid out at ~1.538:1 (the CSS uses
+          // padding-top:65% of width). The injected fill-CSS in
+          // [_BahnCardHtml] then stretches .image to 100% height so the
+          // PNG covers the entire AspectRatio box without trailing
+          // whitespace.
+          aspectRatio: 1 / 0.65,
+          // Stretched to fill: tile is a single WebView, no overlay
+          // chip — tapping anywhere on the card opens the Kontrolle
+          // (the obvious affordance for the card surface).
+          child: IgnorePointer(
+            child: _BahnCardHtml(
+              cacheKey: 'bild:${card.nummer}',
+              html: card.bildSichtHtml!,
+              fill: true,
             ),
-          )
-        : _fallback(context);
+          ),
+        ),
+      );
+    } else {
+      child = _fallback(context);
+    }
+
     return InkWell(
       borderRadius: radius,
       onTap: hasControl ? () => _openControlView(context) : null,
@@ -124,6 +152,72 @@ class BahnCardView extends StatelessWidget {
   }
 }
 
+/// Paints a parsed [BahnCardArt]: DB's own card artwork with DB's own text
+/// fields over it, laid out from the CSS the parser read.
+///
+/// Everything [BahnCardArt] carries is a *fraction of the card box*, never a
+/// pixel — the tile is whatever width the Profil tab gives it, so the box is
+/// measured at layout time and every offset scaled to it. That is also why the
+/// font size is a fraction of the width: `4vw` on a 350 pt card is 14 pt, and on
+/// a 700 pt tablet card it has to be 28 pt or the text drifts out of the artwork
+/// it was positioned against.
+class BahnCardArtView extends StatelessWidget {
+  final BahnCardArt art;
+  const BahnCardArtView({super.key, required this.art});
+
+  @override
+  Widget build(BuildContext context) {
+    return AspectRatio(
+      aspectRatio: art.aspectRatio,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          final h = constraints.maxHeight;
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Image(
+                image: BahnCardArtCache.imageProviderFor(art),
+                fit: BoxFit.cover,
+                // The bytes are already decoded and resident — fading in would
+                // add a frame of blank card for no reason.
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.medium,
+              ),
+              for (final t in art.texts)
+                Positioned(
+                  left: t.left == null ? null : t.left! * w,
+                  right: t.right == null ? null : t.right! * w,
+                  top: t.top == null ? null : t.top! * h,
+                  bottom: t.bottom == null ? null : t.bottom! * h,
+                  child: Text(
+                    t.text,
+                    textAlign: t.textAlign,
+                    maxLines: 1,
+                    softWrap: false,
+                    // The artwork has a fixed amount of room for each field;
+                    // clipping matches what the browser does when the holder's
+                    // name is longer than DB planned for.
+                    overflow: TextOverflow.clip,
+                    style: TextStyle(
+                      color: t.color,
+                      fontSize: t.fontSize * w,
+                      fontWeight: t.fontWeight,
+                      fontStyle: t.fontStyle,
+                      letterSpacing: t.letterSpacing == null
+                          ? null
+                          : t.letterSpacing! * w,
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 /// Open DB's BahnCard Kontrollansicht for [card] — same screen as tapping the
 /// card in Profil, exposed so the Ticket view can jump to it (a conductor
 /// usually checks both, so the user needs a fast switch).
@@ -182,6 +276,14 @@ Future<void> openFirstBahnCardControl(
 /// white card with the same ~20/16 inset padding around the WebView, and
 /// metadata (BC-Nr, Gültig-bis) underneath — the official card image
 /// already carries the holder name inline so we don't duplicate it.
+///
+/// **This one stays on the WebView, deliberately.** The card face is
+/// decoration; the Kontrollsicht is the document a conductor inspects, and DB
+/// rotates its anti-fraud artwork on its own schedule
+/// ([DbBahnCard.kontrollSichtGueltigBis]). Re-implementing DB's rendering here
+/// would mean a fare check could fail on our layout bug. The speed-up isn't
+/// worth that: this screen is opened deliberately, one card at a time, and the
+/// controller cache below already spares it the reload.
 class _BahnCardControlScreen extends StatelessWidget {
   final DbBahnCard card;
   const _BahnCardControlScreen({required this.card});
@@ -202,7 +304,8 @@ class _BahnCardControlScreen extends StatelessWidget {
           // insets match TicketViewScreen so both surfaces feel consistent.
           padding: const EdgeInsets.fromLTRB(20, 32, 20, 20),
           child: (_webViewSupported && html != null)
-              ? _BahnCardHtml(html: html)
+              ? _BahnCardHtml(
+                  cacheKey: 'kontrolle:${card.nummer}', html: html)
               : const Center(
                   child: Text('Keine Kontrollansicht verfügbar.',
                       style: TextStyle(color: Colors.black54))),
@@ -218,10 +321,18 @@ class _BahnCardControlScreen extends StatelessWidget {
 /// to fill 100% of the viewport via injected CSS so the PNG covers the
 /// AspectRatio box edge-to-edge — without it the div's natural
 /// `padding-top:65%` leaves trailing white below the card.
+///
+/// [cacheKey] identifies the controller in [BahnCardWebViewCache]; it must be
+/// unique per (view, card) and stable across rebuilds.
 class _BahnCardHtml extends StatefulWidget {
+  final String cacheKey;
   final String html;
   final bool fill;
-  const _BahnCardHtml({required this.html, this.fill = false});
+  const _BahnCardHtml({
+    required this.cacheKey,
+    required this.html,
+    this.fill = false,
+  });
 
   @override
   State<_BahnCardHtml> createState() => _BahnCardHtmlState();
@@ -250,11 +361,18 @@ class _BahnCardHtmlState extends State<_BahnCardHtml> {
   @override
   void initState() {
     super.initState();
+    // The `fill` variant injects different CSS, so it needs its own entry even
+    // for the same card.
+    final key = '${widget.cacheKey}:${widget.fill}';
+    _controller = BahnCardWebViewCache.putIfAbsent(key, _build);
+  }
+
+  WebViewController _build() {
     final style = '<style>$_baseCss${widget.fill ? _fillCss : ''}</style>';
     final html = widget.html.contains('</head>')
         ? widget.html.replaceFirst('</head>', '$style</head>')
         : '$style${widget.html}';
-    _controller = WebViewController()
+    final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.disabled)
       ..setBackgroundColor(Colors.transparent)
       ..loadHtmlString(html);
@@ -263,11 +381,12 @@ class _BahnCardHtmlState extends State<_BahnCardHtml> {
     // stylesheet can reach — the platform view has to be told. The ticket view
     // already learned this the hard way; the BahnCard never got the same
     // treatment, so a scrollbar rode along the card face. No-op off Android.
-    final platform = _controller.platform;
+    final platform = controller.platform;
     if (platform is AndroidWebViewController) {
       platform.setVerticalScrollBarEnabled(false);
       platform.setHorizontalScrollBarEnabled(false);
     }
+    return controller;
   }
 
   @override

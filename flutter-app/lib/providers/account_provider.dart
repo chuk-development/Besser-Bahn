@@ -1,9 +1,12 @@
+import 'dart:async' show unawaited;
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/app_log.dart';
+import '../core/bahncard_art_cache.dart';
+import '../core/bahncard_webview_cache.dart';
 import '../models/db_account.dart';
 import '../models/db_ticket.dart';
 import '../models/journey.dart';
@@ -324,6 +327,10 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
     // profile — so a signed-out user can't read or open the previous
     // holder's data.
     await _BahnCardCache.clear();
+    // The decoded card artwork + the parsed holder name/number that ride with
+    // it, and any live WebView still holding the rendered card.
+    await BahnCardArtCache.clear();
+    BahnCardWebViewCache.clear();
     await _ReisenCache.clear();
     await _DbTicketCache.clearAll();
     await _ProfileCache.clear();
@@ -620,10 +627,20 @@ class BahncardsController extends AsyncNotifier<List<DbBahnCard>> {
     // re-save isn't needed, just hand the cached entry back.
     if (fresh == null) {
       final entry = await _BahnCardCache.load();
-      return entry.cards;
+      return _warmed(entry.cards);
     }
     await _BahnCardCache.save(fresh);
-    return fresh;
+    return _warmed(fresh);
+  }
+
+  /// Decode each card's artwork into Flutter's image cache in the background,
+  /// so the Profil tab paints a resident texture on its first frame instead of
+  /// one blank beat while the PNG decodes. Fire-and-forget: nobody waits on the
+  /// artwork to have the card *data*, and a failed decode is a slower card, not
+  /// a missing one.
+  List<DbBahnCard> _warmed(List<DbBahnCard> cards) {
+    if (cards.isNotEmpty) unawaited(BahnCardArtCache.warm(cards));
+    return cards;
   }
 
   /// Background revalidation stays conditional — see BahnbonusController.
