@@ -2,43 +2,38 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:go_router/go_router.dart';
 
-import '../../router/tab_slide.dart';
 import '../../vendor/chuk_ui/chuk_nav_bar.dart';
 import '../../widgets/app_nav_bar.dart';
 import '../../widgets/offline_banner.dart';
 
+/// The tab shell: the floating nav bar, the offline strip, and the strip of
+/// tabs itself.
+///
+/// The tabs are a [StatefulShellRoute]'s branches, and [navigationShell] is
+/// both the widget that renders them (as a `TabPager` — see
+/// `router/tab_pager.dart`) and the handle for moving between them. That is
+/// why this screen takes a shell and not a plain child: a shell route hands
+/// its builder one child at a time, which is a page swap however it is
+/// dressed up; the branches are what actually lie side by side.
 class HomeScreen extends StatefulWidget {
-  final Widget child;
+  final StatefulNavigationShell navigationShell;
 
-  const HomeScreen({super.key, required this.child});
+  const HomeScreen({super.key, required this.navigationShell});
 
-  /// How long a tab slide takes. Literally the motion the nav bar's highlight
+  /// How long a tab change takes. Literally the motion the nav bar's highlight
   /// glides and its labels collapse with — the bar and the page are one
   /// movement, and two curves would read as two separate things happening at
   /// once.
   static const slideDuration = AppNavBar.motionDuration;
   static const slideCurve = AppNavBar.motionCurve;
 
-  static int indexOfLocation(String location) {
-    if (location.startsWith('/search')) return 0;
-    if (location.startsWith('/journeys')) return 1;
-    if (location.startsWith('/nearby')) return 2;
-    if (location.startsWith('/profile')) return 3;
-    return 0;
-  }
-
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  /// The tab we are showing. Which way the slide runs is [TabSlide]'s job —
-  /// the pages animate themselves inside the router's Navigator, because the
-  /// shell may not hold on to an outgoing page: go_router hands the shell the
-  /// same GlobalKey'd child every time, and keeping the old one alive for the
-  /// length of an animation puts that key in the tree twice. The framework
-  /// then hands the element to the newcomer and the page sliding out renders
-  /// empty.
+  /// The tab we are showing — mirrored from the shell so [build] can tell a tab
+  /// change from any other rebuild. Panning there is the pager's job.
   int _index = 0;
 
   /// What the bar is showing, and what the user's last drag asked for. They
@@ -62,13 +57,19 @@ class _HomeScreenState extends State<HomeScreen> {
   /// a callback, or its own idea of "far enough". That also covers the lists
   /// nested inside a tab (the Bahnhof tab's TabBarView children), which a
   /// controller wired per screen would have missed.
+  ///
+  /// All four tabs are alive at once inside the pager, so this listener would
+  /// otherwise hear a parked tab report a scroll the user never made and
+  /// collapse the bar over a page that isn't on screen. It doesn't have to
+  /// care: `TabPager` swallows every scroll notification from a tab that is
+  /// not the current one, so only the visible page ever gets this far.
   bool _onScroll(ScrollNotification n) {
     if (n.metrics.axis == Axis.horizontal) {
-      // A sideways drag is a swipe to another page (the Bahnhof tab's inner
-      // TabBarView), not reading. The page it lands on starts at its own top
-      // and may not scroll at all, and it won't say so — it never moves, so it
-      // never notifies. Treat the swipe like a shell tab change and hand the
-      // labels back, or they'd stay hidden over, say, the station map forever.
+      // A sideways drag is a swipe to another page — the tab strip itself, or
+      // the Bahnhof tab's inner TabBarView — not reading. The page it lands on
+      // starts at its own top and may not scroll at all, and it won't say so —
+      // it never moves, so it never notifies. Hand the labels back, or they'd
+      // stay hidden over, say, the station map forever.
       if (n is UserScrollNotification && n.direction != ScrollDirection.idle) {
         _wantCollapsed = false;
         _setCollapsed(false);
@@ -105,19 +106,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final index = HomeScreen.indexOfLocation(GoRouterState.of(context).uri.path);
+    final index = widget.navigationShell.currentIndex;
     // Read during build on purpose: the rebuild is already happening (the
-    // route changed), and the direction must be known for THIS frame — a
-    // setState here would be a frame late and slide the wrong way.
+    // route changed), and the bar must be right for THIS frame — a setState
+    // here would be a frame late and flash the wrong bar over the pan.
     if (index != _index) {
-      // Hand the direction to the pages before the Navigator builds them:
-      // they run the slide, we only know which way it goes.
-      TabSlide.to(index, from: _index);
       _index = index;
       // The tab we're leaving may have been scrolled deep; the one arriving
       // starts at its own top and might not scroll at all — and a page with no
       // scrollable never sends a notification, so nothing else would ever open
-      // the bar again. Reset with the slide.
+      // the bar again. Reset with the pan.
       _collapsed = false;
       _wantCollapsed = false;
     }
@@ -138,7 +136,9 @@ class _HomeScreenState extends State<HomeScreen> {
           Expanded(
             child: NotificationListener<ScrollNotification>(
               onNotification: _onScroll,
-              child: widget.child,
+              // Builds the strip of branch Navigators (TabPager) — see the
+              // StatefulShellRoute's navigatorContainerBuilder.
+              child: widget.navigationShell,
             ),
           ),
         ],
@@ -146,18 +146,10 @@ class _HomeScreenState extends State<HomeScreen> {
       bottomNavigationBar: AppNavBar(
         collapsed: _collapsed,
         index: _index,
-        onChanged: (index) {
-          switch (index) {
-            case 0:
-              context.go('/search');
-            case 1:
-              context.go('/journeys');
-            case 2:
-              context.go('/nearby');
-            case 3:
-              context.go('/profile');
-          }
-        },
+        // The branch order in `router/app_router.dart` is the single source of
+        // truth for which tab is which — the bar just hands over an index, and
+        // the pager pans the strip the whole distance to it.
+        onChanged: widget.navigationShell.goBranch,
         items: const [
           ChukNavItem(
             icon: Icons.search_outlined,
