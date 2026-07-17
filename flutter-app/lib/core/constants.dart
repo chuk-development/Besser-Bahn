@@ -130,7 +130,7 @@ class AppConstants {
   /// in at compile time, needs no plugin channel (so it also works in tests and
   /// on desktop), yet cannot silently go stale. It had gone stale before — it
   /// read 2.0.0 while pubspec was already at 2.1.0 (#34).
-  static const appVersion = '2.1.0-rc.4';
+  static const appVersion = '2.1.0-rc.5';
 
   /// Honest, identifying User-Agent for APIs that require one.
   ///
