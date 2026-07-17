@@ -23,7 +23,7 @@ dependencies:
   shared_preferences: ^2.3.4
   path_provider: ^2.1.5          # on-disk cache for static OSM platform geometry
   flutter_svg: ^2.3.0
-  flutter_web_auth_2: ^5.0.2     # OAuth2 browser flow (Träwelling)
+  flutter_web_auth_2: ^4.1.0     # OAuth2 browser flow (Träwelling, DB). Pinned to 4.x: 5.x AuthTab needs Chrome 141+ and leaves the tab open (#35).
   flutter_secure_storage: ^10.3.1 # access/refresh token storage
   crypto: ^3.0.7                 # PKCE code challenge (SHA-256) + tile-cache keys
   flutter_local_notifications: ^21.0.0  # "Split-Ticket fertig" OS notification
