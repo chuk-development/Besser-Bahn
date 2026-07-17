@@ -788,18 +788,15 @@ class _ConnectionSearchScreenState
     JourneySearchState state,
     JourneySearchNotifier notifier,
   ) {
-    // Full-bleed frosted band, not a floating pill: spans edge-to-edge with no
-    // rounding, rim or shadow, so the glass reads as sitting *behind* the
-    // chips instead of hovering over the page (#38).
+    // No band at all — the chips float free over the results (each chip carries
+    // its own fill, so it stays legible). The earlier glass strip read as a
+    // hovering line; this lets the connections show straight through (#38).
     return Padding(
       padding: const EdgeInsets.only(top: 6),
-      child: GlassPanel(
-        flush: true,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(children: _productFilterChips(context, state, notifier)),
-        ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        child: Row(children: _productFilterChips(context, state, notifier)),
       ),
     );
   }

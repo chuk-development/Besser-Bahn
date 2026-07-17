@@ -252,6 +252,7 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
                           initialStation: state.station,
                           onSelected: (s) => notifier.loadForStation(s),
                           dense: true,
+                          bare: true,
                         ),
                       ),
                     ),
@@ -492,6 +493,14 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
             crossAxisAlignment: CrossAxisAlignment.end,
             mainAxisSize: MainAxisSize.min,
             children: [
+              // "Mein Standort" — request GPS and frame you + your target. Sits
+              // here with the other map controls (was pinned top-right, where it
+              // rode too high and collided with the floating search/switcher).
+              MapLocateButton(
+                busy: _locating,
+                onPressed: () => _locateMe(map),
+              ),
+              const SizedBox(height: 8),
               // Frame the station (or the Gleis this map was opened for) again.
               //
               // Lives on the map, with the map's other controls, rather than in
@@ -523,15 +532,6 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
                 onToggle: notifier.toggleCategory,
               ),
             ],
-          ),
-        ),
-        // "Mein Standort" button — request GPS and frame you + your target.
-        Positioned(
-          right: 8,
-          top: 8,
-          child: MapLocateButton(
-            busy: _locating,
-            onPressed: () => _locateMe(map),
           ),
         ),
         // How far you still have to walk to the target.

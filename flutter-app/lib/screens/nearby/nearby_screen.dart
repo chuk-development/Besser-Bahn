@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/departure_board_provider.dart';
@@ -50,6 +52,7 @@ class _NearbyScreenState extends ConsumerState<NearbyScreen>
     // Mirror manual swipes/taps back into the provider so external jumps stay
     // in sync. Only write once the swipe settles.
     _tabs.addListener(() {
+      _applyImmersive(_tabs.index);
       if (_tabs.indexIsChanging) return;
       if (_tabs.index != ref.read(nearbyTabProvider)) {
         ref.read(nearbyTabProvider.notifier).select(_tabs.index);
@@ -60,6 +63,17 @@ class _NearbyScreenState extends ConsumerState<NearbyScreen>
       // bahnhof.de fetch only fires when the rider actually opens the tab.
       if (_tabs.index == nearbyTabMap) _syncBoardStationToMap();
     });
+    _applyImmersive(_tabs.index);
+  }
+
+  /// Full-screen the map: on the Karte tab hide the status/nav bars so the map
+  /// owns the whole screen; restore them on Zug/Abfahrten.
+  void _applyImmersive(int index) {
+    SystemChrome.setEnabledSystemUIMode(
+      index == nearbyTabMap
+          ? SystemUiMode.immersiveSticky
+          : SystemUiMode.edgeToEdge,
+    );
   }
 
   /// A snappy tab jump. TabController defaults to 300 ms `Curves.ease`; the
@@ -105,6 +119,9 @@ class _NearbyScreenState extends ConsumerState<NearbyScreen>
           Positioned.fill(
             child: TabBarView(
               controller: _tabs,
+              // A stiffer settle so a swipe snaps to the next view instead of
+              // drifting — the heavy map made the default drift feel endless.
+              physics: const _SnappyTabPhysics(),
               children: [
                 // Zug and Abfahrten open with a search field that must clear the
                 // floating switcher, so they start below it.
@@ -164,4 +181,22 @@ class _NearbyScreenState extends ConsumerState<NearbyScreen>
       ),
     );
   }
+}
+
+/// Page physics with a stiff, quickly-damped spring — a swipe between the three
+/// Bahnhof views snaps home instead of the default long, soft glide (which felt
+/// interminable behind the heavy map). Clamping physics keeps the edges firm.
+class _SnappyTabPhysics extends ScrollPhysics {
+  const _SnappyTabPhysics({super.parent});
+
+  @override
+  _SnappyTabPhysics applyTo(ScrollPhysics? ancestor) =>
+      _SnappyTabPhysics(parent: buildParent(ancestor));
+
+  @override
+  SpringDescription get spring => SpringDescription.withDampingRatio(
+        mass: 0.5,
+        stiffness: 220,
+        ratio: 1.1,
+      );
 }
