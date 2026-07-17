@@ -16,6 +16,12 @@ class AppSettings {
   /// per trip from the search form and persisted.
   final SearchParty searchParty;
 
+  /// True once the rider has explicitly edited the party (the advanced
+  /// "Reisende" sheet). After that, nothing auto-re-seeds it — a DB-account
+  /// restore or a BahnCard change must never wipe "1 Erwachsener + 1 Kind" back
+  /// to a lone adult (#43).
+  final bool partyCustomized;
+
   /// When true, the in-train Träwelling check-in button checks in immediately
   /// (origin → destination, [trwlVisibility]) without the confirm sheet.
   final bool trwlAutoCheckin;
@@ -69,6 +75,7 @@ class AppSettings {
     this.exitAlarmEnabled = false,
     this.transferProfile = TransferProfile.normal,
     this.searchParty = const SearchParty(),
+    this.partyCustomized = false,
   });
 
   AppSettings copyWith({
@@ -86,6 +93,7 @@ class AppSettings {
     bool? exitAlarmEnabled,
     TransferProfile? transferProfile,
     SearchParty? searchParty,
+    bool? partyCustomized,
   }) {
     return AppSettings(
       bahnCard: bahnCard ?? this.bahnCard,
@@ -102,6 +110,7 @@ class AppSettings {
       exitAlarmEnabled: exitAlarmEnabled ?? this.exitAlarmEnabled,
       transferProfile: transferProfile ?? this.transferProfile,
       searchParty: searchParty ?? this.searchParty,
+      partyCustomized: partyCustomized ?? this.partyCustomized,
     );
   }
 }
@@ -136,6 +145,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
       // search behaves exactly as before until the user customises the party.
       searchParty: SearchParty.tryDecode(prefs.getString('searchParty')) ??
           SearchParty.fromSettings(bahnCard, dTicket),
+      partyCustomized: prefs.getBool('partyCustomized') ?? false,
     );
   }
 
@@ -155,15 +165,19 @@ class SettingsNotifier extends Notifier<AppSettings> {
     await prefs.setBool('exitAlarmEnabled', state.exitAlarmEnabled);
     await prefs.setString('transferProfile', state.transferProfile.name);
     await prefs.setString('searchParty', state.searchParty.encode());
+    await prefs.setBool('partyCustomized', state.partyCustomized);
   }
 
   void setBahnCard(BahnCardType card) {
-    // Setting "my" card also re-seeds the search party to a single adult with
-    // that card — the simple settings path mirrors the old behaviour for users
-    // who never open the advanced "Reisende" sheet.
+    // Setting "my" card re-seeds the party to a single adult with that card —
+    // the simple settings path for users who never open the advanced sheet. But
+    // once the party has been customised, leave it alone (#43): just carry the
+    // new card into the existing party.
     state = state.copyWith(
       bahnCard: card,
-      searchParty: SearchParty.fromSettings(card, state.hasDeutschlandTicket),
+      searchParty: state.partyCustomized
+          ? state.searchParty
+          : SearchParty.fromSettings(card, state.hasDeutschlandTicket),
     );
     _save();
   }
@@ -177,7 +191,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
   }
 
   void setSearchParty(SearchParty party) {
-    state = state.copyWith(searchParty: party);
+    // An explicit edit — from now on nothing auto-re-seeds the party (#43).
+    state = state.copyWith(searchParty: party, partyCustomized: true);
     _save();
   }
 
@@ -196,7 +211,12 @@ class SettingsNotifier extends Notifier<AppSettings> {
       age: age ?? state.age,
       bahnCard: newCard,
       hasDeutschlandTicket: newDTicket,
-      searchParty: SearchParty.fromSettings(newCard, newDTicket),
+      // Seed the party from the account only if the rider hasn't set their own.
+      // This runs on every DB restore, so clobbering here reset a customised
+      // party on every app start (#43).
+      searchParty: state.partyCustomized
+          ? state.searchParty.copyWith(deutschlandTicket: newDTicket)
+          : SearchParty.fromSettings(newCard, newDTicket),
     );
     _save();
   }

@@ -58,6 +58,17 @@ class JourneysScreen extends ConsumerWidget {
     final pastTickets = ticketTrips.where((t) => t.isPast).toList();
     final savedReisen =
         loggedIn ? ref.watch(savedReisenProvider) : null;
+    // A gemerkte Reise whose start day is already behind us belongs under
+    // "Vergangene Reisen", not on top as if it still lay ahead (#46).
+    final savedList = savedReisen?.asData?.value ?? const <DbSavedReiseIndex>[];
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+    bool reiseIsPast(DbSavedReiseIndex s) =>
+        s.startDatum != null && s.startDatum!.isBefore(todayStart);
+    final savedUpcoming = savedList.where((s) => !reiseIsPast(s)).toList();
+    final savedPast = savedList.where(reiseIsPast).toList()
+      ..sort((a, b) => (b.startDatum ?? DateTime(0))
+          .compareTo(a.startDatum ?? DateTime(0)));
     final hasLocal = upcoming.isNotEmpty || past.isNotEmpty;
 
     return Scaffold(
@@ -120,23 +131,13 @@ class JourneysScreen extends ConsumerWidget {
                       ),
                     ),
                   // Gemerkte Reisen — official "Meine Reisen" the user marked
-                  // on DB. Rendered as JourneyCard via the per-rkUuid lookup.
-                  if (loggedIn && savedReisen != null)
-                    savedReisen.when(
-                      data: (list) => list.isEmpty
-                          ? const SizedBox.shrink()
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _sectionHeader(
-                                    context, 'Gemerkte Reisen', list.length),
-                                for (final s in list)
-                                  _SavedReiseTile(index: s),
-                              ],
-                            ),
-                      loading: () => const SizedBox.shrink(),
-                      error: (_, _) => const SizedBox.shrink(),
-                    ),
+                  // on DB, minus the ones already behind us (those drop to
+                  // "Vergangene Reisen" below, #46).
+                  if (savedUpcoming.isNotEmpty) ...[
+                    _sectionHeader(
+                        context, 'Gemerkte Reisen', savedUpcoming.length),
+                    for (final s in savedUpcoming) _SavedReiseTile(index: s),
+                  ],
                   if (upcoming.isNotEmpty) ...[
                     _sectionHeader(
                         context, 'Anstehende Reisen', upcoming.length),
@@ -144,10 +145,14 @@ class JourneysScreen extends ConsumerWidget {
                   ],
                   // (past trips below — a DB trip that already rendered above
                   // is filtered out of `upcoming`, see the build header.)
-                  if (past.isNotEmpty || pastTickets.isNotEmpty) ...[
+                  if (past.isNotEmpty ||
+                      pastTickets.isNotEmpty ||
+                      savedPast.isNotEmpty) ...[
                     _sectionHeader(context, 'Vergangene Reisen',
-                        past.length + pastTickets.length),
+                        past.length + pastTickets.length + savedPast.length),
                     ..._pastRows(context, ref, past, pastTickets),
+                    for (final s in savedPast)
+                      _SavedReiseTile(index: s, past: true),
                   ],
                 ],
               ),
@@ -359,17 +364,21 @@ Future<void> _deleteDbReise(WidgetRef ref, String key) async {
 
 class _SavedReiseTile extends ConsumerWidget {
   final DbSavedReiseIndex index;
-  const _SavedReiseTile({required this.index});
+
+  /// Rendered under "Vergangene Reisen" — dimmed like the other past trips.
+  final bool past;
+  const _SavedReiseTile({required this.index, this.past = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final journey = ref.watch(savedReiseJourneyProvider(index.rkUuid));
     final j = journey.asData?.value;
+    final Widget content;
     if (j != null && j.legs.isNotEmpty) {
       // Swipeable like a local trip: a "Gemerkte Reise" had no delete
       // affordance at all here, so a trip orphaned in the DB account couldn't
       // be removed from this screen by any gesture (#15).
-      return Dismissible(
+      content = Dismissible(
         key: ValueKey('db-${index.rkUuid}'),
         direction: DismissDirection.endToStart,
         background: Container(
@@ -411,20 +420,22 @@ class _SavedReiseTile extends ConsumerWidget {
           ],
         ),
       );
+    } else {
+      final theme = Theme.of(context);
+      content = Card(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        child: ListTile(
+          leading: Icon(Icons.bookmark, color: theme.colorScheme.primary),
+          title: Text(index.startDatum != null
+              ? DateFormat('EEE, dd.MM.yyyy · HH:mm', 'de')
+                  .format(index.startDatum!)
+              : 'Gemerkte Reise'),
+          subtitle:
+              Text(journey is AsyncLoading ? 'lädt…' : 'Konnte nicht laden'),
+        ),
+      );
     }
-    final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: ListTile(
-        leading: Icon(Icons.bookmark, color: theme.colorScheme.primary),
-        title: Text(index.startDatum != null
-            ? DateFormat('EEE, dd.MM.yyyy · HH:mm', 'de')
-                .format(index.startDatum!)
-            : 'Gemerkte Reise'),
-        subtitle:
-            Text(journey is AsyncLoading ? 'lädt…' : 'Konnte nicht laden'),
-      ),
-    );
+    return past ? Opacity(opacity: 0.55, child: content) : content;
   }
 }
 
