@@ -3,6 +3,7 @@ import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:go_router/go_router.dart';
 
 import '../../vendor/chuk_ui/chuk_nav_bar.dart';
+import '../../widgets/offline_auto_sweep.dart';
 import '../../widgets/app_nav_bar.dart';
 import '../../widgets/offline_banner.dart';
 
@@ -132,6 +133,8 @@ class _HomeScreenState extends State<HomeScreen> {
       // so the user always knows when they're on cached data.
       body: Column(
         children: [
+          // Keeps upcoming trips' offline packages fresh on app open (#45).
+          const OfflineAutoSweep(),
           const OfflineBanner(),
           Expanded(
             child: NotificationListener<ScrollNotification>(
