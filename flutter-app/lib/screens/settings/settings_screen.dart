@@ -157,8 +157,23 @@ class SettingsScreen extends ConsumerWidget {
                       await ref
                           .read(locationServiceProvider)
                           .ensureBackgroundPermission();
+                      // Both permissions must hold BEFORE we enable: an exit
+                      // alarm that can't post a notification would just burn
+                      // background GPS with no way to warn the rider.
+                      final canNotify =
+                          await NotificationService.requestPermissions();
+                      if (!canNotify) {
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                              content: Text(
+                                  'Ohne Benachrichtigungen kann der Ausstiegsalarm '
+                                  'dich nicht warnen — bitte in den Systemeinstellungen '
+                                  'erlauben.')),
+                        );
+                        return;
+                      }
                       notifier.setExitAlarmEnabled(true);
-                      await NotificationService.requestPermissions();
                     } catch (e) {
                       if (!context.mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(

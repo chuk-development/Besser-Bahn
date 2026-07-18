@@ -23,6 +23,7 @@ class NotificationService {
   static bool _exactAlarms = false;
   static const _missedPayloadPrefix = 'missed-connection:';
   static const _pendingMissedKey = 'pending_missed_connection_v1';
+  static const _missedCategoryId = 'missed_alternatives_category';
   static final _missedRescues =
       StreamController<MissedConnectionRescue>.broadcast();
 
@@ -80,14 +81,34 @@ class NotificationService {
     try {
       await _initTimeZone();
       const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-      // iOS perms are requested on demand (below), not at init.
-      const darwin = DarwinInitializationSettings(
+      // iOS perms are requested on demand (below), not at init. The missed-
+      // connection category registers the two action buttons so iOS/macOS show
+      // "Alternativen suchen" / "Nein" — WITHOUT it a body tap is the only
+      // interaction and would be misread as approval (see _handleResponse).
+      final darwin = DarwinInitializationSettings(
         requestAlertPermission: false,
         requestBadgePermission: false,
         requestSoundPermission: false,
+        notificationCategories: [
+          DarwinNotificationCategory(
+            _missedCategoryId,
+            actions: [
+              DarwinNotificationAction.plain(
+                'missed_alternatives',
+                'Alternativen suchen',
+                options: {DarwinNotificationActionOption.foreground},
+              ),
+              DarwinNotificationAction.plain(
+                'missed_no',
+                'Nein',
+                options: {DarwinNotificationActionOption.destructive},
+              ),
+            ],
+          ),
+        ],
       );
       await _plugin.initialize(
-        settings: const InitializationSettings(
+        settings: InitializationSettings(
           android: android,
           iOS: darwin,
           macOS: darwin,
@@ -132,12 +153,15 @@ class NotificationService {
 
   /// Ask the OS for permission to post notifications (Android 13+ / iOS). Safe
   /// to call repeatedly — the OS only prompts the first time.
-  static Future<void> _ensurePermission() async {
+  /// Returns whether we may post notifications now (best-effort: the OS APIs
+  /// return null on platforms/versions without a runtime prompt, which we treat
+  /// as granted). Callers that gate a feature on delivery use this.
+  static Future<bool> _ensurePermission() async {
     try {
       final android = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
       if (android != null) {
-        await android.requestNotificationsPermission();
+        final granted = await android.requestNotificationsPermission();
         // Exact alarms (Android 13+): needed so "30 min vorher" lands on the
         // minute, not whenever Doze feels like it (inexact alarms get batched
         // and can be delivered HOURS late — e.g. only when the user unlocks).
@@ -155,13 +179,16 @@ class NotificationService {
           _exactAlarms =
               await android.canScheduleExactNotifications() ?? _exactAlarms;
         }
-        return;
+        return granted ?? true;
       }
       final ios = _plugin.resolvePlatformSpecificImplementation<
           IOSFlutterLocalNotificationsPlugin>();
-      await ios?.requestPermissions(alert: true, badge: true, sound: true);
+      final granted =
+          await ios?.requestPermissions(alert: true, badge: true, sound: true);
+      return granted ?? true;
     } catch (e) {
       AppLog.log('notification permission request failed ($e)', tag: 'notify');
+      return false;
     }
   }
 
@@ -271,8 +298,10 @@ class NotificationService {
             ),
           ],
         ),
-        iOS: const DarwinNotificationDetails(),
-        macOS: const DarwinNotificationDetails(),
+        iOS: const DarwinNotificationDetails(
+            categoryIdentifier: _missedCategoryId),
+        macOS: const DarwinNotificationDetails(
+            categoryIdentifier: _missedCategoryId),
       );
       await _plugin.show(
         id: 4000 + (id % 1000),
@@ -366,7 +395,8 @@ class NotificationService {
   /// Ask for notification + exact-alarm permission up front (e.g. when the user
   /// flips the reminders toggle on). Returns nothing; grant state is tracked
   /// internally for scheduling.
-  static Future<void> requestPermissions() => _ensurePermission();
+  /// Ask for notification permission; returns whether it's granted (best-effort).
+  static Future<bool> requestPermissions() => _ensurePermission();
 
   static NotificationDetails _tripDetails() => const NotificationDetails(
         android: AndroidNotificationDetails(
@@ -424,12 +454,11 @@ class NotificationService {
   static Future<void> _handleResponse(NotificationResponse response) async {
     final payload = response.payload;
     if (payload == null || !payload.startsWith(_missedPayloadPrefix)) return;
-    if (response.actionId == 'missed_no') return;
-    if (response.actionId != null &&
-        response.actionId!.isNotEmpty &&
-        response.actionId != 'missed_alternatives') {
-      return;
-    }
+    // Only the explicit "Alternativen suchen" action arms the rescue. A body
+    // tap (null/empty actionId — the only interaction iOS offers without the
+    // category, and possible on Android too) or the "Nein" action must never
+    // be read as approval: we'd silently prep a search the rider didn't ask for.
+    if (response.actionId != 'missed_alternatives') return;
     try {
       final raw = payload.substring(_missedPayloadPrefix.length);
       final rescue = MissedConnectionRescue.decode(raw);

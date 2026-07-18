@@ -51,13 +51,7 @@ class BackgroundTripController extends Notifier<bool> {
         : null;
 
     if (active == null) {
-      await BackgroundTripTracking.clearPlan();
-      try {
-        if (await LibreLocation.isTracking) await LibreLocation.stop();
-      } catch (e) {
-        AppLog.log('background tracking stop failed ($e)', tag: 'live');
-      }
-      state = false;
+      await _deactivate();
       return;
     }
 
@@ -67,13 +61,19 @@ class BackgroundTripController extends Notifier<bool> {
       ringAlarm: settings.arrivalAlarmSound,
       liveTrips: live.activeKey == active.key ? live.trips : const {},
     );
-    if (plan.legs.isEmpty) return;
+    // No usable route (e.g. a leg without coordinates): tear down any service
+    // still running the previous plan — otherwise it keeps processing positions
+    // for a journey that's no longer being tracked.
+    if (plan.legs.isEmpty) {
+      await _deactivate();
+      return;
+    }
     await BackgroundTripTracking.writePlan(plan);
 
     try {
       final permission = await LibreLocation.checkPermission();
       if (permission != LocationPermission.always) {
-        state = false;
+        await _deactivate();
         return;
       }
       _locations ??= LibreLocation.onLocation.listen(
@@ -102,6 +102,33 @@ class BackgroundTripController extends Notifier<bool> {
     }
   }
 
+  /// Tear the tracker down completely: drop the persisted plan, cancel our
+  /// location subscription (so no stale listener survives a later re-enable),
+  /// and stop the native service. Every path that decides "nothing to track"
+  /// routes through here so a previous plan can never keep running.
+  Future<void> _deactivate() async {
+    await _locations?.cancel();
+    _locations = null;
+    await BackgroundTripTracking.clearPlan();
+    try {
+      if (await LibreLocation.isTracking) await LibreLocation.stop();
+    } catch (e) {
+      AppLog.log('background tracking stop failed ($e)', tag: 'live');
+    }
+    state = false;
+  }
+
+  // The watched trip whose window (departure −1h … arrival +4h) contains now.
+  //
+  // KNOWN LIMITATION (tracked): activation is driven by provider emissions, so
+  // it fires when the app is in the foreground at any point in the window —
+  // including when the user taps the scheduled "Bereit machen" reminder, which
+  // opens the app and re-runs [_sync]. If the app stays fully closed for the
+  // whole pre-departure hour, nothing starts the service until it's next
+  // opened. Truly unattended start would need a native exact-alarm →
+  // foreground-service bridge (AlarmManager receiver); deferred because modern
+  // Android forbids starting a foreground service from the background without
+  // it, and that native plumbing lives in MainActivity.
   SavedJourney? _pickActive(List<SavedJourney> journeys) {
     final now = DateTime.now();
     final candidates = journeys.where((saved) {

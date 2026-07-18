@@ -281,7 +281,30 @@ class BackgroundTripTracking {
     }
   }
 
-  static Future<void> processSample(JourneyPositionSample sample) async {
+  /// Serialises processing WITHIN this isolate: rapid location callbacks must
+  /// not interleave the load → mutate → persist of the tracking state, or two
+  /// overlapping samples could clobber each other's evidence counters. (The UI
+  /// and headless isolates can't overlap in practice — the headless one only
+  /// runs after Android has torn the UI process down.)
+  static Future<void> _queue = Future<void>.value();
+
+  static Future<void> processSample(JourneyPositionSample sample) {
+    final next = _queue.then((_) => _processSample(sample));
+    _queue = next.catchError((_) {});
+    return next;
+  }
+
+  /// Best-effort time gate: is [now] within the leg's scheduled window (plus its
+  /// reported delay and generous slack)? Used to prefer the leg actually being
+  /// ridden over a finished/overlapping one that's still geometrically near.
+  static bool _timePlausible(TrackedJourneyLeg leg, DateTime now) {
+    final delay = Duration(seconds: leg.route.first.reportedDelaySeconds);
+    final from = leg.departure.subtract(const Duration(minutes: 15));
+    final to = leg.arrival.add(delay).add(const Duration(minutes: 30));
+    return !now.isBefore(from) && !now.isAfter(to);
+  }
+
+  static Future<void> _processSample(JourneyPositionSample sample) async {
     final prefs = await SharedPreferences.getInstance();
     // Headless and UI isolates have separate caches.
     await prefs.reload();
@@ -298,15 +321,26 @@ class BackgroundTripTracking {
 
     TrackedJourneyLeg? selected;
     JourneyPositionInference? inference;
+    var selectedPlausible = false;
     final inferences = <String, JourneyPositionInference>{};
     for (final leg in plan.legs) {
       final candidate = _intelligence.evaluate(leg, sample);
       if (candidate == null) continue;
       inferences[leg.id] = candidate;
-      if (inference == null ||
-          candidate.distanceToRouteMetres < inference.distanceToRouteMetres) {
+      // Distance alone lets a finished leg (still geometrically near its
+      // corridor) or an overlapping/return leg outrank the one actually being
+      // ridden — which would suppress the outgoing exit alert and confuse the
+      // missed-connection logic after a transfer. Prefer a leg whose timetable
+      // window contains now; only then break ties by distance.
+      final plausible = _timePlausible(leg, sample.timestamp);
+      final better = inference == null ||
+          (plausible && !selectedPlausible) ||
+          (plausible == selectedPlausible &&
+              candidate.distanceToRouteMetres < inference.distanceToRouteMetres);
+      if (better) {
         selected = leg;
         inference = candidate;
+        selectedPlausible = plausible;
       }
     }
     if (selected == null || inference == null) return;
@@ -316,6 +350,12 @@ class BackgroundTripTracking {
       state.resetJourney(plan.journeyKey);
     }
     if (state.legId != selected.id) state.switchLeg(selected.id);
+
+    // Only a genuinely newer fix advances the evidence counters. A duplicate or
+    // replayed delivery (same/older timestamp) could otherwise satisfy the
+    // 2-measurement thresholds on its own and fire a false delay/missed prompt.
+    final isNewSample =
+        state.lastSampleAt == null || sample.timestamp.isAfter(state.lastSampleAt!);
 
     MissedConnectionRescue? missedRescue;
     for (final leg in plan.legs) {
@@ -342,9 +382,11 @@ class BackgroundTripTracking {
           inWindow &&
           !clearlyBoarded &&
           (rescue.isConnection ? selected.id != leg.id : selected.id == leg.id);
-      state.missedEvidence[leg.id] = plausible
-          ? (state.missedEvidence[leg.id] ?? 0) + 1
-          : 0;
+      if (isNewSample) {
+        state.missedEvidence[leg.id] = plausible
+            ? (state.missedEvidence[leg.id] ?? 0) + 1
+            : 0;
+      }
       if ((state.missedEvidence[leg.id] ?? 0) >= 2) {
         state.missedPromptedLegs.add(leg.id);
         missedRescue = rescue;
@@ -352,22 +394,34 @@ class BackgroundTripTracking {
       }
     }
 
+    final delayBucket = (inference.inferredDelayMinutes ~/ 5) * 5;
     final forward =
         state.lastProgress == null ||
         inference.progress >= state.lastProgress! - .015;
-    if (missedRescue == null &&
-        !inference.shouldNotifyExit &&
-        inference.progress >= .05 &&
-        inference.progress <= .97 &&
-        inference.suggestsUnreportedDelay &&
-        forward) {
-      state.delayEvidence++;
-    } else {
-      state.delayEvidence = 0;
+    if (isNewSample) {
+      final qualifies = missedRescue == null &&
+          !inference.shouldNotifyExit &&
+          inference.progress >= .05 &&
+          inference.progress <= .97 &&
+          inference.suggestsUnreportedDelay &&
+          forward;
+      // Evidence must agree on the SAME delay bucket across measurements —
+      // otherwise two unrelated blips at different magnitudes could combine.
+      if (qualifies &&
+          state.delayEvidence > 0 &&
+          delayBucket == state.delayEvidenceBucket) {
+        state.delayEvidence++;
+      } else if (qualifies) {
+        state.delayEvidence = 1;
+        state.delayEvidenceBucket = delayBucket;
+      } else {
+        state.delayEvidence = 0;
+        state.delayEvidenceBucket = 0;
+      }
+      state.lastProgress = inference.progress;
+      state.lastSampleAt = sample.timestamp;
     }
-    state.lastProgress = inference.progress;
 
-    final delayBucket = (inference.inferredDelayMinutes ~/ 5) * 5;
     final notifyDelay =
         state.delayEvidence >= 2 &&
         delayBucket >= 5 &&
@@ -452,7 +506,9 @@ class _TrackingState {
   String? journeyKey;
   String? legId;
   double? lastProgress;
+  DateTime? lastSampleAt;
   int delayEvidence;
+  int delayEvidenceBucket;
   final Map<String, int> delayBuckets;
   final Set<String> exitNotifiedLegs;
   final Map<String, int> missedEvidence;
@@ -462,7 +518,9 @@ class _TrackingState {
     this.journeyKey,
     this.legId,
     this.lastProgress,
+    this.lastSampleAt,
     this.delayEvidence = 0,
+    this.delayEvidenceBucket = 0,
     Map<String, int>? delayBuckets,
     Set<String>? exitNotifiedLegs,
     Map<String, int>? missedEvidence,
@@ -476,7 +534,11 @@ class _TrackingState {
     journeyKey: json?['journeyKey'] as String?,
     legId: json?['legId'] as String?,
     lastProgress: (json?['lastProgress'] as num?)?.toDouble(),
+    lastSampleAt: json?['lastSampleAt'] is String
+        ? DateTime.tryParse(json!['lastSampleAt'] as String)
+        : null,
     delayEvidence: (json?['delayEvidence'] as num?)?.toInt() ?? 0,
+    delayEvidenceBucket: (json?['delayEvidenceBucket'] as num?)?.toInt() ?? 0,
     delayBuckets:
         (json?['delayBuckets'] as Map?)?.map(
           (key, value) => MapEntry(key.toString(), (value as num).toInt()),
@@ -501,7 +563,9 @@ class _TrackingState {
     journeyKey = journey;
     legId = null;
     lastProgress = null;
+    lastSampleAt = null;
     delayEvidence = 0;
+    delayEvidenceBucket = 0;
     delayBuckets.clear();
     exitNotifiedLegs.clear();
     missedEvidence.clear();
@@ -512,13 +576,16 @@ class _TrackingState {
     legId = leg;
     lastProgress = null;
     delayEvidence = 0;
+    delayEvidenceBucket = 0;
   }
 
   Map<String, dynamic> toJson() => {
     'journeyKey': journeyKey,
     'legId': legId,
     'lastProgress': lastProgress,
+    'lastSampleAt': lastSampleAt?.toIso8601String(),
     'delayEvidence': delayEvidence,
+    'delayEvidenceBucket': delayEvidenceBucket,
     'delayBuckets': delayBuckets,
     'exitNotifiedLegs': exitNotifiedLegs.toList(),
     'missedEvidence': missedEvidence,
