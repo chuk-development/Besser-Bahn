@@ -1,7 +1,54 @@
 import '../models/journey.dart';
+import '../models/station.dart';
+import '../models/trip.dart';
 
 /// German short weekday names (Mon=1 … Sun=7), as DB writes them ("Fr.").
 const _weekdayDe = ['Mo.', 'Di.', 'Mi.', 'Do.', 'Fr.', 'Sa.', 'So.'];
+
+/// Stopover in [trip] for [station] — match by id, fall back to name. Mirrors
+/// the connection detail's matcher so a shared journey reads the SAME realtime
+/// stop the detail screen shows.
+Stopover? _stopFor(Trip trip, Station station) {
+  if (station.id.isNotEmpty) {
+    for (final so in trip.stopovers) {
+      if (so.stop.id == station.id) return so;
+    }
+  }
+  for (final so in trip.stopovers) {
+    if (station.name.isNotEmpty && so.stop.name == station.name) return so;
+  }
+  return null;
+}
+
+/// Realtime departure platform for [leg], preferring the freshly-fetched [live]
+/// trip's stop (which carries `ezGleis`) over the leg's search-time value — so a
+/// Gleiswechsel announced after the search still shows in the share (#50).
+String? _livePlatform(JourneyLeg leg, Map<String, Trip>? live,
+    {required bool arrival}) {
+  final id = leg.tripId;
+  final trip = (id != null && live != null) ? live[id] : null;
+  if (trip != null) {
+    final so = _stopFor(trip, arrival ? leg.destination : leg.origin);
+    final p = arrival ? so?.arrivalPlatform : so?.departurePlatform;
+    if (p != null) return p;
+  }
+  return arrival ? leg.arrivalPlatform : leg.departurePlatform;
+}
+
+DateTime? _liveTime(JourneyLeg leg, Map<String, Trip>? live,
+    {required bool arrival}) {
+  final id = leg.tripId;
+  final trip = (id != null && live != null) ? live[id] : null;
+  if (trip != null) {
+    final so = _stopFor(trip, arrival ? leg.destination : leg.origin);
+    final t = arrival ? (so?.arrival ?? so?.plannedArrival)
+        : (so?.departure ?? so?.plannedDeparture);
+    if (t != null) return t;
+  }
+  return arrival
+      ? (leg.arrival ?? leg.plannedArrival)
+      : (leg.departure ?? leg.plannedDeparture);
+}
 
 String _hhmm(DateTime? t) {
   if (t == null) return '';
@@ -39,7 +86,11 @@ String _lineLabel(JourneyLeg leg) {
 ///   …
 ///
 ///   Verbindung ansehen: https://www.bahn.de/buchung/start?vbid=…
-String journeyShareText(Journey journey, String link) {
+/// [live] optionally maps `leg.tripId` → a freshly-fetched [Trip]; when given,
+/// each leg's platform and time are read from it (realtime `ezGleis`), so the
+/// share reflects a Gleiswechsel/delay the search snapshot didn't have (#50).
+String journeyShareText(Journey journey, String link,
+    {Map<String, Trip>? live}) {
   final o = journey.origin?.name ?? '';
   final d = journey.destination?.name ?? '';
   final dep = (journey.plannedDeparture ?? journey.departure)?.toLocal();
@@ -56,13 +107,13 @@ String journeyShareText(Journey journey, String link) {
     b.writeln(_lineLabel(leg));
     final dir = leg.direction?.trim();
     if (dir != null && dir.isNotEmpty) b.writeln('Nach $dir');
-    final abG =
-        leg.departurePlatform != null ? ', Gleis ${leg.departurePlatform}' : '';
-    final anG =
-        leg.arrivalPlatform != null ? ', Gleis ${leg.arrivalPlatform}' : '';
-    b.writeln('Ab ${_hhmm(leg.departure ?? leg.plannedDeparture)} '
+    final depPlat = _livePlatform(leg, live, arrival: false);
+    final arrPlat = _livePlatform(leg, live, arrival: true);
+    final abG = depPlat != null ? ', Gleis $depPlat' : '';
+    final anG = arrPlat != null ? ', Gleis $arrPlat' : '';
+    b.writeln('Ab ${_hhmm(_liveTime(leg, live, arrival: false))} '
         '${leg.origin.name}$abG');
-    b.writeln('An ${_hhmm(leg.arrival ?? leg.plannedArrival)} '
+    b.writeln('An ${_hhmm(_liveTime(leg, live, arrival: true))} '
         '${leg.destination.name}$anG');
   }
 
@@ -78,12 +129,12 @@ String journeyShareText(Journey journey, String link) {
 ///   Ankunft ~20:22, Gleis 7 (ICE 705)
 ///   +6 Min später als geplant
 ///   Live verfolgen: https://www.bahn.de/buchung/start?vbid=…
-String etaShareText(Journey journey, String link) {
+String etaShareText(Journey journey, String link, {Map<String, Trip>? live}) {
   final d = journey.destination?.name ?? 'Ziel';
   final transit = journey.legs.where((l) => !l.isWalking).toList();
   final last = transit.isEmpty ? null : transit.last;
-  final arr = last?.arrival ?? last?.plannedArrival;
-  final plat = last?.arrivalPlatform ?? last?.plannedArrivalPlatform;
+  final arr = last == null ? null : _liveTime(last, live, arrival: true);
+  final plat = last == null ? null : _livePlatform(last, live, arrival: true);
   final line = last?.line?.displayName;
   final delay = last?.arrivalDelayMinutes ?? 0;
 

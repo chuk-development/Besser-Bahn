@@ -5,6 +5,7 @@ import '../core/constants.dart';
 import '../core/polyline_cache.dart';
 import '../models/station.dart';
 import '../models/departure.dart';
+import '../models/journey.dart';
 import '../models/trip.dart';
 import 'offline_store.dart';
 import 'vendo_service.dart';
@@ -118,6 +119,25 @@ class HafasService {
         rethrow;
       }
     }
+  }
+
+  /// Realtime [Trip] per transit leg of [journey], keyed by `leg.tripId` — the
+  /// freshest run (with `ezGleis`/live times) for each train, fetched in
+  /// parallel. A leg whose fetch fails is simply omitted, so callers fall back
+  /// to the leg's search-time values. Used to make a shared/ETA text reflect a
+  /// Gleiswechsel or delay the original search snapshot didn't have (#50).
+  Future<Map<String, Trip>> liveTripsFor(Journey journey) async {
+    final ids = journey.legs
+        .where((l) => !l.isWalking && (l.tripId?.isNotEmpty ?? false))
+        .map((l) => l.tripId!)
+        .toSet();
+    final out = <String, Trip>{};
+    await Future.wait(ids.map((id) async {
+      try {
+        out[id] = await getTrip(id);
+      } catch (_) {/* keep the search-time value for this leg */}
+    }));
+    return out;
   }
 
   /// The stored `/mob/zuglauf` payload for [tripId], re-parsed. Null when no
