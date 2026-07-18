@@ -238,12 +238,32 @@ PlatformLine? fitLine(List<math.Point<double>> pts) {
   }
   if (out.isEmpty) return empty;
 
+  // The island's robust axis (fit through the lift/escalator anchors + this
+  // island's Gleis markers) is the platform's true direction — far steadier
+  // than fitting through the few resolved cubes, which can sit slightly off
+  // and tilt the train. Fall back to the cube fit only when no island axis.
+  final axis = (ourKey != null ? lines[ourKey] : null) ??
+      fitLine([for (final c in out) xy(c.pos.latitude, c.pos.longitude)]);
+
   // Nudge from the platform centre toward the boarding rail.
   var dLat = 0.0, dLon = 0.0;
   final partner = _islandPartner(map, plat, level, g, gleiseByKey, ourKey);
   if (partner != null) {
-    final ex = (plat.longitude - partner.longitude) * mlon;
-    final ey = (plat.latitude - partner.latitude) * mlat;
+    var ex = (plat.longitude - partner.longitude) * mlon;
+    var ey = (plat.latitude - partner.latitude) * mlat;
+    // The two Gleis markers of one island can be offset LENGTHWISE by bahnhof.de
+    // (Berlin Hbf 13/14 sit ~29 m apart, mostly along the platform), so the raw
+    // marker-to-marker vector is a poor "toward the rail" direction — it would
+    // shove the cubes down the platform instead of across to this Gleis's own
+    // track, and the OSM edge match then picks the neighbour's rail (train on 13
+    // for Gleis 14). Keep only the component ACROSS the axis, which always
+    // points at our track however the markers are strung out.
+    if (axis != null) {
+      final px = -axis.dy, py = axis.dx; // unit normal to the platform axis
+      final proj = ex * px + ey * py;
+      ex = px * proj;
+      ey = py * proj;
+    }
     final norm = math.sqrt(ex * ex + ey * ey);
     if (norm > 0.5) {
       final shift = math.min(6.0, norm * 0.45); // metres toward the Gleis
@@ -251,12 +271,6 @@ PlatformLine? fitLine(List<math.Point<double>> pts) {
       dLat = ey / norm * shift / mlat;
     }
   }
-  // The island's robust axis (fit through the lift/escalator anchors + this
-  // island's Gleis markers) is the platform's true direction — far steadier
-  // than fitting through the few resolved cubes, which can sit slightly off
-  // and tilt the train. Fall back to the cube fit only when no island axis.
-  final axis = (ourKey != null ? lines[ourKey] : null) ??
-      fitLine([for (final c in out) xy(c.pos.latitude, c.pos.longitude)]);
   return (cubes: out, dLat: dLat, dLon: dLon, axis: axis);
 }
 
