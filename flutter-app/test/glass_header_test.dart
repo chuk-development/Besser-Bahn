@@ -123,10 +123,15 @@ Finder get _resultsList => find.byWidgetPredicate(
 EdgeInsets _resultsPadding(WidgetTester tester) =>
     tester.widget<ListView>(_resultsList).padding! as EdgeInsets;
 
-/// The bottom edge of the lowest piece of floating glass — everything the
-/// header covers ends at or above this.
-double _glassBottom(WidgetTester tester) =>
-    tester.getRect(find.byType(GlassPanel).last).bottom;
+/// The bottom edge of the floating header — everything it covers ends at or
+/// above this. The filter chips float free (no glass) below the form's glass,
+/// so once results are in the lowest header element is the last chip; before
+/// that it is the form's glass panel.
+double _glassBottom(WidgetTester tester) {
+  final chips = find.byType(FilterChip);
+  if (chips.evaluate().isNotEmpty) return tester.getRect(chips.last).bottom;
+  return tester.getRect(find.byType(GlassPanel).last).bottom;
+}
 
 Future<void> _search(WidgetTester tester) async {
   await tester.tap(find.byType(FilledButton));
@@ -139,9 +144,8 @@ void main() {
         (tester) async {
       await _pump(tester, result: _results());
 
-      // The form, the filter — both are glass, both are the same furniture as
-      // the nav bar's pill.
-      expect(find.byType(GlassPanel), findsNWidgets(2));
+      // Only the form is glass now; the filter chips float free below it.
+      expect(find.byType(GlassPanel), findsOneWidget);
 
       final list = tester.getRect(_resultsList);
       final glassBottom = _glassBottom(tester);
@@ -211,7 +215,7 @@ void main() {
         await _pump(tester, result: _results(), brightness: brightness);
 
         final panes = tester.widgetList<ChukGlass>(find.byType(ChukGlass));
-        expect(panes, hasLength(2));
+        expect(panes, hasLength(1));
         for (final pane in panes) {
           // "Man muss durchgucken können": an opaque tint is just a card again.
           expect(pane.fill.a, lessThan(1.0), reason: '$brightness');
@@ -329,7 +333,7 @@ void main() {
         (tester) async {
       await _pump(tester, result: _results(), brightness: Brightness.light);
 
-      expect(find.byType(GlassPanel), findsNWidgets(2));
+      expect(find.byType(GlassPanel), findsOneWidget);
       expect(find.text('Fernverkehr'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });

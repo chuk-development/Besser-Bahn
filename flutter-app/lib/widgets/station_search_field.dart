@@ -24,6 +24,11 @@ class StationSearchField extends ConsumerStatefulWidget {
   /// Picking a saved route — the caller fills *both* the From and To fields.
   final ValueChanged<SavedRoute>? onRouteSelected;
 
+  /// Drop the field's own fill and border — for when it already sits on glass
+  /// (the map's floating search), so it doesn't read as a boxed frame over the
+  /// panel.
+  final bool bare;
+
   const StationSearchField({
     super.key,
     required this.hint,
@@ -34,6 +39,7 @@ class StationSearchField extends ConsumerStatefulWidget {
     this.dense = false,
     this.savedRoutes = const [],
     this.onRouteSelected,
+    this.bare = false,
   });
 
   @override
@@ -393,6 +399,12 @@ class _StationSearchFieldState extends ConsumerState<StationSearchField> {
         decoration: InputDecoration(
           hintText: widget.hint,
           isDense: widget.dense,
+          // On glass: no fill, no border — the panel is the surface, so the
+          // field shouldn't paint its own boxed frame on top.
+          filled: widget.bare ? false : null,
+          border: widget.bare ? InputBorder.none : null,
+          enabledBorder: widget.bare ? InputBorder.none : null,
+          focusedBorder: widget.bare ? InputBorder.none : null,
           contentPadding: widget.dense
               ? const EdgeInsets.symmetric(horizontal: 8, vertical: 8)
               : null,

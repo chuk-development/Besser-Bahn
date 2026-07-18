@@ -583,7 +583,9 @@ class _ConnectionDetailScreenState
     }
     await SharePlus.instance.share(
       ShareParams(
-        text: etaShareText(journey, link),
+        // The refreshed per-leg runs we already hold → live arrival platform/time
+        // (a Gleiswechsel/delay the search snapshot missed, #50).
+        text: etaShareText(journey, link, live: _tripCache),
         subject: 'Meine Ankunft — ${journey.destination?.name ?? 'Ziel'}',
       ),
     );

@@ -9,6 +9,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../core/app_log.dart';
 import '../core/missed_connection.dart';
+import '../theme/app_colors.dart';
 
 /// Thin wrapper around flutter_local_notifications for the OS notifications the
 /// app fires: one-shot results (e.g. "Split-Ticket-Analyse fertig"), live trip
@@ -80,7 +81,14 @@ class NotificationService {
     if (_ready) return;
     try {
       await _initTimeZone();
-      const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+      // Not the launcher icon: Android draws the small icon as a silhouette,
+      // keeping only its alpha channel. A fully opaque launcher PNG therefore
+      // shows up as a featureless white blob. ic_stat_besserbahn is the app
+      // mark as a transparent-background silhouette, which is what the status
+      // bar expects.
+      const android = AndroidInitializationSettings(
+        '@drawable/ic_stat_besserbahn',
+      );
       // iOS perms are requested on demand (below), not at init. The missed-
       // connection category registers the two action buttons so iOS/macOS show
       // "Alternativen suchen" / "Nein" — WITHOUT it a body tap is the only
@@ -124,8 +132,10 @@ class NotificationService {
           launch?.notificationResponse != null) {
         await _handleResponse(launch!.notificationResponse!);
       }
-      final android_ = _plugin.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
+      final android_ = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
       await android_?.createNotificationChannel(_channel);
       await android_?.createNotificationChannel(_tripChannel);
       await android_?.createNotificationChannel(_alarmChannel);
@@ -143,11 +153,14 @@ class NotificationService {
     tzdata.initializeTimeZones();
     try {
       tz.setLocalLocation(
-          tz.getLocation((await FlutterTimezone.getLocalTimezone()).identifier));
+        tz.getLocation((await FlutterTimezone.getLocalTimezone()).identifier),
+      );
     } catch (_) {
       try {
         tz.setLocalLocation(tz.getLocation('Europe/Berlin'));
-      } catch (_) {/* leave UTC */}
+      } catch (_) {
+        /* leave UTC */
+      }
     }
   }
 
@@ -158,8 +171,10 @@ class NotificationService {
   /// as granted). Callers that gate a feature on delivery use this.
   static Future<bool> _ensurePermission() async {
     try {
-      final android = _plugin.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
+      final android = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
       if (android != null) {
         final granted = await android.requestNotificationsPermission();
         // Exact alarms (Android 13+): needed so "30 min vorher" lands on the
@@ -172,8 +187,7 @@ class NotificationService {
         // false/null even when exact alarms are already allowed and would wrongly
         // pin us to inexact. So read the real capability; only fall back to the
         // settings prompt if it's genuinely unavailable.
-        _exactAlarms =
-            await android.canScheduleExactNotifications() ?? true;
+        _exactAlarms = await android.canScheduleExactNotifications() ?? true;
         if (!_exactAlarms) {
           await android.requestExactAlarmsPermission();
           _exactAlarms =
@@ -181,8 +195,10 @@ class NotificationService {
         }
         return granted ?? true;
       }
-      final ios = _plugin.resolvePlatformSpecificImplementation<
-          IOSFlutterLocalNotificationsPlugin>();
+      final ios = _plugin
+          .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin
+          >();
       final granted =
           await ios?.requestPermissions(alert: true, badge: true, sound: true);
       return granted ?? true;
@@ -206,6 +222,7 @@ class NotificationService {
           'split_ticket',
           'Split-Ticket',
           channelDescription: 'Ergebnis der Split-Ticket-Analyse',
+          color: AppColors.dbRed,
           importance: Importance.high,
           priority: Priority.high,
         ),
@@ -215,7 +232,11 @@ class NotificationService {
       // Stable id → a fresh result replaces the previous notification rather
       // than stacking.
       await _plugin.show(
-          id: 1001, title: title, body: body, notificationDetails: details);
+        id: 1001,
+        title: title,
+        body: body,
+        notificationDetails: details,
+      );
     } catch (e) {
       AppLog.log('notification show failed ($e)', tag: 'notify');
     }
@@ -235,10 +256,11 @@ class NotificationService {
     await _ensurePermission();
     try {
       await _plugin.show(
-          id: 2000 + (id % 1000),
-          title: title,
-          body: body,
-          notificationDetails: _tripDetails());
+        id: 2000 + (id % 1000),
+        title: title,
+        body: body,
+        notificationDetails: _tripDetails(),
+      );
     } catch (e) {
       AppLog.log('trip alert show failed ($e)', tag: 'notify');
     }
@@ -257,10 +279,11 @@ class NotificationService {
     await _ensurePermission();
     try {
       await _plugin.show(
-          id: 3000 + (id % 1000),
-          title: title,
-          body: body,
-          notificationDetails: _alarmDetails());
+        id: 3000 + (id % 1000),
+        title: title,
+        body: body,
+        notificationDetails: _alarmDetails(),
+      );
     } catch (e) {
       AppLog.log('exit alarm show failed ($e)', tag: 'notify');
     }
@@ -399,48 +422,50 @@ class NotificationService {
   static Future<bool> requestPermissions() => _ensurePermission();
 
   static NotificationDetails _tripDetails() => const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'trip_alerts',
-          'Reise-Hinweise',
-          channelDescription: 'Abfahrts-Erinnerungen, Verspätungen und Umstiege',
-          importance: Importance.high,
-          priority: Priority.high,
-        ),
-        iOS: DarwinNotificationDetails(),
-        macOS: DarwinNotificationDetails(),
-      );
+    android: AndroidNotificationDetails(
+      'trip_alerts',
+      'Reise-Hinweise',
+      channelDescription: 'Abfahrts-Erinnerungen, Verspätungen und Umstiege',
+      color: AppColors.dbRed,
+      importance: Importance.high,
+      priority: Priority.high,
+    ),
+    iOS: DarwinNotificationDetails(),
+    macOS: DarwinNotificationDetails(),
+  );
 
   static NotificationDetails _alarmDetails() => NotificationDetails(
-        android: AndroidNotificationDetails(
-          'arrival_alarm',
-          'Ankunfts-Wecker',
-          channelDescription: 'Lauter Wecker kurz bevor du ankommst',
-          importance: Importance.max,
-          priority: Priority.max,
-          category: AndroidNotificationCategory.alarm,
-          // Show full-screen on the lock screen like an alarm clock. Degrades
-          // to a heads-up banner if USE_FULL_SCREEN_INTENT isn't granted.
-          fullScreenIntent: true,
-          audioAttributesUsage: AudioAttributesUsage.alarm,
-          // Loop the sound until the user dismisses it / taps Stoppen.
-          additionalFlags: Int32List.fromList(<int>[_flagInsistent]),
-          actions: const <AndroidNotificationAction>[
-            AndroidNotificationAction(
-              'stop_alarm',
-              'Stoppen',
-              cancelNotification: true,
-            ),
-          ],
+    android: AndroidNotificationDetails(
+      'arrival_alarm',
+      'Ankunfts-Wecker',
+      channelDescription: 'Lauter Wecker kurz bevor du ankommst',
+      color: AppColors.dbRed,
+      importance: Importance.max,
+      priority: Priority.max,
+      category: AndroidNotificationCategory.alarm,
+      // Show full-screen on the lock screen like an alarm clock. Degrades
+      // to a heads-up banner if USE_FULL_SCREEN_INTENT isn't granted.
+      fullScreenIntent: true,
+      audioAttributesUsage: AudioAttributesUsage.alarm,
+      // Loop the sound until the user dismisses it / taps Stoppen.
+      additionalFlags: Int32List.fromList(<int>[_flagInsistent]),
+      actions: const <AndroidNotificationAction>[
+        AndroidNotificationAction(
+          'stop_alarm',
+          'Stoppen',
+          cancelNotification: true,
         ),
-        // iOS can't loop a notification sound; the critical alarm tone is the
-        // closest equivalent for "wake me before my stop".
-        iOS: const DarwinNotificationDetails(
-          interruptionLevel: InterruptionLevel.critical,
-        ),
-        macOS: const DarwinNotificationDetails(
-          interruptionLevel: InterruptionLevel.critical,
-        ),
-      );
+      ],
+    ),
+    // iOS can't loop a notification sound; the critical alarm tone is the
+    // closest equivalent for "wake me before my stop".
+    iOS: const DarwinNotificationDetails(
+      interruptionLevel: InterruptionLevel.critical,
+    ),
+    macOS: const DarwinNotificationDetails(
+      interruptionLevel: InterruptionLevel.critical,
+    ),
+  );
 
   /// Notification (action) tap handler. Insistent alarms are stopped at the OS
   /// level by the action's `cancelNotification: true`; this only logs.

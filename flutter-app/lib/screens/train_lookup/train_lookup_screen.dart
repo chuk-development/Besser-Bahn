@@ -12,6 +12,7 @@ import '../../providers/train_lookup_provider.dart';
 import '../../services/hafas_service.dart';
 import '../../core/extensions.dart';
 import '../../core/auto_refresh.dart';
+import '../../widgets/bahnhof_search_bar.dart';
 import '../../widgets/app_menu_button.dart';
 import '../../widgets/app_nav_bar.dart';
 import '../../widgets/station_search_field.dart';
@@ -183,68 +184,79 @@ class _TrainLookupScreenState extends ConsumerState<TrainLookupScreen>
             ),
       body: Column(
         children: [
-          // Search bar
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _controller,
-                        focusNode: _focusNode,
-                        decoration: InputDecoration(
-                          hintText: 'z.B. ICE 148, RE 70, Bus 310',
-                          prefixIcon: const Icon(Icons.train),
-                          // The spinner takes the suffix while a lookup runs —
-                          // with no search button left, this is the only place
-                          // the field itself can say it is working.
-                          suffixIcon: state.isLoading
-                              ? const Padding(
-                                  padding: EdgeInsets.all(14),
-                                  child: SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
-                                  ),
-                                )
-                              : IconButton(
-                                  icon: Icon(
-                                    _showStationField
-                                        ? Icons.location_off
-                                        : Icons.location_on_outlined,
-                                    size: 20,
-                                  ),
-                                  tooltip: 'Haltestelle angeben (für Busse)',
-                                  onPressed: () {
-                                    setState(() {
-                                      _showStationField = !_showStationField;
-                                      if (!_showStationField) {
-                                        _fromStation = null;
-                                      }
-                                    });
-                                  },
-                                ),
+          // Search bar — the shared Bahnhof search bar (same on Abfahrten/Karte).
+          BahnhofSearchBar(
+            trailing: actions,
+            child: TextField(
+              controller: _controller,
+              focusNode: _focusNode,
+              style: const TextStyle(fontSize: 14),
+              decoration: InputDecoration(
+                isDense: true,
+                filled: false,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                hintText: 'z.B. ICE 148, RE 70, Bus 310',
+                prefixIcon: const Icon(Icons.train, size: 18),
+                prefixIconConstraints:
+                    const BoxConstraints(minWidth: 36, minHeight: 36),
+                // Keep the suffix inside the dense field's height (an
+                // unconstrained IconButton is 48 px and taller than the field,
+                // which made the Zug search bar bigger than the other two).
+                suffixIconConstraints:
+                    const BoxConstraints(minWidth: 36, minHeight: 36),
+                // The spinner takes the suffix while a lookup runs — with no
+                // search button left, this is the only place the field itself
+                // can say it is working.
+                suffixIcon: state.isLoading
+                    ? const Padding(
+                        padding: EdgeInsets.all(9),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         ),
-                        textInputAction: TextInputAction.search,
-                        onChanged: _onQueryChanged,
-                        // Still honoured, and it beats the debounce: a rider who
-                        // hits Enter has said they are done typing.
-                        onSubmitted: (_) => _search(),
+                      )
+                    : IconButton(
+                        visualDensity: VisualDensity.compact,
+                        icon: Icon(
+                          _showStationField
+                              ? Icons.location_off
+                              : Icons.location_on_outlined,
+                          size: 18,
+                        ),
+                        tooltip: 'Haltestelle angeben (für Busse)',
+                        onPressed: () {
+                          setState(() {
+                            _showStationField = !_showStationField;
+                            if (!_showStationField) {
+                              _fromStation = null;
+                            }
+                          });
+                        },
                       ),
-                    ),
-                    ...actions,
-                  ],
-                ),
-                // Optional station field for buses/trams
-                if (_showStationField) ...[
-                  const SizedBox(height: 8),
+              ),
+                textInputAction: TextInputAction.search,
+                onChanged: _onQueryChanged,
+                // Still honoured, and it beats the debounce: a rider who
+                // hits Enter has said they are done typing.
+                onSubmitted: (_) => _search(),
+              ),
+            ),
+          // Optional station field for buses/trams
+          if (_showStationField)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Column(
+                children: [
                   StationSearchField(
                     hint: 'Ab Haltestelle (für Busse/Tram)',
                     prefixIcon: Icons.location_on,
                     initialStation: _fromStation,
+                    dense: true,
                     onSelected: (station) {
                       setState(() => _fromStation = station);
                       // The stop is half the query — re-run it, the same way
@@ -273,9 +285,8 @@ class _TrainLookupScreenState extends ConsumerState<TrainLookupScreen>
                       ),
                     ),
                 ],
-              ],
+              ),
             ),
-          ),
 
           _buildSavedTrains(context),
 

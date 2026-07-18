@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/departure_board_provider.dart';
@@ -62,6 +63,13 @@ class _NearbyScreenState extends ConsumerState<NearbyScreen>
     });
   }
 
+  /// A snappy tab jump. TabController defaults to 300 ms `Curves.ease`; the
+  /// switcher felt sluggish at that, so we land it faster on the app's own
+  /// easeOutCubic (the same curve the pill highlight and the tab pager use).
+  static const _switchDuration = Duration(milliseconds: 200);
+  void _goTo(int i) =>
+      _tabs.animateTo(i, duration: _switchDuration, curve: Curves.easeOutCubic);
+
   void _syncBoardStationToMap() {
     final board = ref.read(departureBoardProvider).station;
     if (board == null || board.id == _lastSyncedStationId) return;
@@ -81,7 +89,7 @@ class _NearbyScreenState extends ConsumerState<NearbyScreen>
   Widget build(BuildContext context) {
     // External jumps (e.g. tapping a departure → open its train) drive the tab.
     ref.listen<int>(nearbyTabProvider, (_, next) {
-      if (_tabs.index != next) _tabs.animateTo(next);
+      if (_tabs.index != next) _goTo(next);
     });
 
     return Scaffold(
@@ -96,16 +104,26 @@ class _NearbyScreenState extends ConsumerState<NearbyScreen>
           // *over* that the rider would want to reach, and pushing the padding
           // down into three screens would only be three chances to forget it.
           Positioned.fill(
-            child: Padding(
-              padding: EdgeInsets.only(top: GlassSwitcher.insetOf(context)),
-              child: TabBarView(
-                controller: _tabs,
-                children: const [
-                  TrainLookupScreen(embedded: true),
-                  DepartureBoardScreen(embedded: true),
-                  StationMapScreen(embedded: true),
-                ],
-              ),
+            child: TabBarView(
+              controller: _tabs,
+              // A stiffer settle so a swipe snaps to the next view instead of
+              // drifting — the heavy map made the default drift feel endless.
+              physics: const _SnappyTabPhysics(),
+              children: [
+                // Zug and Abfahrten open with a search field that must clear the
+                // floating switcher, so they start below it.
+                Padding(
+                  padding: EdgeInsets.only(top: GlassSwitcher.insetOf(context)),
+                  child: const TrainLookupScreen(embedded: true),
+                ),
+                Padding(
+                  padding: EdgeInsets.only(top: GlassSwitcher.insetOf(context)),
+                  child: const DepartureBoardScreen(embedded: true),
+                ),
+                // The map runs full-bleed *under* the switcher — it floats its
+                // own search on glass, so nothing needs to clear the top here.
+                const StationMapScreen(embedded: true),
+              ],
             ),
           ),
           Positioned(
@@ -121,7 +139,7 @@ class _NearbyScreenState extends ConsumerState<NearbyScreen>
                 bottom: false,
                 child: GlassSwitcher(
                   index: _tabs.index,
-                  onChanged: _tabs.animateTo,
+                  onChanged: _goTo,
                   // The AppBar's overflow menu, which had nowhere else to go
                   // once the AppBar did.
                   trailing: const AppMenuButton(),
@@ -150,4 +168,22 @@ class _NearbyScreenState extends ConsumerState<NearbyScreen>
       ),
     );
   }
+}
+
+/// Page physics with a stiff, quickly-damped spring — a swipe between the three
+/// Bahnhof views snaps home instead of the default long, soft glide (which felt
+/// interminable behind the heavy map). Clamping physics keeps the edges firm.
+class _SnappyTabPhysics extends ScrollPhysics {
+  const _SnappyTabPhysics({super.parent});
+
+  @override
+  _SnappyTabPhysics applyTo(ScrollPhysics? ancestor) =>
+      _SnappyTabPhysics(parent: buildParent(ancestor));
+
+  @override
+  SpringDescription get spring => SpringDescription.withDampingRatio(
+        mass: 0.5,
+        stiffness: 220,
+        ratio: 1.1,
+      );
 }

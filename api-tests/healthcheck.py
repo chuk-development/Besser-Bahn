@@ -2717,6 +2717,69 @@ def check_db_bahnbonus_co2() -> str:
     return f"co2-service/v1/statistics reachable, auth-gated (status={r.status_code})"
 
 
+def check_db_oauth_authorize_page() -> str:
+    """The DB login page has to render for a request shaped like the browser
+    the app actually opens (#35).
+
+    Two things are checked together, because they only fail together in the
+    real flow:
+
+    1. The registered scheme redirect still yields Keycloak's login form.
+    2. An RFC 8252 loopback redirect (`http://127.0.0.1:<port>`) does NOT.
+       Keycloak itself accepts loopback for this client, so an API-shaped probe
+       says "fine" — but DB's edge WAF rejects any browser-shaped request that
+       carries an `http://` redirect_uri, with an F5 "support ID" page instead
+       of the login form. That is why the app cannot escape DB Navigator's
+       claim on `dbnav://` by moving to loopback. If this ever flips, the
+       loopback flow becomes available and is worth revisiting.
+
+    Sending browser headers is the whole point — probing with API-ish headers
+    hides the WAF and reports a green that the app can't actually use.
+    """
+    auth = "https://accounts.bahn.de/auth/realms/db/protocol/openid-connect/auth"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Linux; Android 11; SM-A705FN) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "de-DE,de;q=0.9",
+    }
+
+    def fetch(redirect_uri: str) -> str:
+        r = _get(auth, params={
+            "response_type": "code",
+            "client_id": "kf_mobile",
+            "state": "healthcheck",
+            "nonce": "n" * 24,
+            "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            "code_challenge_method": "S256",
+            "prompt": "login",
+            "scope": "offline_access",
+            "redirect_uri": redirect_uri,
+        }, headers=headers, timeout=TIMEOUT)
+        body = r.text.lower()
+        if "support id" in body or "requested url was rejected" in body:
+            return "waf"
+        if "password" in body or "kc-form-login" in body:
+            return "login"
+        if r.status_code == 400 and "redirect_uri" in body:
+            return "rejected"
+        return f"unknown(status={r.status_code}, len={len(r.text)})"
+
+    scheme = fetch("dbnav://dbnavigator.bahn.de/login/success")
+    if scheme != "login":
+        raise CheckError(
+            f"DB login page no longer renders for the app's redirect ({scheme})"
+        )
+
+    loopback = fetch("http://127.0.0.1:42171/callback")
+    if loopback == "login":
+        return ("scheme redirect renders the login form; loopback now passes "
+                "the WAF too (the dbnav:// app-chooser could be avoided, #35)")
+    return f"scheme redirect renders the login form; loopback blocked ({loopback})"
+
+
 # (name, callable, soft) — soft checks warn instead of fail.
 CHECKS = [
     ("bahn.de web API blocked (reiseloesung)", check_bahn_web_api_blocked, True),
@@ -2762,6 +2825,7 @@ CHECKS = [
     ("bahnhof.de sitemap", check_bahnhof_sitemap, False),
     ("traewelling UA requirement (#34)", check_traewelling_user_agent, True),
     ("traewelling check-in API", check_traewelling_api, True),
+    ("DB OAuth authorize page (#35)", check_db_oauth_authorize_page, False),
     ("DB account token endpoint (kf_mobile)", check_db_account_token_endpoint, True),
     ("DB account mob endpoints (auth-gated)", check_db_account_endpoints_require_auth, True),
     ("DB account forced refresh shape (#31)", check_db_account_forced_refresh_shape, True),

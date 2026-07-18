@@ -18,6 +18,8 @@ import '../../widgets/app_map.dart';
 import '../../widgets/app_nav_bar.dart';
 import '../../widgets/bay_departures_sheet.dart';
 import '../../widgets/app_menu_button.dart';
+import '../../widgets/glass_panel.dart';
+import '../../widgets/glass_switcher.dart';
 import '../../widgets/station_search_field.dart';
 
 /// Highlight colour for a journey role: Einstieg green, Ausstieg red, Umstieg
@@ -203,22 +205,80 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
       }
     });
 
-    return Scaffold(
-      appBar: widget.embedded
-          ? null
-          : AppBar(
-              title: Text(state.station?.name ?? 'Bahnhofskarte'),
-              actions: [
-                // Browse mode (Karte tab) keeps the app overflow menu; the
-                // dedicated per-journey map drops it.
-                if (!widget.dedicated) const AppMenuButton(),
-              ],
+    // Legend/banner shared by both layouts.
+    Widget? overlayNotice() {
+      if (state.secondaryGleis != null && map != null) {
+        return _transferLegend(context, state);
+      }
+      if (state.highlightGleis != null && map != null) {
+        return _BoardingBanner(
+          gleis: state.highlightGleis!,
+          section: state.highlightSection,
+          role: state.highlightRole,
+          note: state.transferNote,
+          trainLabel: state.trainLabel,
+        );
+      }
+      return null;
+    }
+
+    // Embedded (Karte tab): the map fills the whole screen as a background and
+    // the search + notices float on glass over it — the same "content runs
+    // behind the chrome" idea as the connection search and the nav bar.
+    if (widget.embedded) {
+      final notice = overlayNotice();
+      return Scaffold(
+        resizeToAvoidBottomInset: false,
+        body: Stack(
+          children: [
+            Positioned.fill(child: _buildBody(context, state, notifier)),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              // Clear the floating switcher (which sits above this view).
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                    12, GlassSwitcher.insetOf(context), 12, 0),
+                child: Column(
+                  children: [
+                    GlassPanel(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        child: StationSearchField(
+                          hint: 'Bahnhof suchen...',
+                          prefixIcon: Icons.location_city,
+                          initialStation: state.station,
+                          onSelected: (s) => notifier.loadForStation(s),
+                          dense: true,
+                          bare: true,
+                        ),
+                      ),
+                    ),
+                    if (notice != null) ...[
+                      const SizedBox(height: 6),
+                      GlassPanel(child: notice),
+                    ],
+                  ],
+                ),
+              ),
             ),
+          ],
+        ),
+      );
+    }
+
+    // Dedicated per-journey map: keeps its AppBar and the simple stacked layout.
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(state.station?.name ?? 'Bahnhofskarte'),
+        actions: [
+          if (!widget.dedicated) const AppMenuButton(),
+        ],
+      ),
       body: Column(
         children: [
-          // Station search only in browse mode. The dedicated map already knows
-          // its station (shown in the AppBar title) — a search box there is
-          // misleading, it isn't for picking a different station.
           if (!widget.dedicated)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -227,21 +287,10 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
                 prefixIcon: Icons.location_city,
                 initialStation: state.station,
                 onSelected: (s) => notifier.loadForStation(s),
+                dense: true,
               ),
             ),
-          // Transfer: one legend with colour-matched Ausstieg/Einstieg chips
-          // (red/green = exactly the map colours). Otherwise the single
-          // boarding banner.
-          if (state.secondaryGleis != null && map != null)
-            _transferLegend(context, state)
-          else if (state.highlightGleis != null && map != null)
-            _BoardingBanner(
-              gleis: state.highlightGleis!,
-              section: state.highlightSection,
-              role: state.highlightRole,
-              note: state.transferNote,
-              trainLabel: state.trainLabel,
-            ),
+          if (overlayNotice() != null) overlayNotice()!,
           Expanded(child: _buildBody(context, state, notifier)),
         ],
       ),
@@ -444,6 +493,14 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
             crossAxisAlignment: CrossAxisAlignment.end,
             mainAxisSize: MainAxisSize.min,
             children: [
+              // "Mein Standort" — request GPS and frame you + your target. Sits
+              // here with the other map controls (was pinned top-right, where it
+              // rode too high and collided with the floating search/switcher).
+              MapLocateButton(
+                busy: _locating,
+                onPressed: () => _locateMe(map),
+              ),
+              const SizedBox(height: 8),
               // Frame the station (or the Gleis this map was opened for) again.
               //
               // Lives on the map, with the map's other controls, rather than in
@@ -475,15 +532,6 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
                 onToggle: notifier.toggleCategory,
               ),
             ],
-          ),
-        ),
-        // "Mein Standort" button — request GPS and frame you + your target.
-        Positioned(
-          right: 8,
-          top: 8,
-          child: MapLocateButton(
-            busy: _locating,
-            onPressed: () => _locateMe(map),
           ),
         ),
         // How far you still have to walk to the target.

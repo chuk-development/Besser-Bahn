@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../../models/journey.dart';
+import '../../../models/trip.dart';
 import '../../../providers/journey_search_provider.dart';
 import '../../../utils/journey_highlights.dart';
 import '../../../core/extensions.dart';
@@ -201,9 +202,15 @@ class JourneyCard extends ConsumerWidget {
     }
     final o = journey.origin?.name ?? '';
     final d = journey.destination?.name ?? '';
+    // Refresh each leg's realtime run so the share reflects a Gleiswechsel/delay
+    // the search snapshot missed (#50); on failure the leg keeps its own values.
+    Map<String, Trip>? live;
+    try {
+      live = await ref.read(hafasServiceProvider).liveTripsFor(journey);
+    } catch (_) {/* share the search-time values */}
     await SharePlus.instance.share(
       ShareParams(
-        text: journeyShareText(journey, link),
+        text: journeyShareText(journey, link, live: live),
         subject: o.isNotEmpty && d.isNotEmpty ? '$o → $d' : 'Bahn-Reise',
       ),
     );

@@ -7,7 +7,6 @@ import 'package:crypto/crypto.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -16,6 +15,7 @@ import '../core/constants.dart';
 import '../core/request_coalescer.dart';
 import '../models/db_account.dart';
 import '../models/db_ticket.dart';
+import 'oauth_browser.dart';
 
 /// Result of a refresh-token call.
 enum _RefreshOutcome { success, transient, rejected }
@@ -174,7 +174,7 @@ class DbAccountService {
     );
 
     AppLog.log('login → ${DbAccountConstants.authorizeUrl}', tag: 'db-account');
-    final result = await FlutterWebAuth2.authenticate(
+    final result = await OAuthBrowser.authenticate(
       url: authUrl.toString(),
       callbackUrlScheme: DbAccountConstants.callbackScheme,
     );
@@ -397,7 +397,7 @@ class DbAccountService {
         'kc_locale': 'de',
       },
     );
-    final result = await FlutterWebAuth2.authenticate(
+    final result = await OAuthBrowser.authenticate(
       url: authUrl.toString(),
       callbackUrlScheme: DbAccountConstants.bahnbonusCallbackScheme,
     );
@@ -499,8 +499,19 @@ class DbAccountService {
 
   Future<String?> _kontoId() async {
     _kundenkontoId ??= await _read(_kKontoId);
+    if (_kundenkontoId != null) return _kundenkontoId;
+    // Cold start: nothing cached and maybe no access token loaded yet. Load the
+    // session, and if only a refresh token survived (access expired overnight),
+    // mint a fresh access token now — otherwise the very first account call
+    // races ahead of the refresh and throws "Kundenkonto-ID unbekannt" until a
+    // manual pull-to-refresh. _storeTokens sets and persists the id for us.
+    if (_accessToken == null) await _loadTokens();
+    if (_accessToken == null && (await _read(_kRefresh)) != null) {
+      await _refresh();
+    }
     if (_kundenkontoId == null && _accessToken != null) {
       _kundenkontoId = _kontoIdFromJwt(_accessToken!);
+      if (_kundenkontoId != null) await _writeKey(_kKontoId, _kundenkontoId!);
     }
     return _kundenkontoId;
   }
@@ -858,6 +869,10 @@ class DbAccountService {
     );
     final res = await _sendBahnBonus(uri, connect: connect);
     if (res.statusCode == 304 || res.statusCode == 404) return null;
+    return _parseCo2(res, today);
+  }
+
+  DbBahnBonusCo2Balance? _parseCo2(http.Response res, DateTime today) {
     final data = _decode(res, 'co2-statistics');
     final items = (data['items'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()

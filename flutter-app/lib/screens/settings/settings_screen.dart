@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/constants.dart';
 import '../../core/offline_package.dart';
@@ -354,9 +355,11 @@ class SettingsScreen extends ConsumerWidget {
                   leading: const Icon(Icons.description_outlined),
                   title: const Text('Datenschutzerklärung'),
                   trailing: const Icon(Icons.open_in_new, size: 18),
-                  onTap: () {
-                    // TODO: Open privacy policy
-                  },
+                  onTap: () => _openUrl(
+                    context,
+                    'https://github.com/chuk-development/Besser-Bahn/'
+                    'blob/main/PRIVACY-POLICY.md',
+                  ),
                 ),
               ],
             ),
@@ -368,16 +371,26 @@ class SettingsScreen extends ConsumerWidget {
             margin: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
               children: [
-                const ListTile(
-                  leading: Icon(Icons.code),
-                  title: Text('Open Source'),
-                  subtitle: Text('Quellcode auf GitHub'),
+                ListTile(
+                  leading: const Icon(Icons.code),
+                  title: const Text('Open Source'),
+                  subtitle: const Text('Quellcode auf GitHub'),
+                  trailing: const Icon(Icons.open_in_new, size: 18),
+                  onTap: () => _openUrl(
+                    context,
+                    'https://github.com/chuk-development/Besser-Bahn',
+                  ),
                 ),
                 const Divider(height: 1),
-                const ListTile(
-                  leading: Icon(Icons.favorite_outline),
-                  title: Text('Feedback'),
-                  subtitle: Text('Bugs melden oder Features vorschlagen'),
+                ListTile(
+                  leading: const Icon(Icons.favorite_outline),
+                  title: const Text('Feedback'),
+                  subtitle: const Text('Bugs melden oder Features vorschlagen'),
+                  trailing: const Icon(Icons.open_in_new, size: 18),
+                  onTap: () => _openUrl(
+                    context,
+                    'https://github.com/chuk-development/Besser-Bahn/issues',
+                  ),
                 ),
               ],
             ),
@@ -536,5 +549,22 @@ class _OfflineStorageCard extends ConsumerWidget {
     );
     if (ok != true) return;
     await ref.read(offlinePackagesProvider.notifier).deleteAll();
+  }
+}
+
+/// Opens [url] externally; on failure shows a SnackBar rather than dead-tapping
+/// (a link with an "open" glyph that does nothing reads as broken — #48).
+Future<void> _openUrl(BuildContext context, String url) async {
+  final messenger = ScaffoldMessenger.of(context);
+  var ok = false;
+  try {
+    ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  } catch (_) {
+    ok = false;
+  }
+  if (!ok) {
+    messenger.showSnackBar(
+      const SnackBar(content: Text("Konnte den Link nicht öffnen.")),
+    );
   }
 }
