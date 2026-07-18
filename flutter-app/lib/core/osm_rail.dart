@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:latlong2/latlong.dart';
 
-import 'platform_train.dart' show fitLine;
+import 'platform_train.dart' show fitLine, normalizeGleis;
 import 'train_geometry.dart' show RoutePath;
 
 /// Pure, map-agnostic recovery of the **real rail centre-line** a train rides at
@@ -58,7 +58,8 @@ List<LatLng> _resample(List<LatLng> path, int n) {
 /// ends into the two long edges and return the one nearer [ref] (the trusted
 /// cube chain on the wanted Gleis's side). Ported verbatim from the preview's
 /// `_trackSideEdge`.
-List<LatLng> _trackSideEdge(List<LatLng> poly, List<LatLng> ref) {
+List<LatLng> _trackSideEdge(List<LatLng> poly, List<LatLng> ref,
+    {LatLng? ours, LatLng? mate}) {
   final loop = poly.toList();
   if (loop.length > 1 &&
       loop.first.latitude == loop.last.latitude &&
@@ -118,6 +119,28 @@ List<LatLng> _trackSideEdge(List<LatLng> poly, List<LatLng> ref) {
       s += mn;
     }
     return s / e.length;
+  }
+
+  // Preferred: decide by SIGN. `ours`/`mate` are the two Gleis markers of this
+  // island (paired via the OSM ref), so `ours - mate` points across the platform
+  // at our own track. Project it and both edges onto the island normal and take
+  // the edge on our side. This is immune to the two failure modes of the
+  // distance test: sector cubes shared between parallel islands, and a frame
+  // offset between bahnhof.de and OSM coordinates (~11 m at Berlin Hbf) — only
+  // the *direction* has to agree, and both datasets describe the same platform.
+  if (ours != null && mate != null) {
+    final px = -axis.dy, py = axis.dx; // unit normal of the island axis
+    double off(LatLng p) =>
+        (xy(p).x - axis.cx) * px + (xy(p).y - axis.cy) * py;
+    final side = off(ours) - off(mate);
+    double meanOff(List<LatLng> e) =>
+        e.map(off).reduce((a, b) => a + b) / e.length;
+    final o1 = meanOff(e1), o2 = meanOff(e2);
+    // Only trust it when the edges really do straddle the axis (a proper
+    // island) and our marker pair says something decisive.
+    if (side.abs() > 1.0 && (o1 - o2).abs() > 1.0) {
+      return (side > 0) == (o1 > o2) ? e1 : e2;
+    }
   }
 
   return avg(e1) <= avg(e2) ? e1 : e2;
@@ -189,11 +212,20 @@ List<LatLng> _railFromEdge(List<LatLng> edge, List<List<LatLng>> rails) {
 /// Gleis's side — used only to pick which of the platform's two long edges faces
 /// the wanted track. Returns an empty list when the geometry is unavailable so
 /// the caller can fall back to the cube-straight line.
+/// [gleisPoi] maps a normalised Gleis to its bahnhof.de platform marker. When
+/// given, the side of a shared island is decided from the OSM `ref` pairing
+/// ("2;3" → the partner of 2 is 3) instead of the sector-cube distances — the
+/// cubes are shared between parallel islands and their nearest-line assignment
+/// is a coin flip, and the old proximity guess for the partner picks a track on
+/// a DIFFERENT island wherever platforms sit closer together than the island's
+/// own two tracks (Elmshorn: Gleis 1 is 7.3 m from 2, its real partner 3 is
+/// 7.8 m — so the side came out 180° wrong and the train drew on Gleis 3).
 List<LatLng> osmRailForGleis({
   required List<({String ref, List<LatLng> pts})> platforms,
   required List<List<LatLng>> rails,
   required String gleis,
   required List<LatLng> cubeSide,
+  Map<String, LatLng>? gleisPoi,
 }) {
   // OSM tags a platform island with its track pair, sometimes with section
   // suffixes ("7;8", "3;4", or "1;2a;2b"). Match the wanted Gleis against each
@@ -204,8 +236,23 @@ List<LatLng> osmRailForGleis({
       });
   // Several platforms can match (e.g. a section way mis-tagged with the Gleis);
   // return the first that actually yields a rail, so a dud doesn't block us.
+  final ours = gleisPoi?[gleis];
   for (final p in platforms.where((p) => refHasGleis(p.ref))) {
-    final edge = _trackSideEdge(p.pts, cubeSide);
+    // The island partner, straight out of this platform's ref ("2;3" → 3 is
+    // the mate of 2). Never guessed from proximity: at Elmshorn the nearest
+    // other marker to Gleis 2 is Gleis 1 (a different island), which flipped
+    // the side and drew the train on Gleis 3.
+    LatLng? mate;
+    if (gleisPoi != null && ours != null) {
+      for (final t in p.ref.split(';')) {
+        final g = normalizeGleis(t);
+        if (g != gleis && gleisPoi.containsKey(g)) {
+          mate = gleisPoi[g];
+          break;
+        }
+      }
+    }
+    final edge = _trackSideEdge(p.pts, cubeSide, ours: ours, mate: mate);
     final rail = _railFromEdge(edge, rails);
     if (rail.length < 2) continue;
     // Clip the rail to the platform's own extent: the rail continues into the

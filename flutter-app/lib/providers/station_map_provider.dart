@@ -292,11 +292,17 @@ class StationMapState {
     if (m == null || g == null || osm == null) return null;
     final cubeSide = pt.platformCubeSide(m, g);
     if (cubeSide.length < 2) return null;
+    // The station's Gleis markers, so the rail side can be decided from the OSM
+    // island pairing instead of the (shared, ambiguous) sector cubes.
+    final gleisPoi = <String, LatLng>{
+      for (final p in m.platforms) normalizeGleis(p.name): p.latLng,
+    };
     final rail = osmRailForGleis(
       platforms: osm.platforms,
       rails: osm.rails,
       gleis: g,
       cubeSide: cubeSide,
+      gleisPoi: gleisPoi,
     );
     return rail.length >= 2 ? rail : null;
   }
