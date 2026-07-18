@@ -66,6 +66,11 @@ class LiveTripTracker extends Notifier<LiveTripState>
     ref.listen(libraryProvider, (prev, next) => _evaluate());
     ref.listen(settingsProvider.select((s) => s.remindersEnabled),
         (prev, next) => _evaluate());
+    // The GPS companion toggle also gates us: while it's on, a foreground
+    // service keeps this isolate alive in the background, so we keep polling
+    // and can push a Gleiswechsel with the app pocketed (#50).
+    ref.listen(settingsProvider.select((s) => s.exitAlarmEnabled),
+        (prev, next) => _evaluate());
     // Defer the first evaluation: it reads `state`, which isn't valid until
     // this build() returns the initial value. Running it in a microtask lets
     // the provider finish initialising first (else Riverpod throws "tried to
@@ -81,15 +86,28 @@ class LiveTripTracker extends Notifier<LiveTripState>
     _foreground = state == AppLifecycleState.resumed;
     if (_foreground) {
       _evaluate(); // came back → refresh now
-    } else {
-      _timer?.cancel(); // never poll while backgrounded
+    } else if (!_keepAliveInBackground) {
+      _timer?.cancel(); // no foreground service → the isolate freezes; stand down
     }
+    // else: the GPS companion's foreground service is holding this isolate
+    // alive, so leave the poll timer running to catch a Gleiswechsel in the
+    // background (#50).
   }
+
+  /// Whether we may keep polling once the app is backgrounded. Only true while
+  /// the GPS journey companion is enabled — its libre_location foreground
+  /// service is what keeps this isolate (and its timers) running; without it
+  /// Android freezes us the moment we lose the foreground.
+  bool get _keepAliveInBackground =>
+      ref.read(settingsProvider).exitAlarmEnabled;
 
   /// Pick the active saved trip and (re)arm polling. Active = now is within the
   /// hour before departure or anytime before final arrival.
   void _evaluate() {
-    final enabled = ref.read(settingsProvider).remindersEnabled;
+    final settings = ref.read(settingsProvider);
+    // Either half can drive live tracking: reminders (foreground alerts) or the
+    // GPS companion (which keeps us alive to alert in the background too, #50).
+    final enabled = settings.remindersEnabled || settings.exitAlarmEnabled;
     final active = enabled
         ? _pickActive(ref.read(libraryProvider).upcomingJourneys)
         : null;
@@ -124,7 +142,7 @@ class LiveTripTracker extends Notifier<LiveTripState>
   }
 
   Future<void> _poll() async {
-    if (_polling || !_foreground) return;
+    if (_polling || !(_foreground || _keepAliveInBackground)) return;
     final key = state.activeKey;
     final journey = ref
         .read(libraryProvider)
@@ -249,7 +267,7 @@ class LiveTripTracker extends Notifier<LiveTripState>
       {required String tag}) {
     if (live == null || planned == null || live == planned) return;
     _alertOnce('plat:$tag:$tripId', live,
-        title: 'Gleiswechsel: $station',
+        title: '⚠️ Gleiswechsel: $station',
         body: 'Jetzt Gleis $live (statt $planned).');
   }
 
@@ -305,7 +323,9 @@ class LiveTripTracker extends Notifier<LiveTripState>
   /// Stops entirely if the active trip has ended.
   void _armNext() {
     _timer?.cancel();
-    if (!_foreground || state.activeKey == null) return;
+    if (!(_foreground || _keepAliveInBackground) || state.activeKey == null) {
+      return;
+    }
     final now = DateTime.now();
     var soon = false;
     for (final t in state.trips.values) {
