@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/traewelling_models.dart';
+import '../services/oauth_browser.dart';
 import '../services/traewelling_service.dart';
 import 'service_providers.dart';
 
@@ -104,10 +105,13 @@ class TraewellingAuthNotifier extends Notifier<TraewellingAuthState> {
     try {
       final user = await _service.currentUser();
       state = state.copyWith(user: user);
-    } catch (_) {/* keep current */}
+    } catch (_) {
+      /* keep current */
+    }
   }
 
   String _humanize(Object e) {
+    if (e is OAuthCanceled) return 'Anmeldung abgebrochen';
     final msg = e is TraewellingException ? e.message : e.toString();
     if (msg.contains('CANCELED') || msg.contains('cancel')) {
       return 'Anmeldung abgebrochen';
@@ -118,43 +122,49 @@ class TraewellingAuthNotifier extends Notifier<TraewellingAuthState> {
 
 final traewellingAuthProvider =
     NotifierProvider<TraewellingAuthNotifier, TraewellingAuthState>(
-        TraewellingAuthNotifier.new);
+      TraewellingAuthNotifier.new,
+    );
 
 // --- Read-only feeds (auto-disposed, refreshable via ref.invalidate) --------
 
-final trwlDashboardProvider =
-    FutureProvider.autoDispose<List<TrwlStatus>>((ref) async {
+final trwlDashboardProvider = FutureProvider.autoDispose<List<TrwlStatus>>((
+  ref,
+) async {
   return ref.watch(traewellingServiceProvider).dashboard();
 });
 
 /// Global feed — recent check-ins from everyone (Feed tab "Global").
-final trwlGlobalFeedProvider =
-    FutureProvider.autoDispose<List<TrwlStatus>>((ref) async {
+final trwlGlobalFeedProvider = FutureProvider.autoDispose<List<TrwlStatus>>((
+  ref,
+) async {
   return ref.watch(traewellingServiceProvider).globalDashboard();
 });
 
-final trwlFollowersProvider =
-    FutureProvider.autoDispose<List<TrwlUser>>((ref) async {
+final trwlFollowersProvider = FutureProvider.autoDispose<List<TrwlUser>>((
+  ref,
+) async {
   return ref.watch(traewellingServiceProvider).followers();
 });
 
-final trwlFollowingsProvider =
-    FutureProvider.autoDispose<List<TrwlUser>>((ref) async {
+final trwlFollowingsProvider = FutureProvider.autoDispose<List<TrwlUser>>((
+  ref,
+) async {
   return ref.watch(traewellingServiceProvider).followings();
 });
 
-final trwlFollowRequestsProvider =
-    FutureProvider.autoDispose<List<TrwlUser>>((ref) async {
+final trwlFollowRequestsProvider = FutureProvider.autoDispose<List<TrwlUser>>((
+  ref,
+) async {
   return ref.watch(traewellingServiceProvider).followRequests();
 });
 
 /// Another user's public profile + statuses, keyed by username.
-final trwlUserProfileProvider =
-    FutureProvider.autoDispose.family<TrwlUser, String>((ref, username) async {
-  return ref.watch(traewellingServiceProvider).userProfile(username);
-});
+final trwlUserProfileProvider = FutureProvider.autoDispose
+    .family<TrwlUser, String>((ref, username) async {
+      return ref.watch(traewellingServiceProvider).userProfile(username);
+    });
 
 final trwlUserStatusesProvider = FutureProvider.autoDispose
     .family<List<TrwlStatus>, String>((ref, username) async {
-  return ref.watch(traewellingServiceProvider).userStatuses(username);
-});
+      return ref.watch(traewellingServiceProvider).userStatuses(username);
+    });

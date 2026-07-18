@@ -170,6 +170,7 @@ class TraewellingService {
     final result = await OAuthBrowser.authenticate(
       url: authUrl.toString(),
       callbackUrlScheme: TraewellingConstants.callbackScheme,
+      title: 'Träwelling',
     );
 
     final returned = Uri.parse(result);

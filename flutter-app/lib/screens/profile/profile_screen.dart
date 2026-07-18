@@ -68,8 +68,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
       body: !auth.initialized
           ? const Center(child: CircularProgressIndicator())
           : auth.isLoggedIn
-              ? _LoggedIn(auth: auth)
-              : _LoggedOut(auth: auth),
+          ? _LoggedIn(auth: auth)
+          : _LoggedOut(auth: auth),
     );
   }
 
@@ -79,15 +79,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
       builder: (ctx) => AlertDialog(
         title: const Text('Abmelden?'),
         content: const Text(
-            'Dein DB-Konto wird aus der App entfernt. Profil, BahnCards und '
-            'Tickets sind dann nicht mehr sichtbar.'),
+          'Dein DB-Konto wird aus der App entfernt. Profil, BahnCards und '
+          'Tickets sind dann nicht mehr sichtbar.',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Abbrechen')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Abbrechen'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Abmelden')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Abmelden'),
+          ),
         ],
       ),
     );
@@ -117,17 +120,26 @@ class _LoggedOutState extends ConsumerState<_LoggedOut> {
       child: SingleChildScrollView(
         // Bottom pad clears the floating nav bar, so the login button can
         // always be scrolled out from under the glass.
-        padding:
-            EdgeInsets.fromLTRB(24, 24, 24, 24 + AppNavBar.insetOf(context)),
+        padding: EdgeInsets.fromLTRB(
+          24,
+          24,
+          24,
+          24 + AppNavBar.insetOf(context),
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.account_circle_outlined,
-                size: 96, color: theme.colorScheme.primary),
+            Icon(
+              Icons.account_circle_outlined,
+              size: 96,
+              color: theme.colorScheme.primary,
+            ),
             const SizedBox(height: 16),
-            Text('Mit DB-Konto anmelden',
-                style: theme.textTheme.headlineSmall,
-                textAlign: TextAlign.center),
+            Text(
+              'Mit DB-Konto anmelden',
+              style: theme.textTheme.headlineSmall,
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 12),
             Text(
               'Melde dich mit deinem Deutsche-Bahn-Konto an, um Profil, '
@@ -138,10 +150,12 @@ class _LoggedOutState extends ConsumerState<_LoggedOut> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Die Anmeldung läuft auf der Original-Seite der Bahn. Dein '
-              'Passwort sieht diese App nie.',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.outline),
+              'Angemeldet wird auf der Original-Seite der Bahn '
+              '(accounts.bahn.de), die dafür in der App geöffnet wird. '
+              'Gespeichert wird nur der Zugangs-Token, nie dein Passwort.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 20),
@@ -157,8 +171,11 @@ class _LoggedOutState extends ConsumerState<_LoggedOut> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.warning_amber_rounded,
-                      size: 20, color: theme.colorScheme.error),
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    size: 20,
+                    color: theme.colorScheme.error,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -189,9 +206,11 @@ class _LoggedOutState extends ConsumerState<_LoggedOut> {
             ),
             const SizedBox(height: 12),
             if (auth.error != null) ...[
-              Text(auth.error!,
-                  style: TextStyle(color: theme.colorScheme.error),
-                  textAlign: TextAlign.center),
+              Text(
+                auth.error!,
+                style: TextStyle(color: theme.colorScheme.error),
+                textAlign: TextAlign.center,
+              ),
               const SizedBox(height: 12),
             ],
             SizedBox(
@@ -209,7 +228,8 @@ class _LoggedOutState extends ConsumerState<_LoggedOut> {
                     : const Icon(Icons.login),
                 label: Text(auth.isLoading ? 'Anmelden…' : 'Anmelden'),
                 style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
               ),
             ),
           ],
@@ -243,8 +263,12 @@ class _LoggedIn extends ConsumerWidget {
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         // Clear the floating nav bar — it hovers over this list.
-        padding:
-            EdgeInsets.fromLTRB(16, 12, 16, 32 + AppNavBar.insetOf(context)),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          12,
+          16,
+          32 + AppNavBar.insetOf(context),
+        ),
         children: [
           _header(context),
           _refreshStatus(context),
@@ -271,7 +295,8 @@ class _LoggedIn extends ConsumerWidget {
                         child: Text(
                           'Keine BahnCard in deinem Konto.',
                           style: TextStyle(
-                              color: Theme.of(context).colorScheme.outline),
+                            color: Theme.of(context).colorScheme.outline,
+                          ),
                         ),
                       )
                     : Column(
@@ -291,19 +316,23 @@ class _LoggedIn extends ConsumerWidget {
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   child: Row(
                     children: [
-                      Icon(Icons.error_outline,
-                          size: 18,
-                          color: Theme.of(context).colorScheme.error),
+                      Icon(
+                        Icons.error_outline,
+                        size: 18,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                       const SizedBox(width: 6),
                       Expanded(
-                        child: Text('BahnCard nicht ladbar: $e',
-                            style: TextStyle(
-                                color: Theme.of(context).colorScheme.error)),
+                        child: Text(
+                          'BahnCard nicht ladbar: $e',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
                       ),
                       TextButton(
-                        onPressed: () => ref
-                            .read(bahncardsProvider.notifier)
-                            .refresh(),
+                        onPressed: () =>
+                            ref.read(bahncardsProvider.notifier).refresh(),
                         child: const Text('Erneut'),
                       ),
                     ],
@@ -319,9 +348,7 @@ class _LoggedIn extends ConsumerWidget {
             data: (list) => list.isEmpty
                 ? _emptyTickets(context)
                 : Column(
-                    children: [
-                      for (final t in list) _TicketTile(index: t),
-                    ],
+                    children: [for (final t in list) _TicketTile(index: t)],
                   ),
             loading: () => const Padding(
               padding: EdgeInsets.symmetric(vertical: 24),
@@ -329,8 +356,10 @@ class _LoggedIn extends ConsumerWidget {
             ),
             error: (e, _) => Padding(
               padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Text('Tickets konnten nicht geladen werden.\n$e',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              child: Text(
+                'Tickets konnten nicht geladen werden.\n$e',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ),
           ),
         ],
@@ -352,7 +381,10 @@ class _LoggedIn extends ConsumerWidget {
           child: Text(
             initials.isEmpty ? '?' : initials,
             style: const TextStyle(
-                color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+              color: Colors.white,
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
         const SizedBox(width: 16),
@@ -361,15 +393,19 @@ class _LoggedIn extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                [profile.anredeText, profile.fullName]
-                    .where((s) => s.isNotEmpty)
-                    .join(' '),
+                [
+                  profile.anredeText,
+                  profile.fullName,
+                ].where((s) => s.isNotEmpty).join(' '),
                 style: theme.textTheme.titleLarge,
               ),
               if (profile.email != null)
-                Text(profile.email!,
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(color: theme.colorScheme.outline)),
+                Text(
+                  profile.email!,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.outline,
+                  ),
+                ),
             ],
           ),
         ),
@@ -401,10 +437,11 @@ class _LoggedIn extends ConsumerWidget {
               failed
                   ? auth.error!
                   : 'Zuletzt aktualisiert: '
-                      '${DateFormat('dd.MM.yyyy, HH:mm').format(at!)}',
+                        '${DateFormat('dd.MM.yyyy, HH:mm').format(at!)}',
               style: theme.textTheme.bodySmall?.copyWith(
-                color:
-                    failed ? theme.colorScheme.error : theme.colorScheme.outline,
+                color: failed
+                    ? theme.colorScheme.error
+                    : theme.colorScheme.outline,
               ),
             ),
           ),
@@ -419,16 +456,23 @@ class _LoggedIn extends ConsumerWidget {
       margin: EdgeInsets.zero,
       child: Column(
         children: [
-          _row(context, Icons.badge_outlined, 'Kundennummer',
-              profile.kundennummer),
+          _row(
+            context,
+            Icons.badge_outlined,
+            'Kundennummer',
+            profile.kundennummer,
+          ),
           if (profile.email != null)
             _row(context, Icons.email_outlined, 'E-Mail', profile.email!),
           if (geb != null)
             _row(context, Icons.cake_outlined, 'Geburtsdatum', _date(geb)),
-          if (profile.adresse != null &&
-              profile.adresse!.oneLine.isNotEmpty)
-            _row(context, Icons.home_outlined, 'Adresse',
-                profile.adresse!.oneLine),
+          if (profile.adresse != null && profile.adresse!.oneLine.isNotEmpty)
+            _row(
+              context,
+              Icons.home_outlined,
+              'Adresse',
+              profile.adresse!.oneLine,
+            ),
         ],
       ),
     );
@@ -458,17 +502,19 @@ class _LoggedIn extends ConsumerWidget {
   }
 
   Widget _sectionTitle(BuildContext context, String title) => Padding(
-        padding: const EdgeInsets.only(top: 8, bottom: 10),
-        child: Text(title, style: Theme.of(context).textTheme.titleMedium),
-      );
+    padding: const EdgeInsets.only(top: 8, bottom: 10),
+    child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+  );
 
   Widget _emptyTickets(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 24),
-        child: Center(
-          child: Text('Keine Tickets gefunden.',
-              style: TextStyle(color: Theme.of(context).colorScheme.outline)),
-        ),
-      );
+    padding: const EdgeInsets.symmetric(vertical: 24),
+    child: Center(
+      child: Text(
+        'Keine Tickets gefunden.',
+        style: TextStyle(color: Theme.of(context).colorScheme.outline),
+      ),
+    ),
+  );
 
   static String _date(String iso) {
     final dt = DateTime.tryParse(iso);
@@ -490,15 +536,20 @@ class _BahnBonusCard extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            Icon(Icons.stars_rounded,
-                color: theme.colorScheme.primary, size: 36),
+            Icon(
+              Icons.stars_rounded,
+              color: theme.colorScheme.primary,
+              size: 36,
+            ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('BahnBonus · ${bonus.levelName}',
-                      style: theme.textTheme.titleMedium),
+                  Text(
+                    'BahnBonus · ${bonus.levelName}',
+                    style: theme.textTheme.titleMedium,
+                  ),
                   const SizedBox(height: 2),
                   Text(
                     '${bonus.activeBonusPoints} Punkte · '
@@ -537,11 +588,12 @@ class _BahnCardTile extends StatelessWidget {
         BahnCardView(card: card),
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
-          child: Text(parts.join(' · '),
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: muted)),
+          child: Text(
+            parts.join(' · '),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: muted),
+          ),
         ),
       ],
     );
@@ -586,10 +638,13 @@ class _TicketTile extends StatelessWidget {
         trailing: const Icon(Icons.chevron_right),
         onTap: kwId.isEmpty
             ? null
-            : () => context.push('/ticket', extra: {
+            : () => context.push(
+                '/ticket',
+                extra: {
                   'auftragsnummer': index.auftragsnummer,
                   'kundenwunschId': kwId,
-                }),
+                },
+              ),
       ),
     );
   }

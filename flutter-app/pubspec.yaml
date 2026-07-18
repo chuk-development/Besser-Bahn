@@ -40,7 +40,7 @@ dependencies:
   # (ThemeReader/SpriteIndexReader), which vector_map_tiles does not re-export.
   vector_tile_renderer: ^6.1.0
   connectivity_plus: ^7.1.1      # offline detection → offline banner / cached-data mode
-  webview_flutter: ^4.10.0       # render DB's official Handyticket HTML offline
+  webview_flutter: ^4.14.1       # render DB's official Handyticket HTML offline
   webview_flutter_android: ^4.0.0  # platform tweaks (hide native scrollbar)
   device_info_plus: ^13.1.0      # real Android model + SDK level for DB Navigator-shaped headers
 

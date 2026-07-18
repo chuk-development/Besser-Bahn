@@ -14,6 +14,7 @@ import '../models/library_models.dart' show SavedJourney;
 import '../models/split_ticket.dart' show BahnCardType;
 import '../models/station.dart';
 import '../services/db_account_service.dart';
+import '../services/oauth_browser.dart';
 import 'library_provider.dart';
 import 'service_providers.dart';
 import 'settings_provider.dart';
@@ -46,8 +47,9 @@ class _BahnCardCache {
         final ts = data['fetchedAtMs'] as int?;
         return (
           cards: list,
-          fetchedAt:
-              ts != null ? DateTime.fromMillisecondsSinceEpoch(ts) : null,
+          fetchedAt: ts != null
+              ? DateTime.fromMillisecondsSinceEpoch(ts)
+              : null,
         );
       }
       // Migrate v1 (bare list) → v2 wrapper.
@@ -199,9 +201,10 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
         final profile = await _service.profile();
         await _ProfileCache.save(profile);
         state = state.copyWith(
-            initialized: true,
-            profile: profile,
-            lastRefreshedAt: DateTime.now());
+          initialized: true,
+          profile: profile,
+          lastRefreshedAt: DateTime.now(),
+        );
         _seedSearchDefaults(profile);
         AppLog.log('restore ok · ${profile.kundennummer}', tag: 'db-account');
         return;
@@ -241,7 +244,10 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
       final profile = await _service.login();
       await _ProfileCache.save(profile);
       state = state.copyWith(
-          isLoading: false, profile: profile, lastRefreshedAt: DateTime.now());
+        isLoading: false,
+        profile: profile,
+        lastRefreshedAt: DateTime.now(),
+      );
       _invalidateData();
       _seedSearchDefaults(profile);
     } catch (e) {
@@ -263,7 +269,8 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
       final dt = DateTime.tryParse(geb);
       if (dt != null) {
         final now = DateTime.now();
-        age = now.year -
+        age =
+            now.year -
             dt.year -
             ((now.month < dt.month ||
                     (now.month == dt.month && now.day < dt.day))
@@ -300,12 +307,12 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
   }
 
   Station _stationFromFavorite(DbStationFavorite f) => Station(
-        id: f.evaNr ?? '',
-        name: f.displayName,
-        locationId: f.locationId.contains('@') ? f.locationId : null,
-        latitude: f.lat,
-        longitude: f.lng,
-      );
+    id: f.evaNr ?? '',
+    name: f.displayName,
+    locationId: f.locationId.contains('@') ? f.locationId : null,
+    latitude: f.lat,
+    longitude: f.lng,
+  );
 
   /// Maps a DB-account BahnCard (BC25/BC50/BC100 × KLASSE_1/2) to the local
   /// [BahnCardType] enum the search uses. BC100 isn't an enum value yet — it
@@ -385,6 +392,7 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
   }
 
   String _message(Object e) {
+    if (e is OAuthCanceled) return 'Anmeldung abgebrochen';
     final s = e.toString();
     if (s.contains('CANCELED') || s.contains('cancel')) {
       return 'Anmeldung abgebrochen';
@@ -463,8 +471,9 @@ class AccountRefresher {
   }
 }
 
-final accountRefreshProvider =
-    Provider<AccountRefresher>((ref) => AccountRefresher(ref));
+final accountRefreshProvider = Provider<AccountRefresher>(
+  (ref) => AccountRefresher(ref),
+);
 
 /// On-disk BahnBonus cache. Points don't change while you're standing on a
 /// platform, so the last good value stays true enough to show — and showing
@@ -569,8 +578,8 @@ class BahnbonusController extends AsyncNotifier<DbBahnBonus?> {
 
 final bahnbonusProvider =
     AsyncNotifierProvider<BahnbonusController, DbBahnBonus?>(
-  BahnbonusController.new,
-);
+      BahnbonusController.new,
+    );
 
 /// Persisted last-good official CO₂ balance. Like points and BahnCards, this is
 /// personal account data and is wiped on logout.
@@ -715,8 +724,8 @@ class BahnbonusCo2Controller extends AsyncNotifier<DbBahnBonusCo2Balance?> {
 
 final bahnbonusCo2Provider =
     AsyncNotifierProvider<BahnbonusCo2Controller, DbBahnBonusCo2Balance?>(
-  BahnbonusCo2Controller.new,
-);
+      BahnbonusCo2Controller.new,
+    );
 
 /// The user's BahnCards — stale-while-revalidate. On startup the on-disk
 /// cache returns instantly so the BahnCard / Kontrollansicht works offline;
@@ -781,8 +790,10 @@ class BahncardsController extends AsyncNotifier<List<DbBahnCard>> {
     }
   }
 
-  Future<List<DbBahnCard>> _fetchAndPersist(
-      {required String trigger, bool forceFresh = false}) async {
+  Future<List<DbBahnCard>> _fetchAndPersist({
+    required String trigger,
+    bool forceFresh = false,
+  }) async {
     final fresh = await ref
         .read(dbAccountServiceProvider)
         .bahncards(trigger: trigger, forceFresh: forceFresh);
@@ -824,8 +835,8 @@ class BahncardsController extends AsyncNotifier<List<DbBahnCard>> {
 
 final bahncardsProvider =
     AsyncNotifierProvider<BahncardsController, List<DbBahnCard>>(
-  BahncardsController.new,
-);
+      BahncardsController.new,
+    );
 
 /// On-disk cache for the full Meine-Reisen overview. Restores the Reisen tab
 /// instantly across cold starts + completely offline; a background refresh
@@ -930,8 +941,8 @@ class ReisenUebersichtController extends AsyncNotifier<DbReisenUebersicht> {
 
 final reisenuebersichtProvider =
     AsyncNotifierProvider<ReisenUebersichtController, DbReisenUebersicht>(
-  ReisenUebersichtController.new,
-);
+      ReisenUebersichtController.new,
+    );
 
 /// Bought tickets only (auftragsIndizes), newest first.
 final ticketIndicesProvider = FutureProvider<List<DbReiseIndex>>((ref) async {
@@ -1013,15 +1024,14 @@ final ticketTripsProvider = FutureProvider<List<DbTicketTrip>>((ref) async {
 
   final trips = (await Future.wait(
     indices.map(resolve),
-  ))
-      .whereType<DbTicketTrip>()
-      .toList();
+  )).whereType<DbTicketTrip>().toList();
   // Upcoming first (soonest departure), then past (most recent first) — same
   // order the local saved trips use.
-  int? depMs(DbTicketTrip t) => (t.journey?.plannedDeparture ??
-          t.journey?.departure ??
-          t.ticket?.gueltigAb)
-      ?.millisecondsSinceEpoch;
+  int? depMs(DbTicketTrip t) =>
+      (t.journey?.plannedDeparture ??
+              t.journey?.departure ??
+              t.ticket?.gueltigAb)
+          ?.millisecondsSinceEpoch;
   final upcoming = trips.where((t) => !t.isPast).toList()
     ..sort((a, b) => (depMs(a) ?? 0).compareTo(depMs(b) ?? 0));
   final past = trips.where((t) => t.isPast).toList()
@@ -1045,8 +1055,9 @@ final savedReiseJourneyProvider = FutureProvider.family<Journey?, String>((
   ref,
   rkUuid,
 ) async {
-  final wrap =
-      await ref.read(dbAccountServiceProvider).savedReiseVerbindung(rkUuid);
+  final wrap = await ref
+      .read(dbAccountServiceProvider)
+      .savedReiseVerbindung(rkUuid);
   if (wrap == null) return null;
   try {
     final journey = ref.read(vendoServiceProvider).parseConnection(wrap);
@@ -1065,8 +1076,9 @@ final savedReiseJourneyProvider = FutureProvider.family<Journey?, String>((
 });
 
 /// Server-side Bahnhof favorites — read-only sync on login.
-final dbStationFavoritesProvider =
-    FutureProvider<List<DbStationFavorite>>((ref) async {
+final dbStationFavoritesProvider = FutureProvider<List<DbStationFavorite>>((
+  ref,
+) async {
   // Login state only — see BahnbonusController.build (#31). This one also
   // fetches the profile internally, so a whole-state watch re-fetched it on
   // every profile reload.
@@ -1104,8 +1116,8 @@ class _DbTicketCache {
     try {
       final prefs = await SharedPreferences.getInstance();
       final hits = prefs.getKeys().where(
-            (k) => k.startsWith('db_ticket_raw_v1:'),
-          );
+        (k) => k.startsWith('db_ticket_raw_v1:'),
+      );
       for (final k in hits) {
         await prefs.remove(k);
       }
@@ -1157,8 +1169,9 @@ final ticketProvider = FutureProvider.family<DbTicket, String>((
     return DbTicket.fromJson(cached);
   }
   final parts = key.split('/');
-  final fresh =
-      await ref.read(dbAccountServiceProvider).ticketJson(parts[0], parts[1]);
+  final fresh = await ref
+      .read(dbAccountServiceProvider)
+      .ticketJson(parts[0], parts[1]);
   if (fresh == null) {
     final retry = await _DbTicketCache.load(key);
     if (retry != null) return DbTicket.fromJson(retry);

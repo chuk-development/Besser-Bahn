@@ -177,6 +177,7 @@ class DbAccountService {
     final result = await OAuthBrowser.authenticate(
       url: authUrl.toString(),
       callbackUrlScheme: DbAccountConstants.callbackScheme,
+      title: 'DB-Konto',
     );
 
     final returned = Uri.parse(result);
@@ -400,6 +401,7 @@ class DbAccountService {
     final result = await OAuthBrowser.authenticate(
       url: authUrl.toString(),
       callbackUrlScheme: DbAccountConstants.bahnbonusCallbackScheme,
+      title: 'BahnBonus',
     );
     final returned = Uri.parse(result);
     final code = returned.queryParameters['code'];

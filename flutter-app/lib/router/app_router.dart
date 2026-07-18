@@ -29,6 +29,11 @@ import '../screens/traewelling/traewelling_checkin_screen.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
+/// The root navigator, for the rare case where something outside the widget
+/// tree has to show a screen — the OAuth login, which is driven by a service
+/// (see `OAuthBrowser`) rather than by a widget.
+GlobalKey<NavigatorState> get rootNavigatorKey => _rootNavigatorKey;
+
 /// One Navigator per tab — that is what makes them branches and not pages: each
 /// keeps its own stack and its own state while the others are parked off to the
 /// side of the strip.
