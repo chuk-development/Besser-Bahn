@@ -7,7 +7,6 @@ import 'package:crypto/crypto.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -16,6 +15,7 @@ import '../core/constants.dart';
 import '../core/request_coalescer.dart';
 import '../models/db_account.dart';
 import '../models/db_ticket.dart';
+import 'oauth_browser.dart';
 
 /// Result of a refresh-token call.
 enum _RefreshOutcome { success, transient, rejected }
@@ -174,7 +174,7 @@ class DbAccountService {
     );
 
     AppLog.log('login → ${DbAccountConstants.authorizeUrl}', tag: 'db-account');
-    final result = await FlutterWebAuth2.authenticate(
+    final result = await OAuthBrowser.authenticate(
       url: authUrl.toString(),
       callbackUrlScheme: DbAccountConstants.callbackScheme,
     );
@@ -397,7 +397,7 @@ class DbAccountService {
         'kc_locale': 'de',
       },
     );
-    final result = await FlutterWebAuth2.authenticate(
+    final result = await OAuthBrowser.authenticate(
       url: authUrl.toString(),
       callbackUrlScheme: DbAccountConstants.bahnbonusCallbackScheme,
     );

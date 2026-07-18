@@ -4,12 +4,12 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/constants.dart';
 import '../core/user_agent_client.dart';
 import '../models/traewelling_models.dart';
+import 'oauth_browser.dart';
 
 /// Raised when an API call fails. [status] carries the HTTP code so callers can
 /// special-case 401 (re-login) and 409 (check-in collision).
@@ -167,7 +167,7 @@ class TraewellingService {
       },
     );
 
-    final result = await FlutterWebAuth2.authenticate(
+    final result = await OAuthBrowser.authenticate(
       url: authUrl.toString(),
       callbackUrlScheme: TraewellingConstants.callbackScheme,
     );

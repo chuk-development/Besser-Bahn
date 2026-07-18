@@ -61,7 +61,7 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- OAuth callbacks for flutter_web_auth_2:
+        <!-- OAuth callbacks for the Android classic-Custom-Tab bridge:
              - besserbahn:// — Träwelling login (bahn.chuk.dev bounce page).
              - dbnav://     — Deutsche-Bahn account login; DB's Keycloak
                               redirects straight into the DB Navigator app
@@ -69,21 +69,26 @@
              - bahnbonus:// — separate BahnBonus OAuth token for the official
                               personal CO₂ statistics service.
 
-             `taskAffinity=""` is required by the plugin and was missing (#35).
-             Without it this activity inherits the application's affinity, while
-             MainActivity above declares an empty one — so the callback landed in
-             a DIFFERENT task than the app. The result still arrived (the plugin
-             hands it over in-process, which is why the login itself worked), but
-             the FLAG_ACTIVITY_CLEAR_TOP intent that dismisses the browser could
-             not find the waiting activity, leaving the Custom Tab spinning on
-             top until the user closed it by hand. An empty affinity puts the
-             callback in the same task family as MainActivity, so the browser
-             steps aside on its own. Same path serves Träwelling (#34). -->
+             Version 5 of flutter_web_auth_2 uses Chrome Auth Tab, which only
+             closes reliably with these custom schemes on recent browsers. The
+             local bridge deliberately uses a classic Custom Tab and brings its
+             management activity forward with CLEAR_TOP after the redirect. This
+             closes the browser on old and new Chrome versions without using an
+             ephemeral session (and therefore keeps DB login cookies). All three
+             activities use the empty task affinity so the callback can reach the
+             waiting activity in the same task (#35). -->
         <activity
-            android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+            android:name=".OAuthManagementActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity
+            android:name=".OAuthCallbackActivity"
             android:exported="true"
+            android:excludeFromRecents="true"
             android:taskAffinity="">
-            <intent-filter android:label="flutter_web_auth_2">
+            <intent-filter android:label="Besser Bahn OAuth">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
