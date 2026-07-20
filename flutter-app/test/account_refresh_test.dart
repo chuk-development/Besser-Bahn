@@ -53,6 +53,9 @@ class _Backend {
   /// once a burst of duplicate requests trips it.
   bool rateLimited = false;
 
+  /// Answer everything 401, as the backend does once the session is dead.
+  bool sessionDead = false;
+
   List<_Req> of(String path) =>
       requests.where((r) => r.path == path).toList();
 
@@ -62,6 +65,9 @@ class _Backend {
         requests.add(_Req(req.method, req.url, req.headers));
         final path = req.url.path;
 
+        if (sessionDead) {
+          return http.Response('', 401);
+        }
         if (rateLimited) {
           return http.Response(
               json.encode({'domain': 'MOB', 'code': 'RETRY', 'status': 'ERROR'}),
@@ -292,6 +298,51 @@ void main() {
               'showing the old data is what made this look broken');
       expect(auth.profile, isNotNull,
           reason: 'a failed refresh must not sign the user out');
+    });
+  });
+
+  /// BB-1: "Account-Refresh geht nicht". The tokens were gone from secure
+  /// storage while the cached profile was still on disk, so the app rendered a
+  /// signed-in Profil tab whose every request answered 401 "Sitzung
+  /// abgelaufen" — a refresh that could never work, with no way out but a
+  /// manual logout the user had no reason to try.
+  group('a dead session signs out instead of faking a login (BB-1)', () {
+    test('no token on disk at cold start → signed out, cached profile dropped',
+        () async {
+      await boot();
+      expect(container.read(dbAuthProvider).isLoggedIn, isTrue);
+
+      // The refresh token is gone (revoked upstream, or the store was wiped)
+      // — but the profile cache in SharedPreferences survives, as on a real
+      // device. Relaunch: fresh container, same disks.
+      container.dispose();
+      FlutterSecureStorage.setMockInitialValues({});
+      container = ProviderContainer(overrides: [
+        dbAccountServiceProvider
+            .overrideWithValue(DbAccountService(client: backend.client())),
+      ]);
+      container.listen(dbAuthProvider, (_, _) {});
+      await _settle();
+
+      final auth = container.read(dbAuthProvider);
+      expect(auth.initialized, isTrue);
+      expect(auth.isLoggedIn, isFalse,
+          reason: 'without a token every request 401s — showing the cached '
+              'profile just hides a login the user has to redo');
+    });
+
+    test('a 401 during a refresh signs out and says why', () async {
+      await boot();
+      expect(container.read(dbAuthProvider).isLoggedIn, isTrue);
+
+      // Session dies mid-run: the profile POST 401s and the refresh token is
+      // rejected too (the mock has no token endpoint).
+      backend.sessionDead = true;
+      await container.read(accountRefreshProvider).refresh();
+
+      final auth = container.read(dbAuthProvider);
+      expect(auth.isLoggedIn, isFalse);
+      expect(auth.error, contains('Sitzung abgelaufen'));
     });
   });
 }

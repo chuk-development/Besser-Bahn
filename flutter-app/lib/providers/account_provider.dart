@@ -197,6 +197,18 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
     try {
       final has = await _service.hasSession();
       AppLog.log('restore start · session=$has', tag: 'db-account');
+      if (!has && !_service.secureStorageUnavailable) {
+        // No token on disk and the store *was* readable → the session is
+        // genuinely gone (refresh token revoked or expired). Keeping the
+        // cached profile on screen made the app claim to be signed in while
+        // every single request answered 401 "Sitzung abgelaufen", so the only
+        // symptom was a refresh that always failed and never updated anything
+        // (BB-1). Sign out locally instead: the user gets the login CTA.
+        AppLog.log('restore · no session on disk → local sign-out',
+            tag: 'db-account');
+        await _forgetSession();
+        return;
+      }
       if (has) {
         final profile = await _service.profile();
         await _ProfileCache.save(profile);
@@ -330,9 +342,18 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
   }
 
   Future<void> logout() async {
+    await _forgetSession();
+    _invalidateData();
+  }
+
+  /// Everything [logout] does except tearing the account controllers down.
+  /// They all watch `isLoggedIn` and empty themselves when it flips, so the
+  /// invalidate is only needed for an identity *change* — and it is illegal
+  /// while one of them is mid-refresh, which is exactly when an expired
+  /// session is discovered (BB-1).
+  Future<void> _forgetSession() async {
     await _service.logout();
     state = const DbAuthState(initialized: true);
-    _invalidateData();
     // Privacy: strip any Bahnhof-Favoriten that came from the server-side
     // sync and were never used locally — leftover would otherwise leak the
     // signed-out account's data into the Schnellauswahl.
@@ -369,6 +390,18 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
       final profile = await _service.profile();
       await _ProfileCache.save(profile);
       state = state.copyWith(profile: profile, clearError: true);
+    } on DbAccountException catch (e) {
+      // 401/403 here means the session died while the app was open — the
+      // service has already dropped the tokens. Mirror that in the UI instead
+      // of leaving a signed-in-looking screen whose every pull fails (BB-1).
+      if (e.status == 401 || e.status == 403) {
+        await _forgetSession();
+        state = state.copyWith(
+          error: 'Sitzung abgelaufen – bitte neu anmelden.',
+        );
+        return;
+      }
+      state = state.copyWith(error: _refreshMessage(e));
     } catch (e) {
       state = state.copyWith(error: _refreshMessage(e));
     }

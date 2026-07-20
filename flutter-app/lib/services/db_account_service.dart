@@ -113,10 +113,21 @@ class DbAccountService {
 
   // --- Secure-storage wrappers (never crash on a missing platform impl) -----
 
+  /// True once a secure-storage *read* has thrown — a locked keychain, a
+  /// missing platform impl, broken libsecret on desktop. Then a null token
+  /// means "we couldn't look", not "the session is gone", and callers must not
+  /// treat it as a sign-out (BB-1).
+  bool _storageReadFailed = false;
+
+  /// Whether the token store was unreadable this run. See [_storageReadFailed].
+  bool get secureStorageUnavailable => _storageReadFailed;
+
   Future<String?> _read(String key) async {
     try {
       return await _storage.read(key: key);
-    } catch (_) {
+    } catch (e) {
+      _storageReadFailed = true;
+      AppLog.log('secure-storage read failed [$key]: $e', tag: 'db-account');
       return null;
     }
   }
