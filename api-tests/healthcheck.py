@@ -2472,6 +2472,73 @@ def check_osm_platform_geometry() -> str:
             f"{rails} rail ways")
 
 
+def check_osm_bus_stop_sides() -> str:
+    """Bus-stop poles + their directions via Overpass — the data behind "which
+    side of the street does my bus leave from?" (services/osm_bus_stop_service
+    .dart, #55). Same QL the app POSTs: every `highway=bus_stop|tram_stop` node
+    around the stop, then the route relations those nodes belong to, `out body`
+    so the member lists say which direction leaves from which pole.
+
+    Probed at Gravelottestraße in Kiel — the stop from the report, mapped as
+    several poles with `local_ref` bay letters (the same letters vendo puts in a
+    bus leg's `gleis`).
+
+    Soft: the app degrades to no bus map rather than breaking if Overpass is
+    down.
+    """
+    lat, lon = 54.325005, 10.113323
+    ql = ("[out:json][timeout:25];"
+          f'node["highway"~"bus_stop|tram_stop"](around:250,{lat},{lon})->.s;'
+          ".s out tags center;"
+          'rel(bn.s)["type"="route"]["route"~"bus|tram|trolleybus"];'
+          "out body;")
+    endpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.openstreetmap.fr/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+    ]
+    resp = None
+    last = None
+    for endpoint in endpoints:
+        try:
+            r = _post(endpoint, data={"data": ql},
+                      headers={"User-Agent": "BesserBahn/1.0 (+https://bahn.chuk.dev)",
+                               "Accept": "*/*"}, timeout=TIMEOUT)
+            if r.status_code == 200:
+                resp = r
+                break
+            last = f"{endpoint} HTTP {r.status_code}"
+        except requests.RequestException as e:
+            last = f"{endpoint} {type(e).__name__}"
+    if resp is None:
+        raise CheckError(f"all Overpass mirrors unavailable (last: {last})")
+
+    elements = resp.json().get("elements", [])
+    nodes = {el["id"]: el for el in elements if el.get("type") == "node"}
+    rels = [el for el in elements if el.get("type") == "relation"]
+    poles = [n for n in nodes.values()
+             if (n.get("tags") or {}).get("name", "").startswith("Gravelotte")]
+    if len(poles) < 2:
+        raise CheckError(f"expected several poles for one stop, got {len(poles)}")
+    if not any((p.get("tags") or {}).get("local_ref") for p in poles):
+        raise CheckError("no pole carries a local_ref bay letter")
+    # Direction attribution needs BOTH the relation's `to` and its member list.
+    attributed = 0
+    for rel in rels:
+        tags = rel.get("tags") or {}
+        if not tags.get("to"):
+            continue
+        for m in rel.get("members") or []:
+            if m.get("type") == "node" and m.get("ref") in nodes:
+                attributed += 1
+    if attributed < 1:
+        raise CheckError("no route relation names a direction for a pole "
+                         "(members or `to` missing → no Fahrtrichtung)")
+    return (f"{len(poles)} poles for one stop "
+            f"(bays {sorted({(p.get('tags') or {}).get('local_ref') for p in poles} - {None})}), "
+            f"{attributed} pole↔direction links")
+
+
 def check_basemap_tiles() -> str:
     """Outdoor base map: OpenFreeMap "Positron" VECTOR tiles — the German-labelled
     (local names), keyless, light basemap the app renders under every outdoor map
@@ -2935,6 +3002,7 @@ CHECKS = [
     ("wagenreihung time-vs-date key (#32)", check_wagenreihung_time_key, True),
     ("wagenreihung S-Bahn served (#33)", check_wagenreihung_sbahn, True),
     ("osm platform geometry (overpass)", check_osm_platform_geometry, False),
+    ("osm bus stop sides (#55)", check_osm_bus_stop_sides, True),
     ("basemap (OpenFreeMap Positron vector)", check_basemap_tiles, True),
     ("basemap offline style bundle (#29)", check_basemap_offline_bundle, True),
     ("bahnhof.de station map (karte)", check_bahnhof_map, False),

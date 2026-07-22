@@ -7,6 +7,7 @@ import '../core/train_dimensions.dart';
 import '../models/coach_sequence.dart';
 import '../models/station.dart';
 import '../models/station_map.dart';
+import '../services/osm_bus_stop_service.dart';
 import '../services/osm_platform_service.dart';
 import '../services/station_map_service.dart';
 import 'service_providers.dart';
@@ -247,12 +248,17 @@ class StationMapState {
     for (final p in m.platforms) {
       if (normalizeGleis(p.name) == g) return p;
     }
+    // A bus stop has no Gleise — its "Gleis" is the bay letter on a pole, and
+    // marking the right pole is the whole point of that map (#55).
+    for (final p in m.pois) {
+      if (p.type == 'BUS' && normalizeGleis(p.name) == g) return p;
+    }
     return null;
   }
 
   /// Role to highlight [poi] as on the map: primary, secondary, or none.
   GleisRole roleForPoi(MapPoi poi) {
-    if (!poi.isPlatform) return GleisRole.none;
+    if (!poi.isPlatform && poi.type != 'BUS') return GleisRole.none;
     final n = normalizeGleis(poi.name);
     if (highlightGleis != null && n == highlightGleis) return highlightRole;
     if (secondaryGleis != null && n == secondaryGleis) return secondaryRole;
@@ -612,6 +618,11 @@ class StationMapNotifier extends Notifier<StationMapState> {
       // Known/expected failure (bad slug, no map data) — message is user-safe.
       AppLog.log('map load failed (StationMapException): ${e.message}',
           tag: 'map');
+      // bahnhof.de only maps railway stations. A bus or tram stop lands here
+      // every time — and that is exactly the stop where the rider needs to know
+      // which side of the street to stand on, so build the map from OSM instead
+      // of showing an error (#55).
+      if (await _loadBusStopMap()) return;
       state = state.copyWith(isLoading: false, error: e.message);
     } catch (e, st) {
       // Unexpected — log the real type + message + stack so the in-app Log
@@ -623,6 +634,62 @@ class StationMapNotifier extends Notifier<StationMapState> {
         error: 'Karte konnte nicht geladen werden ($e).',
       );
     }
+  }
+
+  /// Build this stop's map from OpenStreetMap when bahnhof.de has none.
+  ///
+  /// A stop like "Gravelottestraße" is two to four poles — one per direction,
+  /// sometimes lettered. The timetable names only the stop, so the rider had no
+  /// way to tell which side of the street to wait on. OSM maps every pole, and
+  /// the bay letter it carries (`local_ref`) is the same letter vendo puts in a
+  /// bus leg's `gleis` — so the pole the rider needs gets the green Einstieg
+  /// marker like a Gleis would (#55).
+  ///
+  /// Returns false when there's nothing to build from (no coordinates, no OSM
+  /// data, Overpass unreachable) — then the caller keeps its error state.
+  Future<bool> _loadBusStopMap() async {
+    final station = state.station;
+    final lat = station?.latitude, lon = station?.longitude;
+    if (station == null || lat == null || lon == null) return false;
+    final center = LatLng(lat, lon);
+    final bays = await OsmBusStopService.instance.fetch(center, station.name);
+    if (bays.isEmpty) return false;
+    // Keep the rider's own stop centred rather than the average pole: the poles
+    // of one stop sit metres apart, and the timetable coordinate is the one the
+    // route was searched against.
+    final map = StationMap(
+      slug: 'osm:stop:${station.name.toLowerCase()}',
+      center: center,
+      levels: const ['GROUND_FLOOR'],
+      levelInit: 'GROUND_FLOOR',
+      pois: [
+        for (final bay in bays)
+          MapPoi(
+            type: 'BUS',
+            name: bay.label,
+            detail: [
+              if (bay.bay != null) bay.name,
+              ?bay.directionLabel,
+              if (bay.shelter) 'mit Wartehäuschen',
+            ].join(' · '),
+            level: 'GROUND_FLOOR',
+            latitude: bay.latLng.latitude,
+            longitude: bay.latLng.longitude,
+          ),
+      ],
+    );
+    AppLog.log(
+        'map built from OSM: "${station.name}" ${bays.length} poles '
+        '(highlight ${state.highlightGleis ?? '–'})',
+        tag: 'map');
+    state = state.copyWith(
+      map: map,
+      selectedLevel: 'GROUND_FLOOR',
+      hiddenCategories: const {},
+      isLoading: false,
+      clearError: true,
+    );
+    return true;
   }
 
   /// Fetch [map]'s OSM platform/rail geometry and attach it once it lands,
