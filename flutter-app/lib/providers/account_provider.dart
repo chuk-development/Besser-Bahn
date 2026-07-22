@@ -499,6 +499,14 @@ class AccountRefresher {
       _ref.read(bahncardsProvider.notifier).refresh(),
       _ref.read(reisenuebersichtProvider.notifier).refresh(),
     ]);
+    // The booked tickets themselves. The overview above only lists WHICH
+    // orders exist; each ticket's detail (seat, Verbindung, barcode) is cached
+    // per `auftragsnummer/kundenwunschId` and was never part of a refresh — so
+    // a seat reservation or rebooking made outside the app stayed on the old
+    // ticket until the cache happened to be revalidated (#52). Invalidating the
+    // family re-runs each ticket's cache-first body, which revalidates it
+    // against the server; the cached parse keeps the list on screen meanwhile.
+    _ref.invalidate(ticketProvider);
     // The profile POST is the canary: if the client is rate-limited or the
     // session is dead, it failed too. Don't claim a refresh that didn't happen.
     if (_ref.read(dbAuthProvider).error == null) {

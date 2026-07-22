@@ -259,7 +259,7 @@ class _LoggedIn extends ConsumerWidget {
       // to refresh each of them by hand while also invalidating them, which
       // fired every request twice and rate-limited the refresh into serving the
       // stale cache it was meant to replace (#31).
-      onRefresh: () => ref.read(accountRefreshProvider).refresh(),
+      onRefresh: () => _pullToRefresh(context, ref),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         // Clear the floating nav bar — it hovers over this list.
@@ -582,6 +582,24 @@ class _BahnBonusCard extends StatelessWidget {
 /// metadata used to live inside the fullscreen Kontrollansicht; the user
 /// preferred it here so the card stays clean and the basic data is glanceable
 /// without opening anything.
+/// Pull-to-refresh on the Profil tab. Reports the outcome: a refresh that got
+/// rate-limited or hit a dead session used to look exactly like one that found
+/// nothing new — the screen just sat there with the same data ("Refresh geht
+/// nicht", #52). The small "Zuletzt aktualisiert" line stays as the quiet
+/// record; this is the one you can't miss.
+Future<void> _pullToRefresh(BuildContext context, WidgetRef ref) async {
+  final messenger = ScaffoldMessenger.of(context);
+  await ref.read(accountRefreshProvider).refresh();
+  final error = ref.read(dbAuthProvider).error;
+  if (error == null) return;
+  messenger
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(
+      duration: const Duration(seconds: 5),
+      content: Text(error),
+    ));
+}
+
 class _BahnCardTile extends StatelessWidget {
   final DbBahnCard card;
   const _BahnCardTile({required this.card});
