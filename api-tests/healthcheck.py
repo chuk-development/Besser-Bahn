@@ -1568,7 +1568,54 @@ def check_vendo_share() -> str:
     vbid = r.json().get("vbid")
     if not vbid:
         raise CheckError("teilen response has no vbid")
-    return f"vbid minted ({vbid[:8]}…) → bahn.de/buchung/start?vbid=…"
+
+    # …and back again: a pasted share link has to resolve to the very same
+    # connection, which is what the manual split-ticket entry runs (#44).
+    # GET the share record for its recon ctx, then replay that ctx through
+    # /angebote/recon. (The old path went via www.bahn.de/web/api, which
+    # Akamai blocks — every pasted link failed.)
+    lookup = _get(
+        f"https://app.services-bahn.de/mob/angebote/verbindung/{vbid}",
+        headers=_vendo_headers(share_media), timeout=TIMEOUT,
+    )
+    if lookup.status_code != 200:
+        raise CheckError(f"share lookup HTTP {lookup.status_code}")
+    back = lookup.json().get("GH")
+    if not back or "¶" not in back:
+        raise CheckError("share lookup carries no recon ctx (GH)")
+    rr = _post(
+        "https://app.services-bahn.de/mob/angebote/recon",
+        headers=_vendo_headers(search_media),
+        data=json.dumps({
+            "autonomeReservierung": False,
+            "einstiegsTypList": ["STANDARD"],
+            "fahrverguenstigungen": {
+                "deutschlandTicketVorhanden": False,
+                "nurDeutschlandTicketVerbindungen": False,
+            },
+            "klasse": "KLASSE_2",
+            # NB `verbindungHin.kontext` — `ctxRecon`/`hinfahrtRecon` (the
+            # website's spelling) are answered 400 VALIDIERUNG.
+            "verbindungHin": {"kontext": back},
+            "reisendenProfil": {"reisende": [{
+                "ermaessigungen": ["KEINE_ERMAESSIGUNG KLASSENLOS"],
+                "reisendenTyp": "ERWACHSENER",
+            }]},
+            "reservierungsKontingenteVorhanden": False,
+        }),
+        timeout=TIMEOUT,
+    )
+    if rr.status_code != 200:
+        raise CheckError(f"recon HTTP {rr.status_code}")
+    recon_data = rr.json()
+    legs = (recon_data.get("verbindung") or {}).get("verbindungsAbschnitte")
+    if not legs:
+        raise CheckError("recon response has no verbindungsAbschnitte "
+                         "(shape changed)")
+    if "angebote" not in recon_data:
+        raise CheckError("recon response carries no angebote (no price)")
+    return (f"vbid minted ({vbid[:8]}…) → bahn.de/buchung/start?vbid=…; "
+            f"resolves back to {len(legs)} leg(s) with prices")
 
 
 def check_vendo_journey_pagination() -> str:

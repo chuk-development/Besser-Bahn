@@ -515,6 +515,95 @@ class VendoService {
     return link;
   }
 
+  /// The `vbid` in a pasted DB share link, or null.
+  ///
+  /// Everything the rider might paste resolves here: the full link
+  /// (`https://www.bahn.de/buchung/start?vbid=…`, `int.bahn.de/en/buchung/…`),
+  /// a whole shared message with the link somewhere inside it, a bare
+  /// `vbid=…`, or the bare UUID on its own.
+  static String? extractVbid(String input) {
+    final s = input.trim();
+    if (s.isEmpty) return null;
+    final param = RegExp(r'vbid=([0-9a-fA-F-]{8,})').firstMatch(s);
+    if (param != null) return param.group(1);
+    // A bare id: only accept a real UUID, so a random word can't be sent to
+    // the backend as a share id.
+    final uuid = RegExp(
+      r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+      r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b',
+    ).firstMatch(s);
+    return uuid?.group(0);
+  }
+
+  /// A pasted "Reise teilen" link (or bare `vbid`) → the exact connection it
+  /// points at, priced for [reisende].
+  ///
+  /// Two calls, both on the DB Navigator backend:
+  ///  1. `GET /angebote/verbindung/{vbid}` hands back the share record — most
+  ///     importantly `GH`, the full HAFAS recon context.
+  ///  2. `POST /angebote/recon` with `verbindungHin.kontext` = that context
+  ///     replays it into a fresh, priced connection.
+  ///
+  /// This used to run against `www.bahn.de/web/api`, which Akamai blocks — so
+  /// every pasted link failed with "Konnte keine Verbindung aus dem Link
+  /// lesen", whatever the rider pasted (#44).
+  Future<Journey?> resolveShareLink(
+    String input, {
+    List<Map<String, dynamic>>? reisende,
+    bool deutschlandTicket = false,
+    bool firstClass = false,
+  }) async {
+    final vbid = extractVbid(input);
+    if (vbid == null) return null;
+
+    final lookupUrl = '$_base/angebote/verbindung/${Uri.encodeComponent(vbid)}';
+    final lookup = await _client
+        .get(Uri.parse(lookupUrl), headers: _headers(_shareMedia))
+        .timeout(const Duration(seconds: 12));
+    AppLog.log('share lookup HTTP ${lookup.statusCode} '
+        '(${lookup.bodyBytes.length}B)', tag: 'vendo');
+    if (lookup.statusCode != 200) return null;
+    final share =
+        json.decode(utf8.decode(lookup.bodyBytes)) as Map<String, dynamic>;
+    final recon = share['GH'] as String?;
+    if (recon == null || recon.isEmpty) return null;
+
+    final body = {
+      'autonomeReservierung': false,
+      'einstiegsTypList': ['STANDARD'],
+      'fahrverguenstigungen': {
+        'deutschlandTicketVorhanden': deutschlandTicket,
+        'nurDeutschlandTicketVerbindungen': false,
+      },
+      'klasse': firstClass ? 'KLASSE_1' : 'KLASSE_2',
+      'verbindungHin': {'kontext': recon},
+      'reisendenProfil': {
+        'reisende': (reisende == null || reisende.isEmpty)
+            ? [
+                {
+                  'ermaessigungen': ['KEINE_ERMAESSIGUNG KLASSENLOS'],
+                  'reisendenTyp': 'ERWACHSENER',
+                }
+              ]
+            : reisende,
+      },
+      'reservierungsKontingenteVorhanden': false,
+    };
+    final res = await _client
+        .post(Uri.parse('$_base/angebote/recon'),
+            headers: _headers(_journeyMedia),
+            body: utf8.encode(json.encode(body)))
+        .timeout(const Duration(seconds: 15));
+    AppLog.log('recon HTTP ${res.statusCode} (${res.bodyBytes.length}B)',
+        tag: 'vendo');
+    if (res.statusCode != 200) return null;
+    final data = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    // `{verbindung, angebote}` — the same shape as one element of a search
+    // result's `verbindungen`, so the normal parser reads it as-is.
+    final journey = _parseConnection(data, firstClass: firstClass);
+    return journey.legs.isEmpty ? null : journey;
+  }
+
   /// The exact track geometry (the rails the train actually runs on) for a
   /// train run, from the DB Navigator backend's `zuglauf` endpoint — the same
   /// source the official app uses to draw the route on its map.

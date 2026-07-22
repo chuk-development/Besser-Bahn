@@ -10,6 +10,7 @@ import '../../providers/service_providers.dart';
 import '../../providers/split_ticket_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/db_api_service.dart';
+import '../../utils/split_stops.dart';
 import '../../theme/app_colors.dart';
 
 /// Split-ticket analysis viewer + entry point.
@@ -63,29 +64,37 @@ class _SplitTicketScreenState extends ConsumerState<SplitTicketScreen> {
       _resolveError = null;
     });
     final settings = ref.read(settingsProvider);
-    final dbApi = ref.read(dbApiServiceProvider);
+    // The DB Navigator backend, not www.bahn.de/web/api — Akamai blocks that
+    // one, so every pasted link failed no matter what it contained (#44).
+    final vendo = ref.read(vendoServiceProvider);
     try {
-      final resolved = await dbApi.resolveShareLink(
+      final resolved = await vendo.resolveShareLink(
         link,
-        bahnCard: settings.bahnCard,
+        reisende: settings.searchParty.toReisendeJson(),
         deutschlandTicket: settings.hasDeutschlandTicket,
       );
       if (!mounted) return;
-      if (resolved == null) {
+      final stops = resolved == null
+          ? const <Map<String, dynamic>>[]
+          : splitStopsFromJourney(resolved);
+      if (resolved == null || stops.length < 2) {
         setState(() {
           _resolving = false;
-          _resolveError =
-              'Konnte keine Verbindung aus dem Link lesen. Prüfe den DB-Link '
-              '(z. B. bahn.de/buchung/start?vbid=…).';
+          _resolveError = resolved == null
+              ? 'Konnte keine Verbindung aus dem Link lesen. Prüfe den DB-Link '
+                  '(z. B. bahn.de/buchung/start?vbid=…).'
+              : 'Diese Verbindung hat zu wenige Halte für ein Split-Ticket.';
         });
         return;
       }
       setState(() => _resolving = false);
+      final dep = resolved.plannedDeparture ?? resolved.departure;
       ref.read(splitTicketProvider.notifier).analyze(
-            stops: resolved.stops,
-            date: resolved.date,
-            directPrice: resolved.directPrice,
-            routeLabel: resolved.routeLabel,
+            stops: stops,
+            date: dep != null ? dep.toIso8601String().split('T').first : '',
+            directPrice: resolved.price?.amount ?? 0,
+            routeLabel: '${resolved.origin?.name ?? ''} → '
+                '${resolved.destination?.name ?? ''}',
             jobKey: 'link:$link',
           );
     } catch (e) {
