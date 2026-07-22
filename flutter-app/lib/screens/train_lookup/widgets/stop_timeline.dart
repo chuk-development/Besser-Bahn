@@ -830,17 +830,26 @@ class _StopRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Fixed-height name row, contents vertically centred, so the
-                    // taller endpoint Gleis chip never shifts the name relative
-                    // to the timeline dot (which targets this same centre).
-                    SizedBox(
-                      height: _nameRowHeight,
+                    // Name row: at least [_nameRowHeight] so the taller endpoint
+                    // Gleis chip never shifts the name relative to the timeline
+                    // dot (which targets that same centre) — but free to grow.
+                    // It used to be a hard SizedBox, which cut a two-line
+                    // station name off mid-glyph: the second line was there,
+                    // just clipped to its first pixel row (#57).
+                    ConstrainedBox(
+                      constraints:
+                          const BoxConstraints(minHeight: _nameRowHeight),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           Expanded(
                             child: Text(
                               stopover.stop.name,
+                              // Two lines is enough for the longest real name
+                              // ("Frankfurt (Main) Flughafen Fernbahnhof");
+                              // past that the row would push the timeline apart.
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: emphasize
