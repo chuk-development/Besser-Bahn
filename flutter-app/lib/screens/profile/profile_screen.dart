@@ -293,7 +293,13 @@ class _LoggedIn extends ConsumerWidget {
                     ? Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         child: Text(
-                          'Keine BahnCard in deinem Konto.',
+                          // An expired card is simply gone from the endpoint,
+                          // so "keine BahnCard" was the app's answer to "why is
+                          // my BahnCard not showing?" — say what that means
+                          // (#53).
+                          'Keine gültige BahnCard in deinem Konto. Eine '
+                          'abgelaufene BahnCard liefert die Bahn hier nicht '
+                          'mehr mit.',
                           style: TextStyle(
                             color: Theme.of(context).colorScheme.outline,
                           ),
@@ -301,7 +307,12 @@ class _LoggedIn extends ConsumerWidget {
                       )
                     : Column(
                         children: [
-                          for (final c in list)
+                          // Valid cards first: an expired one is history, and
+                          // it must not be the card the eye lands on.
+                          for (final c in [
+                            ...list.where((c) => c.isValidNow),
+                            ...list.where((c) => !c.isValidNow),
+                          ])
                             Padding(
                               padding: const EdgeInsets.only(bottom: 12),
                               child: _BahnCardTile(card: c),
@@ -577,22 +588,54 @@ class _BahnCardTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final muted = Theme.of(context).colorScheme.outline;
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.outline;
+    // A dead card used to look exactly like a live one — same artwork, and its
+    // expiry date buried in a grey "gültig bis" line nobody reads. It is now
+    // dimmed and labelled (#53).
+    final expired = card.isExpired;
     final parts = <String>[
       'Nr. ${_formatBcNumber(card.nummer)}',
-      if (card.gueltigBis != null) 'gültig bis ${_d(card.gueltigBis!)}',
+      if (card.gueltigBis != null)
+        expired
+            ? 'abgelaufen am ${_d(card.gueltigBis!)}'
+            : 'gültig bis ${_d(card.gueltigBis!)}',
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        BahnCardView(card: card),
+        Stack(
+          children: [
+            Opacity(opacity: expired ? 0.45 : 1, child: BahnCardView(card: card)),
+            if (expired)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    'Abgelaufen',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onErrorContainer,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
           child: Text(
             parts.join(' · '),
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: muted),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: expired ? theme.colorScheme.error : muted,
+            ),
           ),
         ),
       ],

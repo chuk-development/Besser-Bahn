@@ -298,6 +298,34 @@ class DbBahnCard {
 
   bool get firstClass => klasse == 'KLASSE_1';
 
+  /// `gueltigAb` / `gueltigBis` as dates (they arrive as YYYY-MM-DD strings).
+  DateTime? get validFrom =>
+      gueltigAb == null ? null : DateTime.tryParse(gueltigAb!);
+  DateTime? get validUntil =>
+      gueltigBis == null ? null : DateTime.tryParse(gueltigBis!);
+
+  /// The last day of validity is inclusive — a card "gültig bis 2026-07-31"
+  /// still discounts a ticket bought on the 31st.
+  bool isExpiredAt(DateTime now) {
+    final until = validUntil;
+    if (until == null) return false;
+    return now.isAfter(DateTime(until.year, until.month, until.day, 23, 59, 59));
+  }
+
+  bool isNotYetValidAt(DateTime now) {
+    final from = validFrom;
+    if (from == null) return false;
+    return now.isBefore(DateTime(from.year, from.month, from.day));
+  }
+
+  /// Whether the card discounts a fare bought right now. A card without dates
+  /// counts as valid — we only ever want to *demote* a card we know is dead
+  /// (#53).
+  bool isValidAt(DateTime now) => !isExpiredAt(now) && !isNotYetValidAt(now);
+
+  bool get isExpired => isExpiredAt(DateTime.now());
+  bool get isValidNow => isValidAt(DateTime.now());
+
   factory DbBahnCard.fromJson(Map<String, dynamic> j) => DbBahnCard(
         nummer: (j['bahnCardNummer'] ?? '').toString(),
         typ: (j['bahnCardTyp'] ?? '').toString(),

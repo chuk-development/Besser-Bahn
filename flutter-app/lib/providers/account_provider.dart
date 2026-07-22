@@ -297,7 +297,10 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
       // directly here was firing a SECOND concurrent GET that DB 429'd, and
       // the user saw "BahnCard nicht ladbar · 429".
       final cards = await ref.read(bahncardsProvider.future);
-      if (cards.isNotEmpty) card = _toBahnCardType(cards.first);
+      // Only a card that discounts a fare *today*: seeding an expired BahnCard
+      // into the search silently prices every connection wrong (#53).
+      final valid = cards.where((c) => c.isValidNow);
+      if (valid.isNotEmpty) card = _toBahnCardType(valid.first);
     } catch (_) {
       /* no cards / network — leave settings untouched */
     }
