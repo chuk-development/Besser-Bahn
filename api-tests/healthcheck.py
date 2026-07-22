@@ -2661,6 +2661,45 @@ def check_traewelling_api() -> str:
     return f"trains/station/autocomplete reachable (status={r.status_code})"
 
 
+# Every Träwelling path the app calls, with the shape the service builds. A
+# live, auth-gated route answers 401 without a token; a route that was removed
+# or renamed answers 404 — which is exactly how the Feed died silently
+# (`/dashboard/global` is gone; the public timeline is `/statuses`, #42).
+TRWL_PATHS = [
+    ("/auth/user", (401,)),
+    ("/dashboard", (401,)),
+    ("/statuses", (200, 401)),          # public timeline — the global feed
+    ("/user/self/followers", (401,)),
+    ("/user/self/followings", (401,)),
+    ("/user/self/follow-requests", (401,)),
+    ("/trains/station/autocomplete/Berlin", (200, 401)),
+]
+
+
+def check_traewelling_endpoints() -> str:
+    """Each REST path the Träwelling integration calls still exists.
+
+    Auth-gated ones must answer 401 (live) rather than 404 (gone). Soft:
+    optional social feature, and a Träwelling outage is not our regression.
+    """
+    headers = {"Accept": "application/json",
+               "User-Agent": _app_user_agent(),
+               "Authorization": "Bearer invalid"}
+    gone, odd = [], []
+    for path, ok in TRWL_PATHS:
+        r = _get(f"https://traewelling.de/api/v1{path}",
+                 headers=headers, timeout=TIMEOUT)
+        if r.status_code in (404, 410):
+            gone.append(f"{path}→{r.status_code}")
+        elif r.status_code not in ok:
+            odd.append(f"{path}→{r.status_code}")
+    if gone:
+        raise CheckError("path(s) gone: " + ", ".join(gone))
+    if odd:
+        raise CheckError("unexpected status: " + ", ".join(odd))
+    return f"{len(TRWL_PATHS)} paths live (401/200, none 404)"
+
+
 def check_db_account_token_endpoint() -> str:
     """DB account login rides DB's Keycloak realm `db`
     (`accounts.bahn.de/.../openid-connect/token`, public client `kf_mobile`,
@@ -2904,6 +2943,7 @@ CHECKS = [
     ("bahnhof.de sitemap", check_bahnhof_sitemap, False),
     ("traewelling UA requirement (#34)", check_traewelling_user_agent, True),
     ("traewelling check-in API", check_traewelling_api, True),
+    ("traewelling endpoints (#42)", check_traewelling_endpoints, True),
     ("DB OAuth authorize page (#35)", check_db_oauth_authorize_page, False),
     ("DB account token endpoint (kf_mobile)", check_db_account_token_endpoint, True),
     ("DB account mob endpoints (auth-gated)", check_db_account_endpoints_require_auth, True),

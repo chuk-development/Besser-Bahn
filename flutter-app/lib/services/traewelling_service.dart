@@ -215,10 +215,16 @@ class TraewellingService {
     return json.decode(res.body) as Map<String, dynamic>;
   }
 
-  /// Refreshes the access token. Returns false if no refresh token / it failed.
-  Future<bool> _refresh() async {
+  /// Refreshes the access token.
+  ///
+  /// The distinction matters: only a server that *rejects* the refresh token
+  /// (400/401 — revoked, expired, reused) means the session is gone. A
+  /// timeout, a socket error or a 5xx says nothing about the session, and
+  /// throwing the tokens away for one of those is how a rider ends up signed
+  /// out of Träwelling after a tunnel (#39).
+  Future<_TrwlRefresh> _refresh() async {
     final refresh = await _read(_kRefresh);
-    if (refresh == null) return false;
+    if (refresh == null) return _TrwlRefresh.rejected;
     final http.Response res;
     try {
       res = await _client.post(
@@ -231,12 +237,20 @@ class TraewellingService {
           'scope': TraewellingConstants.scopes,
         },
       ).timeout(_kTimeout);
-    } on TimeoutException {
-      return false;
+    } catch (_) {
+      // Timeout, DNS, socket, TLS — the network, not the session.
+      return _TrwlRefresh.transient;
     }
-    if (res.statusCode != 200) return false;
-    await _storeTokens(json.decode(res.body) as Map<String, dynamic>);
-    return true;
+    if (res.statusCode == 400 || res.statusCode == 401) {
+      return _TrwlRefresh.rejected;
+    }
+    if (res.statusCode != 200) return _TrwlRefresh.transient;
+    try {
+      await _storeTokens(json.decode(res.body) as Map<String, dynamic>);
+    } catch (_) {
+      return _TrwlRefresh.transient;
+    }
+    return _TrwlRefresh.ok;
   }
 
   Future<void> logout() async {
@@ -297,12 +311,19 @@ class TraewellingService {
     }
 
     if (res.statusCode == 401 && retryOn401) {
-      if (await _refresh()) {
-        return _send(method, path,
-            query: query, body: body, retryOn401: false);
+      switch (await _refresh()) {
+        case _TrwlRefresh.ok:
+          return _send(method, path,
+              query: query, body: body, retryOn401: false);
+        case _TrwlRefresh.transient:
+          // Keep the session: we don't know it's dead, only that we couldn't
+          // ask right now (#39).
+          throw const TraewellingException(
+              'Träwelling ist gerade nicht erreichbar. Erneut versuchen.');
+        case _TrwlRefresh.rejected:
+          await _clearTokens();
+          throw const TraewellingException('Sitzung abgelaufen', 401);
       }
-      await _clearTokens();
-      throw const TraewellingException('Sitzung abgelaufen', 401);
     }
     return res;
   }
@@ -363,8 +384,11 @@ class TraewellingService {
 
   /// The public/global feed — recent check-ins from everyone, so the Feed tab
   /// isn't empty when you follow no one yet.
+  ///
+  /// `/dashboard/global` is gone (404, "route could not be found"), which is
+  /// why the Feed never loaded (#42). The public timeline lives at `/statuses`.
   Future<List<TrwlStatus>> globalDashboard({int page = 1}) async {
-    final res = await _send('GET', '/dashboard/global', query: {'page': '$page'});
+    final res = await _send('GET', '/statuses', query: {'page': '$page'});
     return _statusList(_data(res));
   }
 
@@ -608,3 +632,7 @@ class TraewellingService {
     return base64UrlEncode(digest.bytes).replaceAll('=', '');
   }
 }
+
+/// Outcome of a token refresh — see [TraewellingService._refresh]. Only
+/// [rejected] is proof the session is over.
+enum _TrwlRefresh { ok, rejected, transient }
