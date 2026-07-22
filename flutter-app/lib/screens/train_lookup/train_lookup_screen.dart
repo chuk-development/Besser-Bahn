@@ -421,7 +421,7 @@ class _TrainLookupScreenState extends ConsumerState<TrainLookupScreen>
             coach: state.coachSequence,
             onStopTap: (stop) {
               if (stop.stop.name.isEmpty) return;
-              ref.read(stationMapProvider.notifier).loadForStation(
+              ref.read(dedicatedStationMapProvider.notifier).loadForStation(
                     stop.stop,
                     highlightGleis: stop.platform,
                     role: stop.isTerminus

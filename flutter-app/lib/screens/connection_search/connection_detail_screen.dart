@@ -1063,7 +1063,7 @@ class _ConnectionDetailScreenState
             : arrGleis != null
                 ? 'Ausstieg Gleis $arrGleis'
                 : 'Umstieg in ${station.name}';
-    ref.read(stationMapProvider.notifier).loadForStation(
+    ref.read(dedicatedStationMapProvider.notifier).loadForStation(
           station,
           highlightGleis: depGleis, // Einstieg — primary, green
           role: GleisRole.board,
@@ -1513,7 +1513,7 @@ class _LegSectionState extends ConsumerState<_LegSection>
       }
     }
 
-    ref.read(stationMapProvider.notifier).loadForStation(
+    ref.read(dedicatedStationMapProvider.notifier).loadForStation(
           stop.stop,
           highlightGleis: stop.platform,
           role: gleisRole,

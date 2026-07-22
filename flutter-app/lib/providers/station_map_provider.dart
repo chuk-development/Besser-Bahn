@@ -690,6 +690,20 @@ class StationMapNotifier extends Notifier<StationMapState> {
   }
 }
 
+/// The **Bahnhof tab's** map — the station you browse to yourself, with your
+/// floor and your filters, kept as you left it.
 final stationMapProvider =
+    NotifierProvider<StationMapNotifier, StationMapState>(
+        StationMapNotifier.new);
+
+/// The map opened **from a trip** (a stop on the Reiseplan, a Halt in the Zug
+/// view): its own instance of the same notifier.
+///
+/// They used to share one, so opening a Gleis from a journey silently replaced
+/// whatever station the Bahnhof tab was showing — go back to the tab and you
+/// were somewhere else, on another floor, with a green Einstieg marker from a
+/// trip you had just been reading (#54). Nothing about the two is the same
+/// question, so nothing about them is shared state now.
+final dedicatedStationMapProvider =
     NotifierProvider<StationMapNotifier, StationMapState>(
         StationMapNotifier.new);

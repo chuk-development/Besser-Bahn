@@ -68,6 +68,12 @@ class StationMapScreen extends ConsumerStatefulWidget {
 class _StationMapScreenState extends ConsumerState<StationMapScreen> {
   final _mapController = MapController();
 
+  /// Which of the two map instances this screen drives: the Bahnhof tab's, or
+  /// the one opened from a trip. Keeping them apart is the whole point — see
+  /// [dedicatedStationMapProvider] (#54).
+  NotifierProvider<StationMapNotifier, StationMapState> get _provider =>
+      widget.dedicated ? dedicatedStationMapProvider : stationMapProvider;
+
   /// POI tapped on the map; shown as an inline card, not a bottom sheet.
   MapPoi? _selectedPoi;
 
@@ -91,7 +97,7 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
   /// Where the rider needs to get to: the highlighted boarding Gleis if we
   /// came from a journey, otherwise the station centre.
   LatLng _targetFor(StationMap map) =>
-      ref.read(stationMapProvider).highlightPoi?.latLng ?? map.center;
+      ref.read(_provider).highlightPoi?.latLng ?? map.center;
 
   /// DB's real walking route from the fix to the target (#21), once it lands.
   /// Null → the map keeps the dotted straight line.
@@ -156,7 +162,7 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
   }
 
   void _recenter(StationMap map) {
-    final s = ref.read(stationMapProvider);
+    final s = ref.read(_provider);
     final hl = s.highlightPoi;
     final section = s.highlightSectionLine;
     // Transfer: frame both the Ausstieg and Einstieg Gleise together.
@@ -194,12 +200,12 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(stationMapProvider);
-    final notifier = ref.read(stationMapProvider.notifier);
+    final state = ref.watch(_provider);
+    final notifier = ref.read(_provider.notifier);
     final map = state.map;
 
     // Re-centre whenever a new station finishes loading.
-    ref.listen(stationMapProvider.select((s) => s.map), (prev, next) {
+    ref.listen(_provider.select((s) => s.map), (prev, next) {
       if (next != null && next != prev) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _recenter(next));
       }
@@ -559,7 +565,7 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
 
   List<Marker> _markers(
       BuildContext context, List<MapPoi> pois, Station? station) {
-    final mapState = ref.read(stationMapProvider);
+    final mapState = ref.read(_provider);
     // Transfer mode (two Gleise highlighted) → grey out the OTHER red platform
     // pills so the red Ausstieg highlight actually stands out.
     final transferMode = mapState.secondaryGleis != null;
