@@ -29,6 +29,7 @@ import '../../services/notification_service.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/ui/message_card.dart';
 import '../../utils/earlier_alight.dart';
+import '../../utils/leg_swap.dart';
 import '../../utils/split_stops.dart';
 import '../../widgets/departure_card.dart';
 import '../../widgets/fahrgastrechte_card.dart';
@@ -127,14 +128,88 @@ class _ConnectionDetailScreenState
   void _replaceLeg(int index, JourneyLeg newLeg) {
     final legs = List<JourneyLeg>.of(_journey.legs);
     if (index < 0 || index >= legs.length) return;
+    final old = legs[index];
     legs[index] = newLeg;
     _adoptJourney(Journey(legs: legs)); // price/refreshToken intentionally dropped
+
+    // Taking a later (or earlier) train on Kiel→München does not only change
+    // that leg — everything behind it moves with it. The old onward legs
+    // describe trains that have long gone, or that the rider now waits an hour
+    // for, so they are re-planned from the new arrival (#55-Umstieg).
+    final newArrival = newLeg.arrival ?? newLeg.plannedArrival;
+    if (tailNeedsReplan(legs, index,
+        oldArrival: old.arrival ?? old.plannedArrival,
+        newArrival: newArrival)) {
+      _replanTail(index, newArrival!);
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         duration: Duration(seconds: 3),
         content: Text('Fahrt ersetzt · Preis ggf. neu suchen'),
       ),
     );
+  }
+
+  /// Re-plan everything after leg [index] from [arrival] onwards.
+  ///
+  /// One search from that leg's destination to the journey's own destination.
+  /// Failure keeps the itinerary as swapped and says so — a stale tail the
+  /// rider can see beats silently pretending the swap didn't happen, but it
+  /// must not pass as a checked connection either.
+  Future<void> _replanTail(int index, DateTime arrival) async {
+    final legs = List<JourneyLeg>.of(_journey.legs);
+    final from = legs[index].destination;
+    final to = journey.destination;
+    if (to == null ||
+        from.vendoLocationId.isEmpty ||
+        to.vendoLocationId.isEmpty) {
+      _snack('Fahrt ersetzt · Anschlüsse dahinter bitte prüfen');
+      return;
+    }
+    setState(() => _replanning = true);
+    _snack('Fahrt ersetzt · Anschlüsse werden neu gesucht …');
+    try {
+      final settings = ref.read(settingsProvider);
+      final res = await ref.read(vendoServiceProvider).searchJourneys(
+            fromLocationId: from.vendoLocationId,
+            toLocationId: to.vendoLocationId,
+            dateTime: arrival,
+            reisende: settings.searchParty.toReisendeJson(),
+            deutschlandTicket: settings.hasDeutschlandTicket,
+          );
+      final onward = firstBoardable(res.journeys, arrival);
+      if (!mounted) return;
+      setState(() => _replanning = false);
+      if (onward == null || onward.legs.isEmpty) {
+        _snack('Keine Anschlüsse ab ${from.name} gefunden — bitte prüfen');
+        return;
+      }
+      _adoptJourney(Journey(legs: spliceTail(legs, index, onward)),
+          refresh: true);
+      final arr = onward.arrival ?? onward.plannedArrival;
+      _snack('Anschlüsse neu gesucht'
+          '${arr != null ? ' · Ankunft ${arr.hhmm}' : ''}');
+    } catch (e) {
+      AppLog.log('replan after leg swap failed: $e', tag: 'trip-detail');
+      if (!mounted) return;
+      setState(() => _replanning = false);
+      _snack('Anschlüsse konnten nicht neu gesucht werden — bitte prüfen');
+    }
+  }
+
+  /// True while [_replanTail] is running — the legs behind the swap are shown
+  /// as provisional until it lands.
+  bool _replanning = false;
+
+  void _snack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        duration: const Duration(seconds: 4),
+        content: Text(text),
+      ));
   }
 
   /// Rescue option B for the transfer into leg [i] (#26): what the switcher
@@ -403,6 +478,13 @@ class _ConnectionDetailScreenState
               rescue: missed,
               onPressed: () =>
                   _showMissedAlternatives(context, ref, missed),
+            ),
+          // The legs behind a swapped one are the OLD plan until the re-search
+          // lands — say so rather than let them read as checked (#55-Umstieg).
+          if (_replanning)
+            const MessageCard(
+              tone: MessageTone.info,
+              body: 'Anschlüsse werden für die neue Ankunft gesucht …',
             ),
           for (var i = 0; i < legs.length; i++) ...[
             if (i > 0) _transfer(context, ref, legs[i - 1], legs[i]),
