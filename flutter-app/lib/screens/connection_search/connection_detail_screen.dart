@@ -26,6 +26,7 @@ import '../../providers/station_map_provider.dart';
 import '../../services/db_api_service.dart';
 import '../../services/notification_service.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/ui/message_card.dart';
 import '../../utils/earlier_alight.dart';
 import '../../utils/split_stops.dart';
 import '../../widgets/departure_card.dart';
@@ -1816,7 +1817,6 @@ class _JourneyCancelBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = partial ? AppColors.warning : AppColors.dbRed;
     final title = partial
         ? 'Teilausfall auf dieser Verbindung'
         : 'Diese Verbindung fällt aus';
@@ -1826,37 +1826,14 @@ class _JourneyCancelBanner extends StatelessWidget {
         : 'Mindestens ein Zug dieser Verbindung fährt nicht. Wische über den '
             'betroffenen Fahrtblock oder tippe „Weitere Abfahrten“, um auf '
             'eine andere Abfahrt zu wechseln.';
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withValues(alpha: 0.55)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(partial ? Icons.warning_amber_rounded : Icons.cancel,
-              color: color, size: 22),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: TextStyle(
-                        color: color,
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold)),
-                const SizedBox(height: 3),
-                Text(body,
-                    style: Theme.of(context).textTheme.bodySmall),
-              ],
-            ),
-          ),
-        ],
-      ),
+    // One shared shape for every "the app is telling you something" block, so
+    // a cancellation reads louder than a note by its tone, not by inventing its
+    // own panel (#38).
+    return MessageCard(
+      tone: partial ? MessageTone.caution : MessageTone.alert,
+      icon: partial ? Icons.warning_amber_rounded : Icons.cancel,
+      title: title,
+      body: body,
     );
   }
 }

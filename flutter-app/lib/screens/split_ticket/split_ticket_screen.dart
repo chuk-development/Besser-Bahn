@@ -11,6 +11,7 @@ import '../../providers/split_ticket_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/db_api_service.dart';
 import '../../utils/split_stops.dart';
+import '../../widgets/ui/message_card.dart';
 import '../../theme/app_colors.dart';
 
 /// Split-ticket analysis viewer + entry point.
@@ -109,7 +110,6 @@ class _SplitTicketScreenState extends ConsumerState<SplitTicketScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(splitTicketProvider);
-    final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -132,29 +132,12 @@ class _SplitTicketScreenState extends ConsumerState<SplitTicketScreen> {
                       '${journey?.destination?.name ?? ''}',
             ),
 
-          // Disclaimer
-          Card(
-            margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            color: theme.colorScheme.errorContainer.withAlpha(40),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.info_outline,
-                      size: 20, color: theme.colorScheme.error),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Split-Tickets haben kein Anschluss-Recht. '
-                      'Das Risiko bei Verspätungen liegt beim Fahrgast.',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.error),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+          // Disclaimer — a standing caveat, not a failure: it reads in the
+          // shared message shape at caution volume (#38).
+          const MessageCard(
+            tone: MessageTone.caution,
+            body: 'Split-Tickets haben kein Anschluss-Recht. '
+                'Das Risiko bei Verspätungen liegt beim Fahrgast.',
           ),
 
           // Cancel control while running.
@@ -184,16 +167,7 @@ class _SplitTicketScreenState extends ConsumerState<SplitTicketScreen> {
 
           // Analysis error
           if (state.error != null)
-            Card(
-              margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              color: theme.colorScheme.errorContainer,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(state.error!,
-                    style:
-                        TextStyle(color: theme.colorScheme.onErrorContainer)),
-              ),
-            ),
+            MessageCard(tone: MessageTone.alert, body: state.error!),
 
           // Results
           if (state.result != null) ...[
