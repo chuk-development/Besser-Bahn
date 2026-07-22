@@ -1,9 +1,12 @@
 import 'package:besser_bahn/services/osm_bus_stop_service.dart';
+import 'package:besser_bahn/services/transit_stop_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:latlong2/latlong.dart';
 
-/// Shaped exactly like a live Overpass answer for Gravelottestraße, Kiel —
-/// the stop from #55: four poles, two of them lettered A and B.
-Map<String, dynamic> _overpass() => {
+/// Real Overpass shape for Gravelottestraße, Kiel (#55): four poles, two of
+/// them signed A and B. Note OSM spells the stop "Gravelottestraße" while the
+/// timetable says "Gravelottestraße, Kiel".
+Map<String, dynamic> _gravelotte() => {
       'elements': [
         {
           'type': 'node',
@@ -36,12 +39,12 @@ Map<String, dynamic> _overpass() => {
           'lon': 10.11316,
           'tags': {'highway': 'bus_stop', 'name': 'Gravelottestraße'},
         },
-        // A different stop caught by the radius — must not show up.
+        // Another stop 400 m down the road — outside the radius, must not show.
         {
           'type': 'node',
           'id': 999,
-          'lat': 54.3251,
-          'lon': 10.115,
+          'lat': 54.3285,
+          'lon': 10.1180,
           'tags': {'highway': 'bus_stop', 'name': 'Wilhelmplatz'},
         },
         {
@@ -51,7 +54,6 @@ Map<String, dynamic> _overpass() => {
             'type': 'route',
             'route': 'bus',
             'ref': '14',
-            'from': 'Roskilder Weg',
             'to': 'Laboe, Hafen',
           },
           'members': [
@@ -66,7 +68,6 @@ Map<String, dynamic> _overpass() => {
             'type': 'route',
             'route': 'bus',
             'ref': '14',
-            'from': 'Laboe, Hafen',
             'to': 'Roskilder Weg',
           },
           'members': [
@@ -85,34 +86,42 @@ Map<String, dynamic> _overpass() => {
       ],
     };
 
+/// The timetable coordinate of the stop, i.e. what DB hands us.
+const _center = LatLng(54.325005, 10.113323);
+
 void main() {
-  group('#55 — which side of the street the bus leaves from', () {
-    test('every pole of the stop is found, other stops are not', () {
-      final bays =
-          OsmBusStopService.parseResponse(_overpass(), 'Gravelottestraße');
-      expect(bays, hasLength(3));
-      expect(bays.map((b) => b.name).toSet(), {'Gravelottestraße'});
+  group('#55 — OSM poles (the signed bay codes)', () {
+    test('every pole of the stop is found, the next stop is not', () {
+      final poles = OsmBusStopService.parseResponse(_gravelotte(), _center);
+      expect(poles, hasLength(3));
+      expect(poles.map((p) => p.name).toSet(), {'Gravelottestraße'});
     });
 
-    test('the timetable spelling with a town suffix still matches', () {
-      // vendo calls it "Gravelottestraße, Kiel"; OSM tags only the street.
-      final bays = OsmBusStopService.parseResponse(
-          _overpass(), 'Gravelottestraße, Kiel');
-      expect(bays, hasLength(3));
+    test('poles are selected by distance, not by name', () {
+      // The name was the first implementation and it does not survive contact
+      // with reality: DB says "ZOB, Kiel" where OSM says "Kiel ZOB", and
+      // "Wittenberger Passau B202, Martensrade" where OSM says "Wittenberger
+      // Passau, B202" — both matched nothing and those stops got no map at all.
+      final renamed = _gravelotte();
+      for (final e in renamed['elements'] as List) {
+        final tags = (e as Map)['tags'] as Map?;
+        if (tags != null && tags['name'] == 'Gravelottestraße') {
+          tags['name'] = 'Kiel Gravelottestr.';
+        }
+      }
+      expect(OsmBusStopService.parseResponse(renamed, _center), hasLength(3));
     });
 
-    test('bay letters come through in order — they are vendo\'s "Gleis"', () {
-      final bays =
-          OsmBusStopService.parseResponse(_overpass(), 'Gravelottestraße');
-      expect(bays.map((b) => b.bay).toList(), ['A', 'B', null]);
-      expect(bays.first.label, 'A');
+    test('bay codes come through in order — they are DB\'s Gleis', () {
+      final poles = OsmBusStopService.parseResponse(_gravelotte(), _center);
+      expect(poles.map((p) => p.bay).toList(), ['A', 'B', null]);
+      expect(poles.first.label, 'A');
     });
 
     test('each pole gets the directions of the routes calling THERE', () {
-      final bays =
-          OsmBusStopService.parseResponse(_overpass(), 'Gravelottestraße');
-      final a = bays.firstWhere((b) => b.bay == 'A');
-      final b = bays.firstWhere((b) => b.bay == 'B');
+      final poles = OsmBusStopService.parseResponse(_gravelotte(), _center);
+      final a = poles.firstWhere((p) => p.bay == 'A');
+      final b = poles.firstWhere((p) => p.bay == 'B');
       expect(a.directions, ['14 → Laboe, Hafen'],
           reason: 'the opposite direction belongs to the other pole');
       expect(b.directions, ['14 → Roskilder Weg']);
@@ -120,19 +129,65 @@ void main() {
     });
 
     test('a pole no route names stays direction-less rather than guessing', () {
-      final bays =
-          OsmBusStopService.parseResponse(_overpass(), 'Gravelottestraße');
-      final plain = bays.firstWhere((b) => b.bay == null);
+      final poles = OsmBusStopService.parseResponse(_gravelotte(), _center);
+      final plain = poles.firstWhere((p) => p.bay == null);
       expect(plain.directions, isEmpty);
       expect(plain.directionLabel, isNull);
       expect(plain.label, 'Gravelottestraße');
     });
 
     test('junk in, empty list out', () {
-      expect(OsmBusStopService.parseResponse('nope', 'X'), isEmpty);
-      expect(OsmBusStopService.parseResponse({'elements': 'nope'}, 'X'),
+      expect(OsmBusStopService.parseResponse('nope', _center), isEmpty);
+      expect(
+          OsmBusStopService.parseResponse({'elements': 'nope'}, _center),
           isEmpty);
-      expect(OsmBusStopService.parseResponse(_overpass(), 'Anderswo'), isEmpty);
+    });
+  });
+
+  group('#55 — DELFI poles (the complete set + directions)', () {
+    test('the bay code is read out of the DELFI stop id', () {
+      expect(TransitStopService.trackOf('de-DELFI_de:01002:49076::D2'), 'D2');
+      expect(TransitStopService.trackOf('de-DELFI_de:01002:49079'), isNull);
+    });
+
+    test('departures are grouped per pole, line and destination together', () {
+      final directions = TransitStopService.parseStopTimes({
+        'stopTimes': [
+          {
+            'place': {'stopId': 'x::1', 'name': 'Kiel Gravelottestraße'},
+            'routeShortName': '14',
+            'headsign': 'Laboe',
+          },
+          {
+            'place': {'stopId': 'x::1', 'name': 'Kiel Gravelottestraße'},
+            'routeShortName': '15',
+            'headsign': 'Heikendorf',
+          },
+          // Same line and direction again — one entry, not two.
+          {
+            'place': {'stopId': 'x::1', 'name': 'Kiel Gravelottestraße'},
+            'routeShortName': '14',
+            'headsign': 'Laboe',
+          },
+          {
+            'place': {'stopId': 'x::2', 'name': 'Kiel Gravelottestraße'},
+            'routeShortName': '14',
+            'headsign': 'Mettenhof',
+          },
+          // No headsign — nothing to say, skipped.
+          {
+            'place': {'stopId': 'x::2', 'name': 'Kiel Gravelottestraße'},
+            'routeShortName': '99',
+          },
+        ],
+      });
+      expect(directions['x::1'], ['14 → Laboe', '15 → Heikendorf']);
+      expect(directions['x::2'], ['14 → Mettenhof']);
+    });
+
+    test('junk in, empty map out', () {
+      expect(TransitStopService.parseStopTimes(null), isEmpty);
+      expect(TransitStopService.parseStopTimes({'stopTimes': 5}), isEmpty);
     });
   });
 }

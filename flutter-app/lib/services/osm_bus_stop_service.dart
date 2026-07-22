@@ -4,59 +4,18 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 import '../core/app_log.dart';
-
-/// One physical bus/tram stop pole — a single side of the street.
-///
-/// A stop like "Gravelottestraße" exists two, three or four times: once per
-/// direction, sometimes once per bay. Timetable data names only the stop, so
-/// standing at the wrong pole means watching your bus leave across the road.
-/// OSM maps each pole separately, which is what makes the answer possible
-/// (#55).
-class BusStopBay {
-  /// OSM node id — stable identity, used to dedupe.
-  final int id;
-  final LatLng latLng;
-
-  /// The stop's name ("Gravelottestraße"), as timetables say it.
-  final String name;
-
-  /// Bay letter where the operator uses one (OSM `local_ref`, e.g. "A"). This
-  /// is the same letter vendo puts in a bus leg's `gleis`/`plattform`, which is
-  /// what lets us mark the pole the rider actually needs.
-  final String? bay;
-
-  /// Where the buses calling here are heading, most specific first — built from
-  /// the route relations this pole belongs to ("14 → Laboe, Hafen").
-  final List<String> directions;
-
-  final bool shelter;
-
-  const BusStopBay({
-    required this.id,
-    required this.latLng,
-    required this.name,
-    this.bay,
-    this.directions = const [],
-    this.shelter = false,
-  });
-
-  /// One line for the map label: the bay letter if there is one, else the name.
-  String get label => bay ?? name;
-
-  /// "Richtung Laboe, Hafen · Rathenow", capped so a busy stop stays readable.
-  String? get directionLabel {
-    if (directions.isEmpty) return null;
-    final shown = directions.take(3).join(' · ');
-    return 'Richtung $shown';
-  }
-}
+import '../core/stop_poles.dart';
 
 /// Bus/tram stop poles around a coordinate, from OpenStreetMap via Overpass.
 ///
-/// Same shape as [OsmPlatformService]: keyless public endpoints tried in order,
-/// a descriptive User-Agent (overpass-api.de 406s browser/curl/empty ones),
-/// in-memory cache, never throws — a failure means "no extra detail", not a
-/// broken map.
+/// OSM is the source of the **signed bay code** (`local_ref`: "A4"), which is
+/// the code DB puts in a leg's `gleis` — CoMaps and every other OSM map draws
+/// exactly those labels at ZOB Kiel. Its coverage is uneven, so it is merged
+/// with the DELFI poles (see [StopPole] and `TransitStopService`).
+///
+/// Keyless public endpoints tried in order, a descriptive User-Agent
+/// (overpass-api.de 406s browser/curl/empty ones), in-memory cache, never
+/// throws — a failure means "no extra detail", not a broken map.
 class OsmBusStopService {
   OsmBusStopService._();
   static final OsmBusStopService instance = OsmBusStopService._();
@@ -69,47 +28,41 @@ class OsmBusStopService {
 
   static const _userAgent = 'BesserBahn/1.0 (+https://bahn.chuk.dev)';
 
-  /// A stop's poles sit within a few dozen metres of each other; 250 m also
-  /// catches the opposite side of a wide junction without pulling in the next
-  /// stop along the line.
+  /// A bus station's bays fan out over ~150 m (ZOB Kiel: A1 to A5 is 90 m), and
+  /// the timetable coordinate sits somewhere in the middle. 250 m covers that
+  /// without dragging in the next stop along the line.
   static const _radiusM = 250;
 
   static const _timeout = Duration(seconds: 20);
 
   final http.Client _client = http.Client();
 
-  /// cache key → poles (empty = "asked, found nothing").
-  final Map<String, List<BusStopBay>> _cache = {};
-  final Map<String, Future<List<BusStopBay>>> _inflight = {};
+  final Map<String, List<StopPole>> _cache = {};
+  final Map<String, Future<List<StopPole>>> _inflight = {};
 
-  static String _key(LatLng c, String name) =>
-      '${c.latitude.toStringAsFixed(4)},'
-      '${c.longitude.toStringAsFixed(4)}|${name.toLowerCase()}';
+  static String _key(LatLng c) =>
+      '${c.latitude.toStringAsFixed(4)},${c.longitude.toStringAsFixed(4)}';
 
-  /// What's already in memory for this stop, or null if it was never asked.
-  List<BusStopBay>? cached(LatLng center, String name) =>
-      _cache[_key(center, name)];
+  List<StopPole>? cached(LatLng center) => _cache[_key(center)];
 
-  /// Poles around [center] belonging to the stop called [name]. Never throws;
-  /// returns an empty list when Overpass is unreachable or has nothing.
-  Future<List<BusStopBay>> fetch(LatLng center, String name) {
-    final key = _key(center, name);
+  /// Poles around [center]. Never throws; empty when Overpass is unreachable.
+  Future<List<StopPole>> fetch(LatLng center) {
+    final key = _key(center);
     final done = _cache[key];
     if (done != null) return Future.value(done);
     final pending = _inflight[key];
     if (pending != null) return pending;
-    final f = _fetch(key, center, name);
+    final f = _fetch(key, center);
     _inflight[key] = f;
     return f;
   }
 
-  Future<List<BusStopBay>> _fetch(
-      String key, LatLng center, String name) async {
+  Future<List<StopPole>> _fetch(String key, LatLng center) async {
     try {
       final lat = center.latitude, lon = center.longitude;
       // The poles, then the route relations they belong to *with their member
       // lists* — that membership is the only way to say which direction leaves
-      // from which side.
+      // from which pole.
       final ql = '[out:json][timeout:25];'
           'node["highway"~"bus_stop|tram_stop"](around:$_radiusM,$lat,$lon)->.s;'
           '.s out tags center;'
@@ -139,36 +92,40 @@ class OsmBusStopService {
         }
       }
       if (resp == null) return _settle(key, const []);
-      final bays = parseResponse(json.decode(resp.body), name);
-      AppLog.log('OSM bus stops "$name": ${bays.length} poles', tag: 'osm');
-      return _settle(key, bays);
+      final poles = parseResponse(json.decode(resp.body), center);
+      AppLog.log('OSM poles at $key: ${poles.length}', tag: 'osm');
+      return _settle(key, poles);
     } catch (e) {
-      AppLog.log('OSM bus stops "$name" failed: $e', tag: 'osm');
+      AppLog.log('OSM bus stops $key failed: $e', tag: 'osm');
       return _settle(key, const []);
     }
   }
 
-  List<BusStopBay> _settle(String key, List<BusStopBay> bays) {
-    _cache[key] = bays;
+  List<StopPole> _settle(String key, List<StopPole> poles) {
+    _cache[key] = poles;
     _inflight.remove(key);
-    return bays;
+    return poles;
   }
 
-  /// Overpass JSON → the poles of the stop called [name].
+  /// How far a pole may sit from the timetable coordinate and still belong to
+  /// this stop. Generous, because that coordinate is the stop's centre and a
+  /// bus station's bays spread out around it.
+  static const double poleRadiusM = 160;
+
+  /// Overpass JSON → the poles of the stop at [center].
+  ///
+  /// Selection is by **distance**, not by name. Names were the first
+  /// implementation and they do not survive contact with reality: DB says
+  /// "ZOB, Kiel" where OSM says "Kiel ZOB", and "Wittenberger Passau B202,
+  /// Martensrade" where OSM says "Wittenberger Passau, B202" — both matched
+  /// nothing, so those stops got no map at all (#55).
   ///
   /// Exposed for tests: the direction attribution (relation members → pole) is
   /// the whole point and is worth pinning down without a network round-trip.
-  static List<BusStopBay> parseResponse(dynamic body, String name) {
+  static List<StopPole> parseResponse(dynamic body, LatLng center) {
     if (body is! Map<String, dynamic>) return const [];
     final elements = body['elements'];
     if (elements is! List) return const [];
-
-    // Timetables spell a stop "Gravelottestraße, Kiel"; OSM tags it
-    // "Gravelottestraße" and puts the town elsewhere. Compare on the part
-    // before the comma, case- and space-insensitively.
-    String norm(String s) =>
-        s.split(',').first.toLowerCase().replaceAll(RegExp(r'[\s.-]'), '');
-    final wanted = norm(name);
 
     final nodes = <int, Map<String, dynamic>>{};
     final relations = <Map<String, dynamic>>[];
@@ -198,25 +155,23 @@ class OsmBusStopService {
       }
     }
 
-    final out = <BusStopBay>[];
+    final out = <StopPole>[];
     for (final entry in nodes.entries) {
       final tags = (entry.value['tags'] as Map<String, dynamic>?) ?? const {};
-      final stopName = (tags['name'] as String?)?.trim() ?? '';
-      if (stopName.isEmpty || norm(stopName) != wanted) continue;
       final lat = (entry.value['lat'] as num?)?.toDouble();
       final lon = (entry.value['lon'] as num?)?.toDouble();
       if (lat == null || lon == null) continue;
-      out.add(BusStopBay(
-        id: entry.key,
-        latLng: LatLng(lat, lon),
-        name: stopName,
+      final at = LatLng(lat, lon);
+      if (metresBetween(center, at) > poleRadiusM) continue;
+      out.add(StopPole(
+        latLng: at,
+        name: (tags['name'] as String?)?.trim() ?? '',
         bay: (tags['local_ref'] as String?)?.trim(),
         directions: directions[entry.key] ?? const [],
         shelter: tags['shelter'] == 'yes',
       ));
     }
-    // Bay letter order where there is one, so "A" reads before "B".
-    out.sort((a, b) => (a.bay ?? '~').compareTo(b.bay ?? '~'));
+    out.sort((a, b) => (a.bay ?? '~~').compareTo(b.bay ?? '~~'));
     return out;
   }
 }

@@ -2539,6 +2539,73 @@ def check_osm_bus_stop_sides() -> str:
             f"{attributed} pole↔direction links")
 
 
+def check_delfi_stop_poles() -> str:
+    """DELFI stop poles + their departures via the Transitous/MOTIS API — the
+    complete half of "which side of the street does my bus leave from?"
+    (services/transit_stop_service.dart, #55).
+
+    OSM carries the code off the sign ("A4", what DB puts in a leg's Gleis) but
+    its coverage is uneven; DELFI has every pole of every stop with exact
+    coordinates plus line + destination per pole. The app merges both.
+
+    Probed at ZOB Kiel (a dozen bays) and at Wittenberger Passau, where OSM has
+    no bay codes at all and DELFI is the only thing that can answer.
+
+    Soft: free volunteer-run API, and the app degrades to OSM-only if it is
+    unreachable.
+    """
+    base = "https://api.transitous.org/api/v1"
+    headers = {"User-Agent": "BesserBahn/1.0 (+https://bahn.chuk.dev)",
+               "Accept": "*/*"}
+
+    def stops(lat, lon, box=250.0):
+        d_lat = box / 111320.0
+        d_lon = box / (111320.0 * 0.6)
+        r = _get(f"{base}/map/stops",
+                 params={"min": f"{lat - d_lat},{lon - d_lon}",
+                         "max": f"{lat + d_lat},{lon + d_lon}"},
+                 headers=headers, timeout=TIMEOUT)
+        if r.status_code != 200:
+            raise CheckError(f"map/stops HTTP {r.status_code}")
+        return [s for s in r.json()
+                if set(s.get("modes") or []) & {"BUS", "TRAM", "COACH", "FERRY"}]
+
+    # ZOB Kiel — the bays must come back as separate stops with coordinates.
+    zob = stops(54.316906, 10.133773)
+    if len(zob) < 4:
+        raise CheckError(f"expected several bays at ZOB Kiel, got {len(zob)}")
+    if not any("::" in s["stopId"] for s in zob):
+        raise CheckError("no stop id carries a ::bay suffix (shape changed)")
+
+    # Directions: one departure board covers the whole stop group.
+    nearest = min(zob, key=lambda s: (s["lat"] - 54.316906) ** 2
+                  + (s["lon"] - 10.133773) ** 2)
+    r = _get(f"{base}/stoptimes",
+             params={"stopId": nearest["stopId"],
+                     "time": datetime.now(timezone.utc).isoformat(), "n": 100},
+             headers=headers, timeout=TIMEOUT)
+    if r.status_code != 200:
+        raise CheckError(f"stoptimes HTTP {r.status_code}")
+    per_pole = {}
+    for st in r.json().get("stopTimes", []):
+        place = st.get("place") or {}
+        if not st.get("headsign"):
+            continue
+        per_pole.setdefault(place.get("stopId"), set()).add(st["headsign"])
+    if not per_pole:
+        raise CheckError("no departure carries a headsign (no Fahrtrichtung)")
+
+    # Wittenberger Passau B202 — OSM has no local_ref here, so DELFI is the
+    # only source that can tell the two sides apart.
+    passau = stops(54.29053, 10.38333, box=160.0)
+    if len(passau) < 2:
+        raise CheckError("expected both poles at Wittenberger Passau B202, "
+                         f"got {len(passau)}")
+
+    return (f"ZOB Kiel {len(zob)} bays, {len(per_pole)} with directions; "
+            f"Wittenberger Passau {len(passau)} poles")
+
+
 def check_basemap_tiles() -> str:
     """Outdoor base map: OpenFreeMap "Positron" VECTOR tiles — the German-labelled
     (local names), keyless, light basemap the app renders under every outdoor map
@@ -3003,6 +3070,7 @@ CHECKS = [
     ("wagenreihung S-Bahn served (#33)", check_wagenreihung_sbahn, True),
     ("osm platform geometry (overpass)", check_osm_platform_geometry, False),
     ("osm bus stop sides (#55)", check_osm_bus_stop_sides, True),
+    ("delfi stop poles (#55)", check_delfi_stop_poles, True),
     ("basemap (OpenFreeMap Positron vector)", check_basemap_tiles, True),
     ("basemap offline style bundle (#29)", check_basemap_offline_bundle, True),
     ("bahnhof.de station map (karte)", check_bahnhof_map, False),

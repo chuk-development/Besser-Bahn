@@ -7,7 +7,9 @@ import '../core/train_dimensions.dart';
 import '../models/coach_sequence.dart';
 import '../models/station.dart';
 import '../models/station_map.dart';
+import '../core/stop_poles.dart';
 import '../services/osm_bus_stop_service.dart';
+import '../services/transit_stop_service.dart';
 import '../services/osm_platform_service.dart';
 import '../services/station_map_service.dart';
 import 'service_providers.dart';
@@ -622,7 +624,7 @@ class StationMapNotifier extends Notifier<StationMapState> {
       // every time — and that is exactly the stop where the rider needs to know
       // which side of the street to stand on, so build the map from OSM instead
       // of showing an error (#55).
-      if (await _loadBusStopMap()) return;
+      if (await _loadStopPoleMap()) return;
       state = state.copyWith(isLoading: false, error: e.message);
     } catch (e, st) {
       // Unexpected — log the real type + message + stack so the in-app Log
@@ -636,51 +638,66 @@ class StationMapNotifier extends Notifier<StationMapState> {
     }
   }
 
-  /// Build this stop's map from OpenStreetMap when bahnhof.de has none.
+  /// Build this stop's map from open data when bahnhof.de has none.
   ///
-  /// A stop like "Gravelottestraße" is two to four poles — one per direction,
-  /// sometimes lettered. The timetable names only the stop, so the rider had no
-  /// way to tell which side of the street to wait on. OSM maps every pole, and
-  /// the bay letter it carries (`local_ref`) is the same letter vendo puts in a
-  /// bus leg's `gleis` — so the pole the rider needs gets the green Einstieg
-  /// marker like a Gleis would (#55).
+  /// A stop like "Gravelottestraße" is two to four poles, "ZOB, Kiel" a dozen —
+  /// one per direction or bay. The timetable names only the stop and a bay code
+  /// ("Gleis A4"), never where that bay is, so the rider had no way to tell
+  /// which side of the street to wait on (#55).
   ///
-  /// Returns false when there's nothing to build from (no coordinates, no OSM
-  /// data, Overpass unreachable) — then the caller keeps its error state.
-  Future<bool> _loadBusStopMap() async {
+  /// Two sources, because neither is enough alone:
+  ///  * **OpenStreetMap** carries the code off the sign (`local_ref` "A4") —
+  ///    the same code DB puts in the leg's Gleis, which is what lets us mark
+  ///    the rider's own pole. Coverage is uneven (Wittenberger Passau has none).
+  ///  * **DELFI** (nationwide timetable data via Transitous) has every pole with
+  ///    exact coordinates and, per pole, which line goes where. Its own codes
+  ///    are internal numbering and do not match the signs.
+  ///
+  /// Fetched in parallel and merged by position; either one alone still yields
+  /// a map. Returns false when there's nothing to build from — the caller then
+  /// keeps its error state.
+  Future<bool> _loadStopPoleMap() async {
     final station = state.station;
     final lat = station?.latitude, lon = station?.longitude;
     if (station == null || lat == null || lon == null) return false;
     final center = LatLng(lat, lon);
-    final bays = await OsmBusStopService.instance.fetch(center, station.name);
-    if (bays.isEmpty) return false;
-    // Keep the rider's own stop centred rather than the average pole: the poles
-    // of one stop sit metres apart, and the timetable coordinate is the one the
-    // route was searched against.
+    final sources = await Future.wait([
+      OsmBusStopService.instance.fetch(center),
+      TransitStopService.instance.fetch(center),
+    ]);
+    final poles = mergePoles(sources[0], sources[1]);
+    if (poles.isEmpty) return false;
+
+    // The rider's own pole, matched on the bay code alone — never by distance,
+    // because marking the wrong one sends them across the road.
+    final mine = poleForGleis(poles, state.highlightGleis);
     final map = StationMap(
-      slug: 'osm:stop:${station.name.toLowerCase()}',
-      center: center,
+      slug: 'stop:${station.name.toLowerCase()}',
+      // Centre on the rider's pole when we know it, else on the stop.
+      center: mine?.latLng ?? center,
       levels: const ['GROUND_FLOOR'],
       levelInit: 'GROUND_FLOOR',
       pois: [
-        for (final bay in bays)
+        for (final pole in poles)
           MapPoi(
             type: 'BUS',
-            name: bay.label,
+            name: pole.label,
             detail: [
-              if (bay.bay != null) bay.name,
-              ?bay.directionLabel,
-              if (bay.shelter) 'mit Wartehäuschen',
+              if (pole.bay != null && pole.name.isNotEmpty) pole.name,
+              ?pole.directionLabel,
+              if (pole.shelter) 'mit Wartehäuschen',
             ].join(' · '),
             level: 'GROUND_FLOOR',
-            latitude: bay.latLng.latitude,
-            longitude: bay.latLng.longitude,
+            latitude: pole.latLng.latitude,
+            longitude: pole.latLng.longitude,
           ),
       ],
     );
     AppLog.log(
-        'map built from OSM: "${station.name}" ${bays.length} poles '
-        '(highlight ${state.highlightGleis ?? '–'})',
+        'map built from stop poles: "${station.name}" ${poles.length} poles '
+        '(osm ${sources[0].length}, delfi ${sources[1].length}, '
+        'highlight ${state.highlightGleis ?? '–'} '
+        '${mine == null ? 'UNMATCHED' : 'matched'})',
         tag: 'map');
     state = state.copyWith(
       map: map,
