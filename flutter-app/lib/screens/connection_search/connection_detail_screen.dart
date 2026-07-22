@@ -949,6 +949,31 @@ class _ConnectionDetailScreenState
     return so?.departure ?? leg.departure;
   }
 
+  /// Freshest arrival Gleis of [leg] at its destination — the live `ezGleis`
+  /// from the refreshed run, not the platform the search happened to return.
+  /// A Gleiswechsel announced after the search otherwise kept the old number
+  /// on the transfer row and on the platform-to-platform map (#50).
+  String? _livePlatformAtArrival(JourneyLeg leg) {
+    final trip = leg.tripId != null ? _tripCache[leg.tripId] : null;
+    final so = trip != null ? _stopFor(trip, leg.destination) : null;
+    return so?.platform ?? leg.arrivalPlatform;
+  }
+
+  /// Freshest departure Gleis of [leg] at its origin — see above.
+  String? _livePlatformAtDeparture(JourneyLeg leg) {
+    final trip = leg.tripId != null ? _tripCache[leg.tripId] : null;
+    final so = trip != null ? _stopFor(trip, leg.origin) : null;
+    return so?.platform ?? leg.departurePlatform;
+  }
+
+  /// The planned Gleis this leg leaves from, when it differs from the live one
+  /// — i.e. there was a Gleiswechsel and we can name what it used to be.
+  String? _changedFromPlatform(JourneyLeg leg, String? live) {
+    final planned = leg.plannedDeparturePlatform ?? leg.departurePlatform;
+    if (live == null || planned == null || planned == live) return null;
+    return planned;
+  }
+
   /// A FUSSWEG leg between two trains. The headline number is the *time you
   /// have* to change (arrival → next departure), NOT how long the walk takes;
   /// the walk itself is shown as the secondary detail.
@@ -976,7 +1001,18 @@ class _ConnectionDetailScreenState
         _transferTone(context, shown, samePlatform: leg.samePlatformTransfer);
 
     final head = shown != null ? '$shown min zum Umsteigen' : 'Umstieg';
-    final detail = _walkDetail(leg);
+    // Which Gleis you arrive on and which one you leave from — live, and
+    // saying so when it changed. Vendo models nearly every transfer as this
+    // FUSSWEG leg, so without it the Gleiswechsel at a change was nowhere on
+    // the Reiseplan (#50).
+    final arrG = prev != null ? _livePlatformAtArrival(prev) : null;
+    final depG = next != null ? _livePlatformAtDeparture(next) : null;
+    final wasG = next != null ? _changedFromPlatform(next, depG) : null;
+    final gleise = (arrG != null || depG != null)
+        ? 'Gleis ${arrG ?? '?'} → Gleis ${depG ?? '?'}'
+            '${wasG != null ? ' (statt $wasG)' : ''}'
+        : null;
+    final detail = [?gleise, _walkDetail(leg)].join(' · ');
 
     return _transferTile(
       context,
@@ -994,8 +1030,9 @@ class _ConnectionDetailScreenState
                 context,
                 ref,
                 leg.origin,
-                prev?.arrivalPlatform,
-                next?.departurePlatform,
+                // Live Gleise (#50) — see [_livePlatformAtArrival].
+                prev != null ? _livePlatformAtArrival(prev) : null,
+                next != null ? _livePlatformAtDeparture(next) : null,
                 // Einstieg (primary) = the departing/next train; Ausstieg
                 // (secondary) = the arriving/prev train — each drawn to scale.
                 // SCHEDULED times throughout: the Wagenreihung is keyed by
@@ -1098,8 +1135,11 @@ class _ConnectionDetailScreenState
     final shown = liveGap ?? planGap;
     final changed = liveGap != null && planGap != null && liveGap != planGap;
 
-    final arrGleis = prev.arrivalPlatform;
-    final depGleis = next.departurePlatform;
+    // Live Gleise (#50): a Gleiswechsel announced after the search must show
+    // here and on the map this row opens, not the number the search returned.
+    final arrGleis = _livePlatformAtArrival(prev);
+    final depGleis = _livePlatformAtDeparture(next);
+    final wasGleis = _changedFromPlatform(next, depGleis);
     final station = prev.destination;
     // Vendo models every transfer as a FUSSWEG leg, so this path is for the
     // other sources; the flag rides on the arriving side there.
@@ -1111,6 +1151,7 @@ class _ConnectionDetailScreenState
     // one island platform and says so.
     final gleisText = (arrGleis != null || depGleis != null)
         ? 'Gleis ${arrGleis ?? '?'} → Gleis ${depGleis ?? '?'}'
+            '${wasGleis != null ? ' (statt $wasGleis)' : ''}'
             '${samePlatform ? ' · gleicher Bahnsteig' : ''}'
         : (samePlatform ? 'gleicher Bahnsteig' : null);
 
