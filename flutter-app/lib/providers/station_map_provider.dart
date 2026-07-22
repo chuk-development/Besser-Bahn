@@ -454,7 +454,16 @@ class StationMapNotifier extends Notifier<StationMapState> {
       String? product,
       String? secondaryProduct,
       String? trainLabel,
+      // Everything else we know about this ride, used to work out WHICH pole of
+      // a bus stop the rider needs when no bay code is signed (#55): the line,
+      // where this ride is headed, and the next stop on the run.
+      String? lineName,
+      String? towardsName,
+      LatLng? nextStopAt,
       Set<String>? primaryTypes}) async {
+    _lineName = lineName;
+    _towardsName = towardsName;
+    _nextStopAt = nextStopAt;
     // No explicit types → browsing this station: show every transit stop, not
     // just Gleise. A journey passes its own (e.g. just the boarding Gleise).
     _primaryTypes = primaryTypes ?? kTransitStopTypes;
@@ -508,6 +517,11 @@ class StationMapNotifier extends Notifier<StationMapState> {
     await _load(() => _service.fetchByStationName(station.name));
   }
 
+  /// Ride context for [_loadStopPoleMap] — see [loadForStation].
+  String? _lineName;
+  String? _towardsName;
+  LatLng? _nextStopAt;
+
   Future<void> loadBySlug(String slug) async {
     // Slug entry is always a browse (no journey context) → show all stops.
     _primaryTypes = kTransitStopTypes;
@@ -515,6 +529,9 @@ class StationMapNotifier extends Notifier<StationMapState> {
     _coachRefSecondary = null;
     _fallbackRef = null;
     _secondaryFallbackRef = null;
+    _lineName = null;
+    _towardsName = null;
+    _nextStopAt = null;
     state = state.copyWith(clearHighlight: true, clearCoachSequence: true);
     await _load(() => _service.fetchBySlug(slug));
   }
@@ -668,9 +685,18 @@ class StationMapNotifier extends Notifier<StationMapState> {
     final poles = mergePoles(sources[0], sources[1]);
     if (poles.isEmpty) return false;
 
-    // The rider's own pole, matched on the bay code alone — never by distance,
-    // because marking the wrong one sends them across the road.
-    final mine = poleForGleis(poles, state.highlightGleis);
+    // The rider's own pole: the bay code if it is signed, else the line and
+    // where it goes, else which side of the road the bus stops on. Never a
+    // blind guess — see [pickPole].
+    final picked = pickPole(
+      poles,
+      gleis: state.highlightGleis,
+      line: _lineName,
+      towardsName: _towardsName,
+      stop: center,
+      nextStop: _nextStopAt,
+    );
+    final mine = picked?.pole;
     final map = StationMap(
       slug: 'stop:${station.name.toLowerCase()}',
       // Centre on the rider's pole when we know it, else on the stop.
@@ -683,6 +709,10 @@ class StationMapNotifier extends Notifier<StationMapState> {
             type: 'BUS',
             name: pole.label,
             detail: [
+              if (identical(pole, mine) && picked!.how != PoleMatch.bay)
+                picked.how == PoleMatch.route
+                    ? 'dein Halt (laut Fahrplan)'
+                    : 'vermutlich dein Halt (Fahrtrichtung)',
               if (pole.bay != null && pole.name.isNotEmpty) pole.name,
               ?pole.directionLabel,
               if (pole.shelter) 'mit Wartehäuschen',
@@ -697,7 +727,7 @@ class StationMapNotifier extends Notifier<StationMapState> {
         'map built from stop poles: "${station.name}" ${poles.length} poles '
         '(osm ${sources[0].length}, delfi ${sources[1].length}, '
         'highlight ${state.highlightGleis ?? '–'} '
-        '${mine == null ? 'UNMATCHED' : 'matched'})',
+        '${picked == null ? 'UNMATCHED' : 'via ${picked.how.name}'})',
         tag: 'map');
     state = state.copyWith(
       map: map,
@@ -705,6 +735,18 @@ class StationMapNotifier extends Notifier<StationMapState> {
       hiddenCategories: const {},
       isLoading: false,
       clearError: true,
+      // Point the existing highlight machinery at the pole we picked. Without
+      // this a stop whose leg carries no Gleis at all (a plain roadside stop)
+      // could never light one up, which is precisely the case the line and the
+      // side-of-the-road rules exist for.
+      highlightGleis:
+          mine == null ? null : normalizeGleis(mine.label),
+      clearHighlight: mine == null,
+      highlightRole: mine == null
+          ? GleisRole.none
+          : (state.highlightRole == GleisRole.none
+              ? GleisRole.board
+              : state.highlightRole),
     );
     return true;
   }

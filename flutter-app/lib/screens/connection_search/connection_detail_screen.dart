@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -1519,6 +1520,16 @@ class _LegSectionState extends ConsumerState<_LegSection>
   void _openStopMap(Stopover stop) {
     if (stop.stop.name.isEmpty) return;
     final leg = widget.leg;
+    // Which pole of a bus stop the rider needs is often not printed anywhere,
+    // and then the ride itself answers it: the line, where this ride is headed,
+    // and the next stop on the run (the direction of travel — buses stop on the
+    // right). See `pickPole` (#55).
+    final stops = _trip?.stopovers ?? const <Stopover>[];
+    final here = stops.indexWhere((s) =>
+        (s.stop.id.isNotEmpty && s.stop.id == stop.stop.id) ||
+        s.stop.name == stop.stop.name);
+    final next = (here >= 0 && here + 1 < stops.length) ? stops[here + 1] : null;
+    final nextLat = next?.stop.latitude, nextLon = next?.stop.longitude;
 
     // On a wing train, when this is the stop you board at, narrow the map's
     // section highlight to the portion bound for YOUR destination (e.g. just
@@ -1558,6 +1569,16 @@ class _LegSectionState extends ConsumerState<_LegSection>
     ref.read(dedicatedStationMapProvider.notifier).loadForStation(
           stop.stop,
           highlightGleis: stop.platform,
+          lineName: leg.line?.name.trim(),
+          // Where this ride goes — the run's direction where we have it (a bus
+          // headsign names the terminus, not the rider's exit), else the leg's
+          // own destination.
+          towardsName: (_trip?.direction.trim().isNotEmpty ?? false)
+              ? _trip!.direction.trim()
+              : leg.destination.name,
+          nextStopAt: (nextLat != null && nextLon != null)
+              ? LatLng(nextLat, nextLon)
+              : null,
           role: gleisRole,
           sectionOverride: sectionOverride,
           // The Wagenreihung is for this leg's boarding stop, so only hand it to

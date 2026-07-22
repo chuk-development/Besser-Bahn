@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../models/library_models.dart';
 import '../../models/station.dart';
+import '../../models/trip.dart';
 import '../../providers/library_provider.dart';
 import '../../providers/station_map_provider.dart';
 import '../../providers/train_lookup_provider.dart';
@@ -440,6 +442,15 @@ class _TrainLookupScreenState extends ConsumerState<TrainLookupScreen>
                           )
                         : null,
                     trainLabel: trip.line.displayName,
+                    // Which pole of a bus stop is the rider's is often signed
+                    // nowhere; the ride answers it — line, where it goes, and
+                    // the next stop (buses stop on the right). See `pickPole`
+                    // (#55).
+                    lineName: trip.line.name.trim(),
+                    towardsName: trip.direction.trim().isNotEmpty
+                        ? trip.direction.trim()
+                        : null,
+                    nextStopAt: _nextStopAt(trip, stop),
                     primaryTypes:
                         primaryPoiTypesForProduct(trip.line.product),
                   );
@@ -450,6 +461,19 @@ class _TrainLookupScreenState extends ConsumerState<TrainLookupScreen>
         ],
       ),
     );
+  }
+
+  /// The stop after [stop] on this run — the direction of travel, which is
+  /// what decides which side of the road a bus calls at (#55).
+  LatLng? _nextStopAt(Trip trip, Stopover stop) {
+    final stops = trip.stopovers;
+    final i = stops.indexWhere((s) =>
+        (s.stop.id.isNotEmpty && s.stop.id == stop.stop.id) ||
+        s.stop.name == stop.stop.name);
+    if (i < 0 || i + 1 >= stops.length) return null;
+    final next = stops[i + 1].stop;
+    final lat = next.latitude, lon = next.longitude;
+    return (lat != null && lon != null) ? LatLng(lat, lon) : null;
   }
 
   Widget _buildSearchResults(BuildContext context,
