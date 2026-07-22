@@ -229,31 +229,9 @@ class JourneysScreen extends ConsumerWidget {
     return Dismissible(
       key: ValueKey(saved.key),
       direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 28),
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.errorContainer,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Icon(Icons.delete_outline,
-            color: Theme.of(context).colorScheme.onErrorContainer),
-      ),
-      onDismissed: (_) {
-        ref.read(libraryProvider.notifier).removeJourney(saved.key);
-        // Swiping deleted the local copy only, leaving the trip in the DB
-        // account: it kept showing under "Gemerkte Reisen" with an empty
-        // bookmark, and re-saving it then created duplicates. Delete both
-        // sides — that half-deleted state is what started #15.
-        _deleteDbReise(ref, saved.key);
-        // The trip is gone, so its offline package is just orphaned bytes.
-        ref.read(offlinePackagesProvider.notifier).delete(saved.key);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              duration: Duration(seconds: 2), content: Text('Reise entfernt')),
-        );
-      },
+      dismissThresholds: _dismissThresholds,
+      background: _deleteBackground(context),
+      onDismissed: (_) => _dismissJourney(context, ref, saved),
       child: Opacity(
         opacity: past ? 0.7 : 1,
         child: Column(
@@ -349,17 +327,82 @@ class JourneysScreen extends ConsumerWidget {
 /// One server-side "Gemerkte Reise" (tracked but unpaid). Lazily fetches the
 /// individual reise via `/mob/reisen/{rkUuid}` and renders it as a regular
 /// JourneyCard. Tap → /connection (no ticket — just the Reiseplan).
-/// Delete the DB-account "gemerkte Reise" that mirrors the local journey [key],
-/// if we know which one that is. Best-effort: a purely local bookmark has no
-/// rkUuid and nothing to delete.
-Future<void> _deleteDbReise(WidgetRef ref, String key) async {
-  if (!ref.read(dbAuthProvider).isLoggedIn) return;
-  final rkUuid = ref.read(dbSavedReiseIdsProvider.notifier).take(key);
-  if (rkUuid == null) return;
-  try {
-    await ref.read(dbAccountServiceProvider).deleteReise(rkUuid);
-    await ref.read(reisenuebersichtProvider.notifier).refresh();
-  } catch (_) {/* best-effort — the local entry is already gone */}
+/// A swipe has to travel most of the card before it deletes. The default 40 %
+/// fires on the sideways drift of an ordinary diagonal scroll, which cost
+/// people whole saved trips (#51).
+const Map<DismissDirection, double> _dismissThresholds = {
+  DismissDirection.endToStart: 0.62,
+};
+
+Widget _deleteBackground(BuildContext context) => Container(
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.only(right: 28),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Icon(Icons.delete_outline,
+          color: Theme.of(context).colorScheme.onErrorContainer),
+    );
+
+/// Swipe-delete a saved trip with an undo window (#51).
+///
+/// Only the local entry goes immediately — that's what makes the row vanish.
+/// The irreversible halves (the DB account's "gemerkte Reise" and the
+/// downloaded offline package) wait until the snackbar closes unclaimed, so
+/// "Rückgängig" is a pure local restore instead of re-creating a server trip
+/// and re-downloading megabytes.
+void _dismissJourney(
+    BuildContext context, WidgetRef ref, SavedJourney saved) {
+  final key = saved.key;
+  // Read every dependency up front: the row is being removed, so this widget's
+  // `ref` must not be touched once the snackbar callback runs.
+  final library = ref.read(libraryProvider.notifier);
+  final offline = ref.read(offlinePackagesProvider.notifier);
+  final reiseIds = ref.read(dbSavedReiseIdsProvider.notifier);
+  final loggedIn = ref.read(dbAuthProvider).isLoggedIn;
+  final account = ref.read(dbAccountServiceProvider);
+  final reisen = ref.read(reisenuebersichtProvider.notifier);
+
+  final existing =
+      ref.read(libraryProvider).journeys.where((j) => j.key == key).firstOrNull;
+  library.removeJourney(key);
+
+  var undone = false;
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        // Two seconds is not enough to notice a trip vanished, let alone undo
+        // it.
+        duration: const Duration(seconds: 7),
+        content: const Text('Reise entfernt'),
+        action: SnackBarAction(
+          label: 'Rückgängig',
+          onPressed: () {
+            undone = true;
+            library.restoreJourney(existing ?? saved);
+          },
+        ),
+      ),
+    ).closed.then((_) {
+      if (undone) return;
+      // Swiping used to delete the local copy only, leaving the trip in the DB
+      // account: it kept showing under "Gemerkte Reisen" with an empty
+      // bookmark, and re-saving it then created duplicates (#15). Both sides go.
+      final rkUuid = reiseIds.take(key);
+      if (loggedIn && rkUuid != null) {
+        Future(() async {
+          try {
+            await account.deleteReise(rkUuid);
+            await reisen.refresh();
+          } catch (_) {/* best-effort — the local entry is already gone */}
+        });
+      }
+      // The trip is gone, so its offline package is just orphaned bytes.
+      offline.delete(key);
+    });
 }
 
 class _SavedReiseTile extends ConsumerWidget {
@@ -381,29 +424,15 @@ class _SavedReiseTile extends ConsumerWidget {
       content = Dismissible(
         key: ValueKey('db-${index.rkUuid}'),
         direction: DismissDirection.endToStart,
-        background: Container(
-          alignment: Alignment.centerRight,
-          padding: const EdgeInsets.only(right: 28),
-          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.errorContainer,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Icon(Icons.delete_outline,
-              color: Theme.of(context).colorScheme.onErrorContainer),
+        dismissThresholds: _dismissThresholds,
+        background: _deleteBackground(context),
+        onDismissed: (_) => _dismissJourney(
+          context,
+          ref,
+          // No local entry to carry over here — the trip lives in the DB
+          // account. Undo re-saves it locally and keeps the server copy.
+          SavedJourney(journey: j, savedAtMs: DateTime.now().millisecondsSinceEpoch),
         ),
-        onDismissed: (_) {
-          final key = SavedJourney(journey: j, savedAtMs: 0).key;
-          // Both sides, so this can't recreate the half-deleted state.
-          ref.read(libraryProvider.notifier).removeJourney(key);
-          _deleteDbReise(ref, key);
-          ref.read(offlinePackagesProvider.notifier).delete(key);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                duration: Duration(seconds: 2),
-                content: Text('Reise entfernt')),
-          );
-        },
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

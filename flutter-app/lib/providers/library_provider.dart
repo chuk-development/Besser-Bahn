@@ -341,6 +341,16 @@ class LibraryNotifier extends Notifier<LibraryState> {
     _saveJourneys();
   }
 
+  /// Put a removed trip back exactly as it was — same save time, same bell.
+  /// Backs "Rückgängig" after a swipe delete (#51), which is what makes the
+  /// accidental swipe harmless. A trip that's somehow saved again already wins,
+  /// so undoing twice can't duplicate it.
+  void restoreJourney(SavedJourney entry) {
+    if (state.journeys.any((j) => j.key == entry.key)) return;
+    state = state.copyWith(journeys: [entry, ...state.journeys]);
+    _saveJourneys();
+  }
+
   /// Swap the saved trip [oldKey] for [journey] — the same trip after a leg was
   /// exchanged ("Weitere Abfahrten", "früher aussteigen"). Without this the
   /// library would keep the abandoned itinerary and every notification channel
