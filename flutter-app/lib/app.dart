@@ -7,6 +7,7 @@ import 'core/constants.dart';
 import 'core/missed_connection.dart';
 import 'providers/background_trip_provider.dart';
 import 'providers/journey_search_provider.dart';
+import 'providers/library_provider.dart';
 import 'providers/live_trip_provider.dart';
 import 'providers/reminder_provider.dart';
 import 'providers/travel_stats_provider.dart';
@@ -48,6 +49,7 @@ class _BessereBahnAppState extends ConsumerState<BessereBahnApp> {
   }) async {
     if (consumePersisted) await NotificationService.takePendingMissedRescue();
     if (!mounted) return;
+    _silenceMissedJourney(rescue);
     final search = ref.read(journeySearchProvider.notifier);
     search.setFrom(rescue.from);
     search.setTo(rescue.to);
@@ -55,6 +57,24 @@ class _BessereBahnAppState extends ConsumerState<BessereBahnApp> {
     search.setIsArrival(false);
     ref.read(appRouterProvider).go('/search');
     await search.search();
+  }
+
+  /// The rider just told us they missed [rescue]'s train, so that itinerary is
+  /// over — switch its alerts off before offering replacements, otherwise the
+  /// abandoned trip keeps pinging alongside the new one (#58). Matched by the
+  /// missed boarding stop and its scheduled departure; the trip stays saved and
+  /// the bell in its Reiseplan turns the alerts back on.
+  void _silenceMissedJourney(MissedConnectionRescue rescue) {
+    final library = ref.read(libraryProvider.notifier);
+    for (final saved in ref.read(libraryProvider).journeys) {
+      if (!saved.watched) continue;
+      final matches = saved.journey.legs.where((l) => !l.isWalking).any((leg) {
+        final departure = leg.departure ?? leg.plannedDeparture;
+        return leg.origin.id == rescue.from.id &&
+            departure == rescue.scheduledDeparture;
+      });
+      if (matches) library.setJourneyWatched(saved.key, false);
+    }
   }
 
   @override

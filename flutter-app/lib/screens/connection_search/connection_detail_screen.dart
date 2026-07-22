@@ -105,14 +105,28 @@ class _ConnectionDetailScreenState
     await Future.delayed(const Duration(milliseconds: 600));
   }
 
+  /// Take [next] as the itinerary on screen — and, if this trip is saved,
+  /// carry the saved entry over to it.
+  ///
+  /// Every leg swap used to live only in this screen's state, so the library
+  /// kept the itinerary as originally saved: reminders, live companion and
+  /// background tracking all went on alerting for the train the rider had just
+  /// swapped away (#58).
+  void _adoptJourney(Journey next, {bool refresh = false}) {
+    final oldKey = SavedJourney(journey: _journey, savedAtMs: 0).key;
+    setState(() {
+      _journey = next;
+      if (refresh) _refreshTick++;
+    });
+    ref.read(libraryProvider.notifier).replaceJourney(oldKey, next);
+  }
+
   /// Swap leg [index] for [newLeg] picked from "Weitere Abfahrten".
   void _replaceLeg(int index, JourneyLeg newLeg) {
     final legs = List<JourneyLeg>.of(_journey.legs);
     if (index < 0 || index >= legs.length) return;
     legs[index] = newLeg;
-    setState(() {
-      _journey = Journey(legs: legs); // price/refreshToken intentionally dropped
-    });
+    _adoptJourney(Journey(legs: legs)); // price/refreshToken intentionally dropped
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         duration: Duration(seconds: 3),
@@ -167,10 +181,8 @@ class _ConnectionDetailScreenState
       ));
       return;
     }
-    setState(() {
-      _journey = Journey(legs: legs); // price/refreshToken intentionally dropped
-      _refreshTick++;
-    });
+    // price/refreshToken intentionally dropped
+    _adoptJourney(Journey(legs: legs), refresh: true);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       duration: const Duration(seconds: 5),
       content: Text(
@@ -287,7 +299,7 @@ class _ConnectionDetailScreenState
                   ? Icons.notifications_active
                   : Icons.notifications_off_outlined),
               tooltip: watched
-                  ? 'Live-Begleitung aktiv — antippen zum Ausschalten'
+                  ? 'Benachrichtigungen aktiv — antippen zum Ausschalten'
                   : 'Diese Reise überwachen',
               onPressed: () {
                 ref
@@ -297,9 +309,9 @@ class _ConnectionDetailScreenState
                   SnackBar(
                     duration: const Duration(seconds: 3),
                     content: Text(watched
-                        ? 'Live-Begleitung für diese Reise aus.'
-                        : 'Live-Begleitung an: Verspätung, Gleiswechsel, '
-                            'Ausfall & Anschluss.'),
+                        ? 'Benachrichtigungen für diese Reise aus.'
+                        : 'Benachrichtigungen an: Erinnerungen, Verspätung, '
+                            'Gleiswechsel, Ausfall & Anschluss.'),
                   ),
                 );
                 if (!watched) NotificationService.requestPermissions();
@@ -644,6 +656,19 @@ class _ConnectionDetailScreenState
     WidgetRef ref,
     MissedConnectionRescue rescue,
   ) {
+    // Declaring the train missed ends this itinerary — silence it before
+    // leaving, or its reminders and live alerts keep arriving next to the
+    // replacement the rider is about to pick (#58). The trip stays saved, so
+    // the bell in its Reiseplan turns the alerts back on if it was a misfire.
+    final key = SavedJourney(journey: journey, savedAtMs: 0).key;
+    final library = ref.read(libraryProvider.notifier);
+    if (ref.read(libraryProvider).hasJourney(key)) {
+      library.setJourneyWatched(key, false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        duration: Duration(seconds: 4),
+        content: Text('Benachrichtigungen für diese Reise aus.'),
+      ));
+    }
     final n = ref.read(journeySearchProvider.notifier);
     n.setFrom(rescue.from);
     n.setTo(rescue.to);
@@ -1462,6 +1487,20 @@ class _LegSectionState extends ConsumerState<_LegSection>
     final isLegBoarding =
         (stop.stop.id.isNotEmpty && stop.stop.id == leg.origin.id) ||
             (stop.stop.name.isNotEmpty && stop.stop.name == leg.origin.name);
+    // Where the RIDER gets off this leg — not the train's terminus. On an
+    // intermediate boarding/alighting stop (Büchen for an ICE that starts in
+    // Hamburg) the stopover's own isOrigin/isTerminus are both false, so the
+    // Gleis came out role-less (grey, no green/red). The leg endpoints are the
+    // truth for who boards/alights here. (#50-Karte)
+    final isLegAlighting =
+        (stop.stop.id.isNotEmpty && stop.stop.id == leg.destination.id) ||
+            (stop.stop.name.isNotEmpty &&
+                stop.stop.name == leg.destination.name);
+    final gleisRole = isLegBoarding
+        ? GleisRole.board
+        : isLegAlighting
+            ? GleisRole.alight
+            : GleisRole.none;
     if (coach != null && coach.splits && isLegBoarding) {
       final portion = coach.portionTo(leg.destination.name);
       final range = portion?.sectorRange;
@@ -1477,11 +1516,7 @@ class _LegSectionState extends ConsumerState<_LegSection>
     ref.read(stationMapProvider.notifier).loadForStation(
           stop.stop,
           highlightGleis: stop.platform,
-          role: stop.isTerminus
-              ? GleisRole.alight
-              : stop.isOrigin
-                  ? GleisRole.board
-                  : GleisRole.none,
+          role: gleisRole,
           sectionOverride: sectionOverride,
           // The Wagenreihung is for this leg's boarding stop, so only hand it to
           // the map there — drawing it on a later stop's platform would be wrong.

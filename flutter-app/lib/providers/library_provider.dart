@@ -341,6 +341,36 @@ class LibraryNotifier extends Notifier<LibraryState> {
     _saveJourneys();
   }
 
+  /// Swap the saved trip [oldKey] for [journey] — the same trip after a leg was
+  /// exchanged ("Weitere Abfahrten", "früher aussteigen"). Without this the
+  /// library would keep the abandoned itinerary and every notification channel
+  /// hanging off it (reminders, live companion, background tracking) would keep
+  /// alerting for trains the rider no longer takes (#58).
+  ///
+  /// No-op when [oldKey] isn't saved: an unsaved trip has nothing to migrate.
+  /// Keeps the entry's position, save time and watched flag, and collapses a
+  /// collision if the new itinerary happens to carry an already-saved key.
+  void replaceJourney(String oldKey, Journey journey) {
+    final list = List<SavedJourney>.from(state.journeys);
+    final idx = list.indexWhere((j) => j.key == oldKey);
+    if (idx < 0) return;
+    final previous = list[idx];
+    final next = SavedJourney(
+      journey: journey,
+      savedAtMs: previous.savedAtMs,
+      watched: previous.watched,
+    );
+    if (next.key == oldKey && identical(previous.journey, journey)) return;
+    list[idx] = next;
+    if (next.key != oldKey) {
+      for (var i = list.length - 1; i >= 0; i--) {
+        if (i != idx && list[i].key == next.key) list.removeAt(i);
+      }
+    }
+    state = state.copyWith(journeys: list);
+    _saveJourneys();
+  }
+
   /// Turn the live companion on/off for one saved trip (#11, point 2).
   void setJourneyWatched(String key, bool watched) {
     state = state.copyWith(

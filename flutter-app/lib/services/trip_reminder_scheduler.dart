@@ -48,24 +48,14 @@ class TripReminderScheduler {
       return;
     }
 
-    final now = DateTime.now();
-    final reminders = <_Reminder>[];
-    for (final saved in upcoming) {
-      reminders.addAll(_remindersFor(
-        saved.journey,
-        leadMinutes,
-        departureReminders: enabled,
-        transferAlerts: enabled && transferAlerts,
-        arrivalAlert: arrivalAlert,
-        arrivalAlarmSound: arrivalAlarmSound,
-      ));
-    }
-
-    // Only future pings, soonest first, capped.
-    reminders
-      ..removeWhere((r) => !r.when.isAfter(now))
-      ..sort((a, b) => a.when.compareTo(b.when));
-    final planned = reminders.take(_maxReminders).toList();
+    final planned = plan(
+      upcoming,
+      leadMinutes: leadMinutes,
+      departureReminders: enabled,
+      transferAlerts: transferAlerts,
+      arrivalAlert: arrivalAlert,
+      arrivalAlarmSound: arrivalAlarmSound,
+    );
 
     await NotificationService.cancelReminders();
     var id = NotificationService.reminderIdBase;
@@ -89,7 +79,43 @@ class TripReminderScheduler {
     AppLog.log('reminders synced (${planned.length} scheduled)', tag: 'notify');
   }
 
-  static List<_Reminder> _remindersFor(
+  /// The pings [sync] would schedule, in the order it schedules them: future
+  /// only, soonest first, capped at [_maxReminders]. Split out from [sync] so
+  /// the planning is testable without an OS notification plugin.
+  ///
+  /// Trips with `watched: false` contribute nothing. That flag is the per-trip
+  /// "notify me about this one" switch (the bell in the Reiseplan); it used to
+  /// gate only the live companion, so a trip the rider had switched off — or
+  /// abandoned after missing it — kept firing its scheduled pings next to the
+  /// replacement connection (#58). One flag, all channels.
+  static List<TripReminder> plan(
+    List<SavedJourney> upcoming, {
+    required int leadMinutes,
+    required bool departureReminders,
+    required bool transferAlerts,
+    required bool arrivalAlert,
+    required bool arrivalAlarmSound,
+    DateTime? now,
+  }) {
+    final current = now ?? DateTime.now();
+    final reminders = <TripReminder>[];
+    for (final saved in upcoming.where((j) => j.watched)) {
+      reminders.addAll(_remindersFor(
+        saved.journey,
+        leadMinutes,
+        departureReminders: departureReminders,
+        transferAlerts: departureReminders && transferAlerts,
+        arrivalAlert: arrivalAlert,
+        arrivalAlarmSound: arrivalAlarmSound,
+      ));
+    }
+    reminders
+      ..removeWhere((r) => !r.when.isAfter(current))
+      ..sort((a, b) => a.when.compareTo(b.when));
+    return reminders.take(_maxReminders).toList();
+  }
+
+  static List<TripReminder> _remindersFor(
     Journey journey,
     int leadMinutes, {
     required bool departureReminders,
@@ -97,7 +123,7 @@ class TripReminderScheduler {
     required bool arrivalAlert,
     required bool arrivalAlarmSound,
   }) {
-    final out = <_Reminder>[];
+    final out = <TripReminder>[];
     final transit = journey.legs.where((l) => !l.isWalking).toList();
     if (transit.isEmpty) return out;
 
@@ -110,7 +136,7 @@ class TripReminderScheduler {
     return out;
   }
 
-  static void _addDepartureReminders(List<_Reminder> out,
+  static void _addDepartureReminders(List<TripReminder> out,
       List<JourneyLeg> transit, int leadMinutes, bool transferAlerts) {
     final first = transit.first;
     final dep = first.plannedDeparture ?? first.departure;
@@ -120,7 +146,7 @@ class TripReminderScheduler {
     final plat = first.departurePlatform ?? first.plannedDeparturePlatform;
 
     // Bereit machen — lead minutes before departure.
-    out.add(_Reminder(
+    out.add(TripReminder(
       when: dep.subtract(Duration(minutes: leadMinutes)),
       title: 'In $leadMinutes Min: $line',
       body: 'ab $origin um ${dep.hhmm}'
@@ -129,7 +155,7 @@ class TripReminderScheduler {
 
     // Boarding — 5 min before. Skipped if the lead is already ≤5 (would dupe).
     if (leadMinutes > 5) {
-      out.add(_Reminder(
+      out.add(TripReminder(
         when: dep.subtract(const Duration(minutes: 5)),
         title: 'Gleich Abfahrt: $line',
         body: '${dep.hhmm} ab $origin'
@@ -151,7 +177,7 @@ class TripReminderScheduler {
         final gap = prevArr != null
             ? nextDep.difference(prevArr).inMinutes
             : null;
-        out.add(_Reminder(
+        out.add(TripReminder(
           when: nextDep.subtract(const Duration(minutes: 5)),
           title: 'Umstieg in $station',
           body: '$nextLine um ${nextDep.hhmm}'
@@ -169,21 +195,21 @@ class TripReminderScheduler {
   /// other reminder; the [sync] filter drops any leg that's already < 10 / < 5
   /// min out.
   static void _addArrivalReminders(
-      List<_Reminder> out, List<JourneyLeg> transit, bool alarmSound) {
+      List<TripReminder> out, List<JourneyLeg> transit, bool alarmSound) {
     final last = transit.last;
     final arr = last.arrival ?? last.plannedArrival;
     if (arr == null) return;
     final dest = last.destination.name;
     final plat = last.arrivalPlatform ?? last.plannedArrivalPlatform;
 
-    out.add(_Reminder(
+    out.add(TripReminder(
       when: arr.subtract(const Duration(minutes: _arrivalNoticeMinutes)),
       title: 'In $_arrivalNoticeMinutes Minuten bist du da',
       body: 'Ankunft $dest um ${arr.hhmm}'
           '${plat != null ? ' · Gleis $plat' : ''}.',
     ));
 
-    out.add(_Reminder(
+    out.add(TripReminder(
       when: arr.subtract(const Duration(minutes: _arrivalAlarmMinutes)),
       title: alarmSound
           ? 'Aufwachen — $dest in $_arrivalAlarmMinutes Min'
@@ -195,7 +221,7 @@ class TripReminderScheduler {
   }
 }
 
-class _Reminder {
+class TripReminder {
   final DateTime when;
   final String title;
   final String body;
@@ -203,7 +229,7 @@ class _Reminder {
   /// Schedule via the loud insistent "Ankunfts-Wecker" instead of a normal
   /// notification.
   final bool alarm;
-  const _Reminder({
+  const TripReminder({
     required this.when,
     required this.title,
     required this.body,
