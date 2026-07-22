@@ -77,14 +77,17 @@ class _StopTimelineState extends State<StopTimeline> {
   bool _expandedAfter = false;
   bool _expandedMiddle = false;
 
-  /// Index of [id] in the stop list (by EVA, then by name), or -1.
-  int _indexOf(String? id) {
+  /// Index of [id] in the stop list (by EVA, then by name), or -1. Searching
+  /// starts at [from]: a bus or tram line that loops serves the same stop twice,
+  /// and taking the first hit for the alighting stop would put it *before*
+  /// boarding (#56).
+  int _indexOf(String? id, {int from = 0}) {
     if (id == null || id.isEmpty) return -1;
     final stops = widget.stopovers;
-    for (var i = 0; i < stops.length; i++) {
+    for (var i = from; i < stops.length; i++) {
       if (stops[i].stop.id == id) return i;
     }
-    for (var i = 0; i < stops.length; i++) {
+    for (var i = from; i < stops.length; i++) {
       if (stops[i].stop.name == id) return i;
     }
     return -1;
@@ -97,15 +100,26 @@ class _StopTimelineState extends State<StopTimeline> {
 
     // Resolve the ridden segment [board, alight]. Fall back to whole trip.
     final rawBoard = _indexOf(widget.boardingId);
-    final rawAlight = _indexOf(widget.alightingId);
+    // Look for the exit *after* boarding — see [_indexOf].
+    final rawAlight =
+        _indexOf(widget.alightingId, from: rawBoard >= 0 ? rawBoard + 1 : 0);
     // This is a journey leg (vs. a standalone train lookup) only when at least
     // one endpoint was actually resolved — then we also collapse the stops
     // *between* the endpoints, since 99% just board and alight.
-    final isLeg = rawBoard >= 0 || rawAlight >= 0;
+    var isLeg = rawBoard >= 0 || rawAlight >= 0;
     var board = rawBoard;
     var alight = rawAlight;
     if (board < 0) board = 0;
     if (alight < 0 || alight < board) alight = stops.length - 1;
+    // A segment that collapsed to a single stop tells the rider nothing — it
+    // renders as one lonely row with the rest of the run hidden behind two
+    // collapse headers. Show the whole route instead; that's the only thing on
+    // screen worth looking at (#56, reported on a bus).
+    if (alight <= board) {
+      board = 0;
+      alight = stops.length - 1;
+      isLeg = false;
+    }
 
     final beforeCount = board;
     final afterCount = stops.length - 1 - alight;
