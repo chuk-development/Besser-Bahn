@@ -431,12 +431,23 @@ class VendoService {
 
   /// Map our internal HAFAS-style [product] back to the vendo product-group
   /// code `weitereabfahrten` expects (e.g. "regional" → "RB", an RE/RB train).
+  ///
+  /// The endpoint validates this string strictly: anything outside its own
+  /// enum is answered `400 VALIDIERUNG`, not ignored. Three of the codes here
+  /// were outside it — `EC_IC` (the live spelling is `IC_EC`, same slip the
+  /// board parser had), `U` (it wants `UBAHN`) and the `ALL` catch-all (no such
+  /// group) — so "Weitere Abfahrten" could never load on an IC/EC or U-Bahn
+  /// leg. The unknown case falls back to `RB` because [_mapProduct] already
+  /// calls anything it doesn't recognise regional.
+  ///
+  /// Accepted (probed live): ICE · IC_EC · RB · SBAHN · BUS · UBAHN · STR ·
+  /// SCHIFF. `api-tests/healthcheck.py` asserts each one still is.
   static String produktGattungenFor(String? product) {
     switch (product) {
       case 'nationalExpress':
         return 'ICE';
       case 'national':
-        return 'EC_IC';
+        return 'IC_EC';
       case 'regional':
       case 'regionalExp':
         return 'RB';
@@ -445,13 +456,13 @@ class VendoService {
       case 'bus':
         return 'BUS';
       case 'subway':
-        return 'U';
+        return 'UBAHN';
       case 'tram':
         return 'STR';
       case 'ferry':
         return 'SCHIFF';
       default:
-        return 'ALL';
+        return 'RB';
     }
   }
 

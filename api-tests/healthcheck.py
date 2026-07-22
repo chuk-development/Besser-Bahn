@@ -1629,28 +1629,58 @@ def check_vendo_journey_pagination() -> str:
     return f"pagination ok (base {b0[11:16]} -> earlier {e0[11:16]})"
 
 
+# Every produktGattungen code `VendoService.produktGattungenFor` can send.
+# The endpoint validates the string against its own enum and answers 400
+# VALIDIERUNG for anything outside it — it does NOT ignore unknown values — so
+# a wrong code means "Weitere Abfahrten" is dead for that product, silently.
+# The app long sent `EC_IC` (live spelling: `IC_EC`), `U` (wants `UBAHN`) and an
+# invented `ALL` catch-all, which 400'd every IC/EC and U-Bahn leg.
+WEITERE_ABFAHRTEN_GATTUNGEN = [
+    "ICE", "IC_EC", "RB", "SBAHN", "BUS", "UBAHN", "STR", "SCHIFF",
+]
+
+
+def _weitere_abfahrten(abgang: str, ziel: str, gattung: str, hours: int = 4):
+    media = "application/x.db.vendo.mob.verbindungssuche.v9+json"
+    ankunft = (datetime.now().astimezone() + timedelta(hours=hours)).isoformat()
+    body = {"wunsch": {
+        "abgangsLocationId": abgang,
+        "alternativeHalteBerechnung": True,
+        "fahrradmitnahme": False,
+        "produktGattungen": gattung,
+        "zeitWunsch": {"reiseDatum": ankunft, "zeitPunktArt": "ANKUNFT"},
+        "zielLocationId": ziel,
+    }}
+    return _post(
+        "https://app.services-bahn.de/mob/trip/weitereabfahrten",
+        headers=_vendo_headers(media), data=json.dumps(body), timeout=TIMEOUT,
+    )
+
+
 def check_vendo_weitere_abfahrten() -> str:
     """
     "Weitere Abfahrten": alternative trains of one product group on a direct
     segment, anchored on arrival. POST /mob/trip/weitereabfahrten. NB the
     response puts verbindungsAbschnitte DIRECTLY on each connection (no
     `verbindung` wrapper, unlike /angebote/fahrplan) — the app relies on that.
+
+    Also asserts every product code the app maps to is still inside the
+    endpoint's enum: a rejected code takes the whole switcher down for that
+    product, and an empty result set looks exactly the same from the UI.
     """
-    media = "application/x.db.vendo.mob.verbindungssuche.v9+json"
-    # anchor a few hours out so regional trains certainly exist
-    ankunft = (datetime.now().astimezone() + timedelta(hours=4)).isoformat()
-    body = {"wunsch": {
-        "abgangsLocationId": KIEL_LOC,
-        "alternativeHalteBerechnung": True,
-        "fahrradmitnahme": False,
-        "produktGattungen": "RB",
-        "zeitWunsch": {"reiseDatum": ankunft, "zeitPunktArt": "ANKUNFT"},
-        "zielLocationId": HAMBURG_LOC,
-    }}
-    r = _post(
-        "https://app.services-bahn.de/mob/trip/weitereabfahrten",
-        headers=_vendo_headers(media), data=json.dumps(body), timeout=TIMEOUT,
-    )
+    rejected = []
+    for gattung in WEITERE_ABFAHRTEN_GATTUNGEN:
+        r = _weitere_abfahrten(BERLIN_HBF, HAMBURG_LOC, gattung)
+        if r.status_code != 200:
+            rejected.append(f"{gattung}→{r.status_code}")
+    if rejected:
+        raise CheckError("produktGattungen rejected: " + ", ".join(rejected))
+
+    # Berlin→Hamburg by ICE: the one pair/product that always has alternatives
+    # to page through. (Kiel→Hamburg "RB" used to be the probe and now returns
+    # an empty list — the direct trains there are REs, which live in `RB` only
+    # nominally.)
+    r = _weitere_abfahrten(BERLIN_HBF, HAMBURG_LOC, "ICE")
     r.raise_for_status()
     conns = r.json().get("verbindungen", [])
     if not conns:
@@ -1665,7 +1695,9 @@ def check_vendo_weitere_abfahrten() -> str:
     if len(halte) < 2:
         raise CheckError("first leg has no halte")
     dep = halte[0].get("abgangsDatum", "")
-    return f"{len(conns)} alt departures, first {dep[11:16]} ({len(halte)} halte)"
+    return (f"{len(conns)} alt departures, first {dep[11:16]} "
+            f"({len(halte)} halte); "
+            f"{len(WEITERE_ABFAHRTEN_GATTUNGEN)} produktGattungen accepted")
 
 
 def check_vendo_train_polyline() -> str:
