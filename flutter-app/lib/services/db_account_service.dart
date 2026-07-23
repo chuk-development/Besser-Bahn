@@ -233,12 +233,40 @@ class DbAccountService {
     return json.decode(res.body) as Map<String, dynamic>;
   }
 
+  /// In-flight access-token refresh, shared by every concurrent caller.
+  /// See [_refresh].
+  Future<_RefreshOutcome>? _refreshInFlight;
+
+  /// Refreshes the access token, coalescing concurrent callers onto a single
+  /// request.
+  ///
+  /// A full account refresh fires four endpoint reads at once (profile,
+  /// BahnBonus, BahnCards, trip overview). Once the 5-minute access token has
+  /// expired — every few hours — each of them independently discovers the
+  /// expiry and would call [_doRefresh]. DB's Keycloak **rotates** the refresh
+  /// token on every use and treats a *reused* older token as an attack,
+  /// invalidating the whole token family. Two concurrent refreshes therefore
+  /// race: the first rotates T0→T1, the second still holds T0, Keycloak sees
+  /// the reuse and kills the session — which [_dispatch] reads as `rejected`
+  /// and turns into a [logout], wiping the freshly-minted T1 *and* the separate
+  /// BahnBonus link with it. The result was a session that silently died a few
+  /// hours after every login and could only be restored by signing out, back
+  /// in, and re-linking BahnBonus (#52).
+  ///
+  /// Coalescing every concurrent refresh onto one in-flight POST removes the
+  /// race: exactly one token rotation happens and all callers share its
+  /// outcome.
+  Future<_RefreshOutcome> _refresh() {
+    return _refreshInFlight ??=
+        _doRefresh().whenComplete(() => _refreshInFlight = null);
+  }
+
   /// Outcome of a refresh attempt. `transient` means the request itself
   /// didn't reach the server / answered 5xx — tokens stay on disk so the
   /// next try (next launch / reconnect) can recover. `rejected` means
   /// Keycloak explicitly refused (400/401, usually invalid_grant) — the
   /// refresh token is dead and tokens should be cleared.
-  Future<_RefreshOutcome> _refresh() async {
+  Future<_RefreshOutcome> _doRefresh() async {
     final refresh = await _read(_kRefresh);
     if (refresh == null) {
       AppLog.log('refresh: no refresh_token on disk', tag: 'db-account');
@@ -831,7 +859,21 @@ class DbAccountService {
   Future<DbProfile> profile() async {
     final id = await _kontoId();
     if (id == null) {
-      throw const DbAccountException('Kundenkonto-ID unbekannt', 401);
+      // Couldn't resolve the account id this instant. That is only a *dead*
+      // session when there is genuinely no refresh token to recover from and
+      // the token store was actually readable. When a refresh token still sits
+      // on disk (or the keyring just refused the read — Android's keystore does
+      // that transiently right after unlock / under load), the session is fine;
+      // we simply failed to look. Reporting this as a hard 401 is what made
+      // reloadProfile forget the whole session — wiping the BahnBonus link and
+      // forcing a re-login every few hours (#52). Signal transient (status
+      // null) so the tokens are kept and the next pull recovers.
+      final hasRefresh = (await _read(_kRefresh)) != null;
+      final transient = hasRefresh || _storageReadFailed;
+      throw DbAccountException(
+        'Kundenkonto-ID unbekannt',
+        transient ? null : 401,
+      );
     }
     final url = '${DbAccountConstants.mobBase}/kundenkonten/$id';
     return _coalescer.run('PROFILE $url', () async {
