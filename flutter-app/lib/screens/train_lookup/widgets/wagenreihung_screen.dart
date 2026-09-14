@@ -150,6 +150,10 @@ class _WagenreihungScreenState extends ConsumerState<WagenreihungScreen> {
                   _legendItem(AppColors.secondClass, '2. Klasse'),
                   _legendItem(AppColors.restaurant, 'Restaurant'),
                   _legendItem(AppColors.locomotive, 'Triebkopf'),
+                  // Only when this train actually carries one — an entry that
+                  // is always there teaches nothing (#100).
+                  if (_hasUnavailableCoach(sequence))
+                    _unavailableLegendItem(),
                 ],
               ),
             ),
@@ -326,6 +330,30 @@ class _WagenreihungScreenState extends ConsumerState<WagenreihungScreen> {
         ? int.tryParse(map.coaches.first.number)
         : null;
   }
+
+  /// Whether any car of this train is closed to riders — the red-✗ car DB
+  /// labels "Nicht verfügbarer Wagen" (#100).
+  static bool _hasUnavailableCoach(CoachSequence? seq) =>
+      seq != null &&
+      seq.groups.any((g) => g.coaches.any((c) => !c.isOpen && !c.isLocomotive));
+
+  Widget _unavailableLegendItem() => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(
+        width: 11,
+        height: 11,
+        decoration: BoxDecoration(
+          color: AppColors.closedCoach,
+          borderRadius: BorderRadius.circular(3),
+        ),
+        alignment: Alignment.center,
+        child: unavailableCoachMark(size: 9),
+      ),
+      const SizedBox(width: 5),
+      const Text('Nicht verfügbar', style: TextStyle(fontSize: 12)),
+    ],
+  );
 
   Widget _legendItem(Color color, String label) => Row(
     mainAxisSize: MainAxisSize.min,

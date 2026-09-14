@@ -327,6 +327,42 @@ Color _coachAccent(Coach c) {
   return AppColors.secondClass;
 }
 
+/// The marker for a car that is in the train but closed to riders (a defect,
+/// no service, no through-boarding). DB calls it "Nicht verfügbarer Wagen" and
+/// draws a red ✗ on a white disc; we draw the same thing so the two apps agree
+/// at a glance (#100).
+Widget unavailableCoachMark({
+  double size = 20,
+  int wagonNumber = 0,
+  bool compact = false,
+}) {
+  final mark = Container(
+    width: size,
+    height: size,
+    decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+    alignment: Alignment.center,
+    child: Icon(Icons.close_rounded, size: size * 0.72, color: _unavailableRed),
+  );
+  if (wagonNumber <= 0 || compact) return mark;
+  return Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      mark,
+      const SizedBox(height: 2),
+      Text(
+        '$wagonNumber',
+        style: const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          color: Color(0xDD000000),
+        ),
+      ),
+    ],
+  );
+}
+
+const _unavailableRed = Color(0xFFD32011);
+
 /// True for a high-speed train (ICE/ICE-E) — gets the long aerodynamic nose.
 bool _isHighSpeed(CoachSequence s) {
   for (final g in s.groups) {
@@ -568,7 +604,7 @@ String _tooltip(Coach coach, int? freeCount) {
     parts.add('Abschnitt ${coach.platformPosition!.sector}');
   }
   if (freeCount != null) parts.add('$freeCount frei');
-  if (!coach.isOpen) parts.add('Gesperrt');
+  if (!coach.isOpen) parts.add('Nicht verfügbar');
   return parts.join(' · ');
 }
 
@@ -634,14 +670,26 @@ class _TrackCar extends StatelessWidget {
                 const SizedBox(height: 3),
                 Expanded(
                   child: Center(
-                    child: Text(
-                      coach.wagonNumber > 0 ? '${coach.wagonNumber}' : '–',
-                      style: TextStyle(
-                        fontSize: compact ? 13 : 16,
-                        fontWeight: FontWeight.w800,
-                        color: fg,
-                      ),
-                    ),
+                    // A car the train is not carrying passengers in gets the
+                    // same red ✗ the DB Navigator draws. Grey alone said
+                    // nothing — worse, it reads like the graphite Triebkopf
+                    // grey two cars over (#100).
+                    child: open
+                        ? Text(
+                            coach.wagonNumber > 0
+                                ? '${coach.wagonNumber}'
+                                : '–',
+                            style: TextStyle(
+                              fontSize: compact ? 13 : 16,
+                              fontWeight: FontWeight.w800,
+                              color: fg,
+                            ),
+                          )
+                        : unavailableCoachMark(
+                            size: compact ? 16 : 20,
+                            wagonNumber: coach.wagonNumber,
+                            compact: compact,
+                          ),
                   ),
                 ),
                 if (freeCount != null)
@@ -697,7 +745,7 @@ class _TrackCar extends StatelessWidget {
       parts.add('Abschnitt ${coach.platformPosition!.sector}');
     }
     if (freeCount != null) parts.add('$freeCount frei');
-    if (!coach.isOpen) parts.add('Gesperrt');
+    if (!coach.isOpen) parts.add('Nicht verfügbar');
     return parts.join(' · ');
   }
 }
