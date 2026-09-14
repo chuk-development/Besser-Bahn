@@ -3556,6 +3556,55 @@ def check_traewelling_endpoints() -> str:
     return f"{len(TRWL_PATHS)} paths live (401/200, none 404)"
 
 
+def _app_traewelling_scopes() -> list[str]:
+    """The scopes the app's Träwelling login asks for, read out of
+    `TraewellingConstants.scopeList` in the Dart source so the check can never
+    drift from what ships."""
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "flutter-app" / "lib" / "core" / "constants.dart").read_text()
+    block = re.search(r"scopeList\s*=\s*<String>\[(.*?)\];", src, re.S)
+    if not block:
+        raise CheckError("cannot read TraewellingConstants.scopeList from "
+                         "lib/core/constants.dart — did it get renamed?")
+    return re.findall(r"'([^']+)'", block.group(1))
+
+
+def check_traewelling_scopes() -> str:
+    """Every scope the login asks for still exists upstream — and `*` is never
+    one of them.
+
+    Träwelling runs Laravel Passport 13, whose `ScopeRepository::finalizeScopes`
+    drops the `*` wildcard from an authorization-code grant. A login asking for
+    `scope=*` therefore produced a token with NO scopes: `/auth/user` (no scope
+    middleware) still answered, so the app looked connected while every
+    check-in, feed and follower call came back 403 "Invalid scope(s) provided"
+    (#101). An unknown scope name is just as fatal, so pin the names against
+    Träwelling's own catalogue in `AuthServiceProvider::$scopes`.
+
+    Soft: reads GitHub, and upstream renaming a scope is not our outage."""
+    ours = _app_traewelling_scopes()
+    if not ours:
+        raise CheckError("the app requests no Träwelling scopes at all")
+    if "*" in ours:
+        raise CheckError("the app asks for the `*` wildcard again — Passport 13 "
+                         "strips it and the grant ends up empty (#101)")
+    url = ("https://raw.githubusercontent.com/Traewelling/traewelling/"
+           "develop/app/Providers/AuthServiceProvider.php")
+    r = _get(url, headers={"Accept": "text/plain"}, timeout=TIMEOUT)
+    if r.status_code != 200:
+        raise CheckError(f"cannot read upstream scope list (status={r.status_code})")
+    block = re.search(r"\$scopes\s*=\s*\[(.*?)\];", r.text, re.S)
+    if not block:
+        raise CheckError("upstream AuthServiceProvider has no $scopes array — "
+                         "the scope catalogue moved")
+    known = set(re.findall(r"'([^']+)'\s*=>", block.group(1)))
+    missing = [s for s in ours if s not in known]
+    if missing:
+        raise CheckError("scope(s) Träwelling no longer knows: "
+                         + ", ".join(missing))
+    return f"{len(ours)} scopes all known upstream ({len(known)} defined)"
+
+
 def check_db_account_token_endpoint() -> str:
     """DB account login rides DB's Keycloak realm `db`
     (`accounts.bahn.de/.../openid-connect/token`, public client `kf_mobile`,
@@ -3893,6 +3942,7 @@ CHECKS = [
     ("traewelling UA requirement (#34)", check_traewelling_user_agent, True),
     ("traewelling check-in API", check_traewelling_api, True),
     ("traewelling endpoints (#42)", check_traewelling_endpoints, True),
+    ("traewelling OAuth scopes (#101)", check_traewelling_scopes, True),
     ("DB OAuth authorize page (#35)", check_db_oauth_authorize_page, False),
     ("DB account token endpoint (kf_mobile)", check_db_account_token_endpoint, True),
     ("DB account mob endpoints (auth-gated)", check_db_account_endpoints_require_auth, True),

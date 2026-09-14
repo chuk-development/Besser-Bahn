@@ -52,8 +52,30 @@ class TraewellingConstants {
   /// Custom scheme the bounce page redirects into; captured natively.
   static const callbackScheme = 'besserbahn';
 
-  /// Granted scopes. '*' = full access (matches Träwelling's default).
-  static const scopes = '*';
+  /// The scopes the login asks for — the explicit list, never `*`.
+  ///
+  /// Träwelling runs Laravel Passport 13 (upgraded 03/2026). Its
+  /// `ScopeRepository::finalizeScopes` **rejects the `*` wildcard** for every
+  /// grant except password / personal-access / client-credentials, so an
+  /// authorization-code token requested with `scope=*` comes back carrying NO
+  /// scope at all. `/auth/user` has no scope middleware, so the login still
+  /// looked healthy while every check-in, feed, follower and search call
+  /// answered 403 "Invalid scope(s) provided" (#101).
+  ///
+  /// One entry per route group the app actually calls. Adding one later forces
+  /// every rider to reconnect, so the list covers the whole integration.
+  static const scopeList = <String>[
+    'read-statuses', // /dashboard, /statuses, /user/{name}/statuses
+    'write-statuses', // check-in, /trains/*, /station/{id}/departures
+    'write-likes', // like / unlike a status
+    'read-search', // /user/search/{query}
+    'read-settings-followers', // /user/self/followers|followings|follow-requests
+    'write-follows', // follow / unfollow
+    'write-followers', // accept / reject a request, remove a follower
+  ];
+
+  /// The space-separated `scope` parameter sent to the authorize endpoint.
+  static final scopes = scopeList.join(' ');
 }
 
 /// Deutsche Bahn account login (the same OAuth the DB Navigator app uses).

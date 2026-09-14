@@ -58,6 +58,7 @@ class TraewellingService {
   static const _kRefresh = 'trwl_refresh_token';
   static const _kExpiry = 'trwl_expires_at'; // ISO-8601
   static const _kUser = 'trwl_user'; // cached profile JSON
+  static const _kScopes = 'trwl_scopes'; // space-separated granted scopes
 
   /// Hard cap per request. Without this a stalled socket spins the loading
   /// spinner forever (the feed / "letzte Fahrten" bug) — with it a hung call
@@ -66,6 +67,12 @@ class TraewellingService {
 
   String? _accessToken;
   DateTime? _expiresAt;
+
+  /// Fired whenever the stored session is thrown away from inside the service
+  /// (a rejected refresh, or a grant without scopes — #101). The auth notifier
+  /// hooks this so the Träwelling card flips back to "verbinden" right away
+  /// instead of looking connected until the next app start.
+  void Function()? onSessionCleared;
 
   // --- Session state --------------------------------------------------------
   //
@@ -104,6 +111,27 @@ class TraewellingService {
     return _accessToken != null;
   }
 
+  /// The scopes the server granted the stored session, or null when we never
+  /// recorded any — which is every session created before #101, since those
+  /// asked for `*`.
+  Future<List<String>?> grantedScopes() async {
+    final raw = await _read(_kScopes);
+    if (raw == null || raw.trim().isEmpty) return null;
+    return raw.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+  }
+
+  /// False only when we *know* the session is powerless: the server told us
+  /// which scopes it granted and one the app needs is missing. An unrecorded
+  /// grant (pre-#101 session) stays true — a `*` token issued before
+  /// Träwelling's Passport 13 upgrade still works, and the first 403 cleans up
+  /// the ones that don't.
+  Future<bool> hasRequiredScopes() async {
+    final granted = await grantedScopes();
+    if (granted == null) return true;
+    if (granted.contains('*')) return true;
+    return TraewellingConstants.scopeList.every(granted.contains);
+  }
+
   Future<void> _loadTokens() async {
     _accessToken = await _read(_kAccess);
     final exp = await _read(_kExpiry);
@@ -114,6 +142,11 @@ class TraewellingService {
     final access = token['access_token'] as String?;
     final refresh = token['refresh_token'] as String?;
     final expiresIn = (token['expires_in'] as num?)?.toInt();
+    // What the server actually granted — not what we asked for. Passport
+    // silently drops anything it doesn't recognise (that is how the `*` token
+    // of #101 ended up with an empty scope list), so we keep the server's own
+    // answer to tell a healthy session from a powerless one.
+    final granted = (token['scope'] as String?)?.trim();
     if (access == null) {
       throw const TraewellingException('Token-Antwort ohne access_token');
     }
@@ -123,6 +156,7 @@ class TraewellingService {
         : null;
     await _write(_kAccess, access);
     if (refresh != null) await _write(_kRefresh, refresh);
+    if (granted != null && granted.isNotEmpty) await _write(_kScopes, granted);
     if (_expiresAt != null) {
       await _write(_kExpiry, _expiresAt!.toIso8601String());
     }
@@ -131,10 +165,12 @@ class TraewellingService {
   Future<void> _clearTokens() async {
     _accessToken = null;
     _expiresAt = null;
+    onSessionCleared?.call();
     await _delete(_kAccess);
     await _delete(_kRefresh);
     await _delete(_kExpiry);
     await _delete(_kUser);
+    await _delete(_kScopes);
   }
 
   /// Last profile we successfully fetched, if any. Lets a valid session show
@@ -248,7 +284,9 @@ class TraewellingService {
               'grant_type': 'refresh_token',
               'refresh_token': refresh,
               'client_id': TraewellingConstants.clientId,
-              'scope': TraewellingConstants.scopes,
+              // No `scope` here on purpose: a refresh can only ever narrow the
+              // grant, never widen it. Sending the full list would make the
+              // server reject the refresh of an older, narrower token.
             },
           )
           .timeout(_kTimeout);
@@ -348,7 +386,28 @@ class TraewellingService {
           throw const TraewellingException('Sitzung abgelaufen', 401);
       }
     }
+    if (res.statusCode == 403 && _isMissingScope(res)) {
+      // The token authenticates but carries no (or not enough) permission —
+      // every older session asked for `scope=*`, which Passport 13 strips, so
+      // the grant is empty and cannot be repaired by refreshing it (#101).
+      // Drop it: the Träwelling card falls back to "verbinden" and the next
+      // login asks for the explicit scopes.
+      await _clearTokens();
+      throw const TraewellingException(
+        'Träwelling hat der App keine Berechtigungen erteilt. '
+        'Bitte in den Einstellungen neu mit Träwelling verbinden.',
+        403,
+      );
+    }
     return res;
+  }
+
+  /// Whether a 403 is Passport's `MissingScopeException` ("Invalid scope(s)
+  /// provided.") rather than one of Träwelling's other 403s (a blocked user, a
+  /// missing User-Agent — #34).
+  static bool _isMissingScope(http.Response res) {
+    final body = res.body.toLowerCase();
+    return body.contains('invalid scope');
   }
 
   /// Decodes a `{data: ...}`-wrapped response, throwing on non-2xx.

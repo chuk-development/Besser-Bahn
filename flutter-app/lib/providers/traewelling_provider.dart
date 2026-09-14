@@ -39,11 +39,26 @@ class TraewellingAuthState {
   }
 }
 
+/// Shown when a session was dropped because Träwelling granted it no usable
+/// permissions — the only fix is a fresh login that asks for the explicit
+/// scopes (#101).
+const _kReconnect =
+    'Träwelling-Verbindung erneuern: die App braucht jetzt einzelne '
+    'Berechtigungen. Bitte neu verbinden.';
+
 class TraewellingAuthNotifier extends Notifier<TraewellingAuthState> {
   TraewellingService get _service => ref.read(traewellingServiceProvider);
 
   @override
   TraewellingAuthState build() {
+    // The service throws the session away on its own when Träwelling rejects
+    // the refresh token or hands out a grant without scopes (#101). Mirror
+    // that here so the UI stops claiming a connection that no longer exists.
+    _service.onSessionCleared = () {
+      if (!state.isLoggedIn) return;
+      state = state.copyWith(clearUser: true, error: _kReconnect);
+    };
+    ref.onDispose(() => _service.onSessionCleared = null);
     _restore();
     return const TraewellingAuthState();
   }
@@ -55,6 +70,19 @@ class TraewellingAuthNotifier extends Notifier<TraewellingAuthState> {
   Future<void> _restore() async {
     if (!await _service.hasSession()) {
       state = state.copyWith(initialized: true, clearUser: true);
+      return;
+    }
+
+    // A session whose grant we recorded and that is missing a scope the app
+    // needs can never work — `/auth/user` would still answer, so we'd look
+    // connected while every check-in 403s (#101). Drop it up front.
+    if (!await _service.hasRequiredScopes()) {
+      await _service.logout();
+      state = state.copyWith(
+        initialized: true,
+        clearUser: true,
+        error: _kReconnect,
+      );
       return;
     }
 

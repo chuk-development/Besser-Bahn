@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:besser_bahn/core/constants.dart';
 import 'package:besser_bahn/services/traewelling_service.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -125,6 +126,112 @@ void main() {
 
       expect(paths, ['/api/v1/dashboard', '/api/v1/dashboard']);
       expect(await svc.hasSession(), isTrue);
+    });
+  });
+
+  group('#101 — the login asks for real scopes, not the `*` wildcard', () {
+    test('the scope list is explicit and covers every route group we call', () {
+      expect(
+        TraewellingConstants.scopeList,
+        isNot(contains('*')),
+        reason: 'Passport 13 strips `*` from an authorization-code grant, '
+            'leaving the token with no scope at all',
+      );
+      expect(
+        TraewellingConstants.scopeList,
+        containsAll(<String>[
+          'read-statuses', // feed
+          'write-statuses', // check-in, departures, trip
+          'write-likes',
+          'read-search',
+          'read-settings-followers',
+          'write-follows',
+          'write-followers',
+        ]),
+      );
+      expect(TraewellingConstants.scopes, contains(' '), reason: 'space-joined');
+    });
+
+    test('a 403 "Invalid scope(s) provided." drops the powerless session',
+        () async {
+      final svc = TraewellingService(
+        client: MockClient(
+          (req) async => _json({'message': 'Invalid scope(s) provided.'}, 403),
+        ),
+      );
+
+      await expectLater(
+        svc.dashboard(),
+        throwsA(
+          isA<TraewellingException>()
+              .having((e) => e.status, 'status', 403)
+              .having((e) => e.message, 'message', contains('neu')),
+        ),
+      );
+      expect(
+        await svc.hasSession(),
+        isFalse,
+        reason: 'a grant without scopes cannot be refreshed into a working one',
+      );
+    });
+
+    test('another 403 (blocked, missing UA — #34) keeps the session', () async {
+      final svc = TraewellingService(
+        client: MockClient((req) async => _json({'message': 'Forbidden'}, 403)),
+      );
+
+      await expectLater(svc.dashboard(), throwsA(isA<TraewellingException>()));
+      expect(await svc.hasSession(), isTrue);
+    });
+
+    test('a refresh never sends a scope parameter', () async {
+      String? tokenBody;
+      final svc = TraewellingService(
+        client: MockClient((req) async {
+          if (req.url.path.contains('/oauth/token')) {
+            tokenBody = req.body;
+            return _json({
+              'access_token': 'fresh',
+              'expires_in': 3600,
+              'scope': 'read-statuses write-statuses',
+            });
+          }
+          return tokenBody == null
+              ? _json({'message': 'Unauthenticated.'}, 401)
+              : _json({'data': <dynamic>[]});
+        }),
+      );
+
+      await svc.dashboard();
+
+      expect(
+        tokenBody,
+        isNot(contains('scope')),
+        reason: 'a refresh can only narrow a grant — asking widens nothing and '
+            'makes the server reject an older, narrower token',
+      );
+    });
+
+    test('a recorded grant that misses a scope reports as unusable', () async {
+      FlutterSecureStorage.setMockInitialValues({
+        'trwl_access_token': 'access-token',
+        'trwl_refresh_token': 'refresh-token',
+        'trwl_scopes': 'read-statuses write-statuses',
+      });
+      final svc = TraewellingService(client: MockClient((_) async => _json({})));
+
+      expect(await svc.hasRequiredScopes(), isFalse);
+    });
+
+    test('a session from before #101 (no recorded grant) is left alone',
+        () async {
+      final svc = TraewellingService(client: MockClient((_) async => _json({})));
+
+      expect(
+        await svc.hasRequiredScopes(),
+        isTrue,
+        reason: 'a `*` token issued before the Passport 13 upgrade still works',
+      );
     });
   });
 }
