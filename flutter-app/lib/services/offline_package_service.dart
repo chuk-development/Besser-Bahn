@@ -124,7 +124,7 @@ class OfflinePackageService {
     await _store.writeManifest(manifest);
 
     AppLog.log(
-      'offline package "$journeyKey" in ${sw.elapsedMilliseconds}ms: '
+      'offline package "${AppLog.pii(journeyKey, 'Reise')}" in ${sw.elapsedMilliseconds}ms: '
       '${parts.map((p) => '${p.kind.name} ${p.stored}/${p.expected}').join(', ')} '
       '· ${offlineSizeLabel(manifest.totalBytes)}',
       tag: 'offline',

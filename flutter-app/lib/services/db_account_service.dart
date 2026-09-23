@@ -306,14 +306,16 @@ class DbAccountService {
     } else if (res.statusCode == 400 || res.statusCode == 401) {
       // Keycloak explicitly rejected the refresh token — it's dead.
       AppLog.log(
-        'refresh rejected · body: ${res.body.substring(0, res.body.length.clamp(0, 200))}',
+        'refresh rejected · body: '
+        '${AppLog.pii(res.body.substring(0, res.body.length.clamp(0, 200)), 'Antwort')}',
         tag: 'db-account',
       );
       return _RefreshOutcome.rejected;
     } else {
       // 5xx / unexpected — keep tokens, next try recovers.
       AppLog.log(
-        'refresh non-200 (transient) · body: ${res.body.substring(0, res.body.length.clamp(0, 200))}',
+        'refresh non-200 (transient) · body: '
+        '${AppLog.pii(res.body.substring(0, res.body.length.clamp(0, 200)), 'Antwort')}',
         tag: 'db-account',
       );
       return _RefreshOutcome.transient;
@@ -906,7 +908,10 @@ class DbAccountService {
         body: const [],
       );
       final profile = DbProfile.fromJson(_decode(res, 'kundenkonto'));
-      AppLog.log('profile ${profile.kundennummer}', tag: 'db-account');
+      AppLog.log(
+        'profile ${AppLog.pii(profile.kundennummer, 'Kunde')}',
+        tag: 'db-account',
+      );
       return profile;
     });
   }
@@ -1039,7 +1044,8 @@ class DbAccountService {
       try {
         final body = utf8.decode(res.bodyBytes);
         AppLog.log(
-          'bahncards body: ${body.substring(0, body.length.clamp(0, 200))}',
+          'bahncards body: '
+          '${AppLog.pii(body.substring(0, body.length.clamp(0, 200)), 'Antwort')}',
           tag: 'db-account',
         );
       } catch (_) {}

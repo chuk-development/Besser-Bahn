@@ -71,7 +71,10 @@ class _BessereBahnAppState extends ConsumerState<BessereBahnApp> {
     if (saved == null) {
       // Deleted, or aged out of the library — the trip list is still a better
       // answer than the screen the rider happened to be on.
-      AppLog.log('notification trip $key not in library', tag: 'notify');
+      AppLog.log(
+        'notification trip ${AppLog.pii(key, 'Reise')} not in library',
+        tag: 'notify',
+      );
       return;
     }
     router.push('/connection', extra: saved.journey);

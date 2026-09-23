@@ -453,7 +453,7 @@ List<({List<LatLng> outline, Coach coach, bool boarding})> platformTrainCars(
     // plain log would repeat the same "no train here" line endlessly. Only
     // failing stops log, and identical reasons fold into "… (×N)".
     AppLog.logCollapsed(
-      'platformTrainCars "${map.slug}" Gleis $gleis: $r',
+      'platformTrainCars "${AppLog.pii(map.slug)}" Gleis $gleis: $r',
       tag: 'train',
     );
     return r;

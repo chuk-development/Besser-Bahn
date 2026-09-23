@@ -179,7 +179,7 @@ class EarlierAlightService {
     final fallbackArrival = fallback?.arrival;
     if (fallbackArrival == null) {
       AppLog.log(
-        'no fallback from ${changeStation.name} — nothing to beat',
+        'no fallback from ${AppLog.pii(changeStation.name)} — nothing to beat',
         tag: 'alight',
       );
       return EarlierAlightResult.empty;
@@ -272,7 +272,7 @@ class EarlierAlightService {
       // A 429 is never proof anything changed — it means we asked too fast.
       // Deliberately NOT cached: a retry later is allowed to succeed.
       AppLog.log(
-        'earlier-alight search failed ($fromId → $toId): $e',
+        'earlier-alight search failed (${AppLog.pii(fromId, 'ID')} → ${AppLog.pii(toId, 'ID')}): $e',
         tag: 'alight',
       );
       return null;

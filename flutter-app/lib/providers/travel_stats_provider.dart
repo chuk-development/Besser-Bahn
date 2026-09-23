@@ -154,7 +154,10 @@ class TravelStatsNotifier extends Notifier<TravelStats> {
         changed = true;
         next = _foldJourney(next, j, endMs: arr.millisecondsSinceEpoch);
       } catch (e) {
-        AppLog.log('stats fold ticket $key failed: $e', tag: 'stats');
+        AppLog.log(
+          'stats fold ticket ${AppLog.pii(key, 'Ticket')} failed: $e',
+          tag: 'stats',
+        );
       }
     }
     if (changed) {

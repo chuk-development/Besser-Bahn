@@ -97,10 +97,16 @@ class OsmBusStopService {
       }
       if (resp == null) return _settle(key, const []);
       final poles = parseResponse(json.decode(resp.body), center);
-      AppLog.log('OSM poles at $key: ${poles.length}', tag: 'osm');
+      AppLog.log(
+        'OSM poles at ${AppLog.pii(key, 'Ort')}: ${poles.length}',
+        tag: 'osm',
+      );
       return _settle(key, poles);
     } catch (e) {
-      AppLog.log('OSM bus stops $key failed: $e', tag: 'osm');
+      AppLog.log(
+        'OSM bus stops ${AppLog.pii(key, 'Ort')} failed: $e',
+        tag: 'osm',
+      );
       return _settle(key, const []);
     }
   }

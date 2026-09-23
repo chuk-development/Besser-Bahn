@@ -2134,7 +2134,10 @@ class _LegSectionState extends ConsumerState<_LegSection>
     } catch (e) {
       // Log it: swallowing this silently is what made the rate-limit cause of
       // the fallback card invisible for so long.
-      AppLog.log('getTrip failed for $id: $e', tag: 'trip-detail');
+      AppLog.log(
+        'getTrip failed for ${AppLog.pii(id, 'Fahrt')}: $e',
+        tag: 'trip-detail',
+      );
       if (mounted) setState(() => _tripError = e);
     }
     try {

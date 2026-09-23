@@ -166,7 +166,7 @@ class LiveUpdateService {
       // seeing in the log.
       final live = await LiveUpdate.isPromoted();
       AppLog.log(
-        'live update [${result.style}]: "$title" · ${trip.segments.length} '
+        'live update [${result.style}]: "${AppLog.pii(title, 'Text')}" · ${trip.segments.length} '
         'Etappen, ${trip.transferPoints.length} Umstiege · '
         'post.promoted=${result.promoted}, system.promoted=$live',
         tag: 'notify',

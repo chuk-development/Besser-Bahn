@@ -42,7 +42,7 @@ class PredictionService {
           .timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) {
         AppLog.log(
-          'HTTP ${res.statusCode}: ${_snippet(res.bodyBytes)}',
+          'HTTP ${res.statusCode}: ${AppLog.pii(_snippet(res.bodyBytes), 'Antwort')}',
           tag: 'predict',
         );
         return null;

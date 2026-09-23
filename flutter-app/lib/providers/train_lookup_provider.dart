@@ -47,7 +47,8 @@ class TrainLookupNotifier extends Notifier<TrainLookupState> {
 
     try {
       AppLog.log(
-        'lookup "$trainNumber"${fromStationId != null ? ' @station $fromStationId' : ' (network sweep)'}',
+        'lookup "${AppLog.pii(trainNumber, 'Zug')}"'
+        '${fromStationId != null ? ' @station ${AppLog.pii(fromStationId, 'ID')}' : ' (network sweep)'}',
         tag: 'train',
       );
       final hafas = ref.read(hafasServiceProvider);

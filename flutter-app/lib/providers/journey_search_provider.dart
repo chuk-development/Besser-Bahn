@@ -379,8 +379,9 @@ class JourneySearchNotifier extends Notifier<JourneySearchState> {
       }
 
       AppLog.log(
-        'search ${from.name} (${from.id}) → ${to.name} (${to.id}) '
-        'at ${state.dateTime ?? "now"} '
+        'search ${AppLog.pii(from.name)} (${AppLog.pii(from.id, 'ID')}) → '
+        '${AppLog.pii(to.name)} (${AppLog.pii(to.id, 'ID')}) '
+        'at ${AppLog.pii(state.dateTime ?? "now", 'Zeit')} '
         '${state.useArrival ? "[arrival]" : "[departure]"}',
         tag: 'journey',
       );

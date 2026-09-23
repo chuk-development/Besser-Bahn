@@ -50,7 +50,10 @@ class IrisService {
         runs.addAll(await _plan(evaId, hour));
       } catch (e) {
         // Enrichment only — a missing hour costs the "Über" line, nothing else.
-        AppLog.log('iris plan $evaId ${hour.hour}h failed: $e', tag: 'iris');
+        AppLog.log(
+          'iris plan ${AppLog.pii(evaId, 'ID')} ${hour.hour}h failed: $e',
+          tag: 'iris',
+        );
       }
     }
     return runs;

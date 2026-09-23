@@ -74,10 +74,16 @@ class TransitStopService {
           ),
         );
       }
-      AppLog.log('DELFI poles at $key: ${poles.length}', tag: 'osm');
+      AppLog.log(
+        'DELFI poles at ${AppLog.pii(key, 'Ort')}: ${poles.length}',
+        tag: 'osm',
+      );
       return _settle(key, poles);
     } catch (e) {
-      AppLog.log('DELFI poles $key failed: $e', tag: 'osm');
+      AppLog.log(
+        'DELFI poles ${AppLog.pii(key, 'Ort')} failed: $e',
+        tag: 'osm',
+      );
       return _settle(key, const []);
     }
   }

@@ -22,7 +22,7 @@ class AppLog {
     final ms = now.millisecond.toString().padLeft(3, '0');
     final ts = '${two(now.hour)}:${two(now.minute)}:${two(now.second)}.$ms';
     final line = tag.isEmpty ? '$ts  $message' : '$ts  [$tag] $message';
-    debugPrint(line);
+    debugPrint(plain(line));
     final next = [...messages.value, line];
     messages.value = next.length > _max
         ? next.sublist(next.length - _max)
@@ -243,4 +243,91 @@ class AppLog {
   }
 
   static void clear() => messages.value = const [];
+
+  // --- Personal data (#103) -------------------------------------------------
+  //
+  // People paste this log into public GitHub issues. Station names, trip keys,
+  // coordinates and account numbers say where someone lives and travels, so
+  // the Debug-Log can hide them. Call sites wrap such values in [pii]; the
+  // buffer keeps the value between invisible markers, [plain] drops the
+  // markers, [redact] swaps each value for a numbered placeholder. The same
+  // value always gets the same number, so "Halt 1 → Halt 2, then Halt 2
+  // failed" still reads as one story. A regex pass after that catches what no
+  // call site marked (IDs and coordinates inside exception texts and URLs).
+
+  static const _open = '\u{E000}';
+  static const _sep = '\u{E001}';
+  static const _close = '\u{E002}';
+  static final _marked = RegExp('$_open([^$_sep]*)$_sep([^$_close]*)$_close');
+
+  /// Mark [value] as personal data of the given [kind] ('Halt', 'Kunde', …).
+  /// Use it inside the message string: `log('search ${pii(from.name)}')`.
+  static String pii(Object? value, [String kind = 'Halt']) =>
+      '$_open$kind$_sep$value$_close';
+
+  /// [line] as written, markers removed.
+  static String plain(String line) =>
+      line.replaceAllMapped(_marked, (m) => m.group(2)!);
+
+  /// [lines] with every personal value replaced. [tokens] keeps the numbering
+  /// stable across calls — pass one map for one export.
+  static List<String> redact(
+    List<String> lines, [
+    Map<String, String>? tokens,
+  ]) {
+    final seen = tokens ?? <String, String>{};
+    final perKind = <String, int>{};
+    for (final t in seen.values) {
+      final kind = t.substring(1, t.lastIndexOf(' '));
+      perKind[kind] = (perKind[kind] ?? 0) + 1;
+    }
+    String token(String kind, String value) =>
+        seen.putIfAbsent('$kind\u0000$value', () {
+          final n = (perKind[kind] ?? 0) + 1;
+          perKind[kind] = n;
+          return '‹$kind $n›';
+        });
+    return [
+      for (final line in lines)
+        _scrub(
+          line.replaceAllMapped(
+            _marked,
+            (m) => m.group(2)!.trim().isEmpty
+                ? m.group(2)!
+                : token(m.group(1)!, m.group(2)!),
+          ),
+        ),
+    ];
+  }
+
+  // Safety net for values no call site marked. Order matters: the HAFAS
+  // location id first (it holds name, coordinates and EVA number in one), the
+  // bare numbers last.
+  static final _scrubbers = <(RegExp, String)>[
+    // A=1@O=Berlin Hbf@X=13369549@Y=52525589@L=8011160@…
+    (RegExp(r'A=\d+@(?:[A-Za-z]+=[^@]*@)+'), '‹Ort›'),
+    (RegExp(r'eyJ[\w-]+\.[\w-]+\.[\w-]+'), '‹Token›'),
+    (RegExp(r'[\w.+-]+@[\w-]+\.[\w.-]+'), '‹E-Mail›'),
+    // Query strings carry station ids, coordinates and dates.
+    (RegExp(r'(https?://[^\s?"]+)\?[^\s"]+'), r'$1?‹…›'),
+    // lat/lon: at least four decimals, so versions and seconds stay.
+    (RegExp(r'-?\b\d{1,3}\.\d{4,}'), '‹Koord›'),
+    // EVA numbers, customer, order and trip numbers.
+    (RegExp(r'\b\d{6,}\b'), '‹Nr›'),
+  ];
+
+  static String _scrub(String line) {
+    // Keep the timestamp; it is when the app ran, not where the user went.
+    final cut = line.startsWith(RegExp(r'\d\d:\d\d:\d\d\.\d{3}  ')) ? 14 : 0;
+    var rest = line.substring(cut);
+    for (final (re, to) in _scrubbers) {
+      rest = rest.replaceAllMapped(re, (m) {
+        return to.replaceAllMapped(
+          RegExp(r'\$(\d)'),
+          (g) => m.group(int.parse(g.group(1)!)) ?? '',
+        );
+      });
+    }
+    return line.substring(0, cut) + rest;
+  }
 }

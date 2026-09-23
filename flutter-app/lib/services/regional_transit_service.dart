@@ -246,7 +246,8 @@ class RegionalTransitService {
     // 300 m: the same stop as seen by two datasets, never the next one along.
     final resolved = bestMetres <= 300 ? best : null;
     AppLog.log(
-      '${profile.id} loc "${stop.name}" → ${resolved ?? 'kein Treffer'}'
+      '${profile.id} loc "${AppLog.pii(stop.name)}" → '
+      '${resolved == null ? 'kein Treffer' : AppLog.pii(resolved, 'ID')}'
       '${resolved != null ? ' (${bestMetres.round()} m)' : ''}',
       tag: 'regional',
     );
@@ -304,7 +305,8 @@ class RegionalTransitService {
         ? best
         : null;
     AppLog.log(
-      '${profile.id} efa stop "${stop.name}" → ${resolved ?? 'nichts'}',
+      '${profile.id} efa stop "${AppLog.pii(stop.name)}" → '
+      '${resolved == null ? 'nichts' : AppLog.pii(resolved, 'ID')}',
       tag: 'regional',
     );
     _locations[key] = resolved;
@@ -347,7 +349,7 @@ class RegionalTransitService {
     });
     final list = parseEfaBoard(data);
     AppLog.log(
-      '${profile.id} efa board $stopId: ${list.length} departures, '
+      '${profile.id} efa board ${AppLog.pii(stopId, 'ID')}: ${list.length} departures, '
       '${list.where((d) => d.moved).length} moved',
       tag: 'regional',
     );
@@ -484,7 +486,7 @@ class RegionalTransitService {
     });
     final list = parseBoard(res);
     AppLog.log(
-      '${profile.id} board $extId: ${list.length} departures, '
+      '${profile.id} board ${AppLog.pii(extId, 'ID')}: ${list.length} departures, '
       '${list.where((d) => d.moved).length} moved',
       tag: 'regional',
     );

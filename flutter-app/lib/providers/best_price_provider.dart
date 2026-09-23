@@ -51,7 +51,8 @@ final bestPriceProvider = FutureProvider.autoDispose
       ref.onDispose(link.close);
 
       AppLog.log(
-        'best price ${req.from.name} → ${req.to.name} on ${req._day}',
+        'best price ${AppLog.pii(req.from.name)} → ${AppLog.pii(req.to.name)} '
+        'on ${AppLog.pii(req._day, 'Zeit')}',
         tag: 'bestprice',
       );
       return ref

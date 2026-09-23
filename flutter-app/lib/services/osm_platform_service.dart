@@ -115,7 +115,7 @@ class OsmPlatformService {
       final disk = await _readDisk(slug);
       if (disk != null) {
         AppLog.log(
-          'OSM disk "$slug": ${disk.platforms.length} platforms, '
+          'OSM disk "${AppLog.pii(slug)}": ${disk.platforms.length} platforms, '
           '${disk.rails.length} rails',
           tag: 'osm',
         );
@@ -171,11 +171,14 @@ class OsmPlatformService {
             break;
           }
           AppLog.log(
-            'OSM overpass "$slug" $endpoint HTTP ${r.statusCode}',
+            'OSM overpass "${AppLog.pii(slug)}" $endpoint HTTP ${r.statusCode}',
             tag: 'osm',
           );
         } catch (e) {
-          AppLog.log('OSM overpass "$slug" $endpoint error: $e', tag: 'osm');
+          AppLog.log(
+            'OSM overpass "${AppLog.pii(slug)}" $endpoint error: $e',
+            tag: 'osm',
+          );
         }
       }
       if (resp == null) return _transient(slug);
@@ -205,7 +208,7 @@ class OsmPlatformService {
       }
       final geometry = OsmPlatformGeometry(platforms: platforms, rails: rails);
       AppLog.log(
-        'OSM overpass "$slug": ${platforms.length} platforms, '
+        'OSM overpass "${AppLog.pii(slug)}": ${platforms.length} platforms, '
         '${rails.length} rails',
         tag: 'osm',
       );
@@ -216,7 +219,7 @@ class OsmPlatformService {
       if (usable != null) await _writeDisk(slug, usable);
       return _settle(slug, usable);
     } catch (e) {
-      AppLog.log('OSM overpass "$slug" failed: $e', tag: 'osm');
+      AppLog.log('OSM overpass "${AppLog.pii(slug)}" failed: $e', tag: 'osm');
       return _transient(slug);
     } finally {
       _inflight.remove(slug);

@@ -485,7 +485,7 @@ class BackgroundTripTracking {
         );
       }
       AppLog.log(
-        'background exit alert near ${selected.destinationName}',
+        'background exit alert near ${AppLog.pii(selected.destinationName)}',
         tag: 'live',
       );
     }

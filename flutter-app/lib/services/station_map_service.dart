@@ -82,7 +82,10 @@ class StationMapService {
     // success — otherwise ~4 lines × 20+ stops floods the debug log so you
     // can't scroll. Only the foreground Karte-tab open logs.
     if (!background) {
-      AppLog.log('fetchByStationName "$name" → slug "$slug"', tag: 'map');
+      AppLog.log(
+        'fetchByStationName "${AppLog.pii(name)}" → slug "${AppLog.pii(slug)}"',
+        tag: 'map',
+      );
     }
     try {
       return await fetchBySlug(slug, background: background);
@@ -100,7 +103,8 @@ class StationMapService {
       final alt = _altSlug(slug);
       if (alt != null) {
         AppLog.log(
-          'slug "$slug" not found ($e) → retry alt slug "$alt"',
+          'slug "${AppLog.pii(slug)}" not found ($e) → '
+          'retry alt slug "${AppLog.pii(alt)}"',
           tag: 'map',
         );
         return await fetchBySlug(alt);
@@ -180,7 +184,7 @@ class StationMapService {
         try {
           final map = parsePersistedBody(slug, body);
           AppLog.log(
-            'station map "$slug" served from offline package',
+            'station map "${AppLog.pii(slug)}" served from offline package',
             tag: 'offline',
           );
           return map;
@@ -263,7 +267,7 @@ class StationMapService {
       // so we never regress versus the original scrape.
       if (!background) {
         AppLog.log(
-          'rsc parse for "$slug" had no poi → HTML fallback',
+          'rsc parse for "${AppLog.pii(slug)}" had no poi → HTML fallback',
           tag: 'map',
         );
       }
@@ -318,7 +322,7 @@ class StationMapService {
   void _logParsed(String slug, String via, StationMap map, int ms, int bytes) {
     final cubes = map.pois.where((p) => p.isPlatformSector).length;
     AppLog.log(
-      'map "$slug" ($via ${ms}ms ${(bytes / 1024).round()}KB): '
+      'map "${AppLog.pii(slug)}" ($via ${ms}ms ${(bytes / 1024).round()}KB): '
       '${map.platforms.length} platforms, $cubes sector-cubes, '
       '${map.platformAnchors.length} anchors, ${map.levels.length} levels',
       tag: 'map',

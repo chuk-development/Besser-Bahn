@@ -722,7 +722,7 @@ class StationMapNotifier extends Notifier<StationMapState> {
       final map = await fetch();
       final level = _levelForLoad(map);
       AppLog.log(
-        'map loaded: slug "${map.slug}", level "$level", '
+        'map loaded: slug "${AppLog.pii(map.slug)}", level "$level", '
         'highlight ${state.highlightGleis ?? '–'} '
         'section ${state.highlightSection == null ? '–' : '${state.highlightSection!.start}–${state.highlightSection!.end}'}',
         tag: 'map',
@@ -839,7 +839,7 @@ class StationMapNotifier extends Notifier<StationMapState> {
       ],
     );
     AppLog.log(
-      'map built from stop poles: "${station.name}" ${poles.length} poles '
+      'map built from stop poles: "${AppLog.pii(station.name)}" ${poles.length} poles '
       '(osm ${sources[0].length}, delfi ${sources[1].length}, '
       'highlight ${state.highlightGleis ?? '–'} '
       '${picked == null ? 'UNMATCHED' : 'via ${picked.how.name}'})',
@@ -983,7 +983,7 @@ final stepFreeTransferProvider = FutureProvider.autoDispose
             : map.outOfServiceForGleise(gleise);
       } catch (e) {
         AppLog.log(
-          'step-free check for "${key.station}" failed: $e',
+          'step-free check for "${AppLog.pii(key.station)}" failed: $e',
           tag: 'map',
         );
         return const [];

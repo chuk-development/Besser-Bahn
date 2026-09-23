@@ -76,7 +76,8 @@ class SeatMapService {
     final url =
         '$_base/gsd_v3?data=${Uri.encodeQueryComponent(jsonEncode(data))}';
     AppLog.log(
-      'seat map zug $fahrtNr $abfahrtEva→$ankunftEva '
+      'seat map zug ${AppLog.pii(fahrtNr, 'Zug')} '
+      '${AppLog.pii(abfahrtEva, 'ID')}→${AppLog.pii(ankunftEva, 'ID')} '
       'klasse=${firstClass ? 1 : 2}',
       tag: 'gsd',
     );

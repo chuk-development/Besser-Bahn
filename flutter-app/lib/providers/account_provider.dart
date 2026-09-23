@@ -220,7 +220,10 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
           lastRefreshedAt: DateTime.now(),
         );
         _seedSearchDefaults(profile);
-        AppLog.log('restore ok · ${profile.kundennummer}', tag: 'db-account');
+        AppLog.log(
+          'restore ok · ${AppLog.pii(profile.kundennummer, 'Kunde')}',
+          tag: 'db-account',
+        );
         return;
       }
     } on DbAccountException catch (e) {
@@ -1056,7 +1059,10 @@ final ticketTripsProvider = FutureProvider<List<DbTicketTrip>>((ref) async {
     try {
       t = await ref.watch(ticketProvider(key).future);
     } catch (e) {
-      AppLog.log('ticket $key failed to load: $e', tag: 'db-account');
+      AppLog.log(
+        'ticket ${AppLog.pii(key, 'Ticket')} failed to load: $e',
+        tag: 'db-account',
+      );
       return DbTicketTrip(index: i, ticketKey: key);
     }
     Journey? j;
@@ -1219,7 +1225,10 @@ final ticketProvider = FutureProvider.family<DbTicket, String>((
           ref.invalidateSelf();
         }
       } catch (e) {
-        AppLog.log('ticket($key) bg refresh failed: $e', tag: 'db-account');
+        AppLog.log(
+          'ticket(${AppLog.pii(key, 'Ticket')}) bg refresh failed: $e',
+          tag: 'db-account',
+        );
       }
     });
     return DbTicket.fromJson(cached);

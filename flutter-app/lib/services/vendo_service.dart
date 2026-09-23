@@ -160,8 +160,8 @@ class VendoService {
 
     final url = '$_base/angebote/fahrplan';
     AppLog.log(
-      'journey ${fromLocationId.split('@O=').last.split('@').first}'
-      ' → ${toLocationId.split('@O=').last.split('@').first}',
+      'journey ${AppLog.pii(fromLocationId.split('@O=').last.split('@').first)}'
+      ' → ${AppLog.pii(toLocationId.split('@O=').last.split('@').first)}',
       tag: 'vendo',
     );
     AppLog.log(
@@ -188,8 +188,14 @@ class VendoService {
       // Surface the upstream body — DB encodes the real reason (bot block,
       // bad location id, rate limit) in the JSON, not just the status code.
       final snippet = _snippet(res.bodyBytes);
-      AppLog.log('fahrplan non-200 body: $snippet', tag: 'vendo');
-      AppLog.log('fahrplan resp headers: ${res.headers}', tag: 'vendo');
+      AppLog.log(
+        'fahrplan non-200 body: ${AppLog.pii(snippet, 'Antwort')}',
+        tag: 'vendo',
+      );
+      AppLog.log(
+        'fahrplan resp headers: ${AppLog.pii(res.headers, 'Antwort')}',
+        tag: 'vendo',
+      );
       // Business-rule rejections (e.g. a wheelchair-place SBA in 1st class,
       // MDA-ERSTE-KLASSE-ROLLSTUHL) carry a ready-to-show German `anzeigeText`
       // — prefer that over the raw JSON so the party sheet gets actionable
@@ -254,7 +260,8 @@ class VendoService {
       // A route that can't be computed is not worth an exception — the map is
       // useful without it.
       AppLog.log(
-        'calculateroute failed: ${_snippet(res.bodyBytes)}',
+        'calculateroute failed: '
+        '${AppLog.pii(_snippet(res.bodyBytes), 'Antwort')}',
         tag: 'vendo',
       );
       return null;
@@ -550,7 +557,8 @@ class VendoService {
     );
     if (res.statusCode != 201 && res.statusCode != 200) {
       AppLog.log(
-        'teilen non-2xx body: ${_snippet(res.bodyBytes)}',
+        'teilen non-2xx body: '
+        '${AppLog.pii(_snippet(res.bodyBytes), 'Antwort')}',
         tag: 'vendo',
       );
       return null;

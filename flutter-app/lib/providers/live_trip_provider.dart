@@ -136,8 +136,8 @@ class LiveTripTracker extends Notifier<LiveTripState>
     }
     if (active.key != state.activeKey) {
       AppLog.log(
-        'live tracker: aktive Reise "${active.journey.origin?.name ?? '?'} → '
-        '${active.journey.destination?.name ?? '?'}" → poll + Live-Update',
+        'live tracker: aktive Reise "${AppLog.pii(active.journey.origin?.name ?? '?')} → '
+        '${AppLog.pii(active.journey.destination?.name ?? '?')}" → poll + Live-Update',
         tag: 'live',
       );
       _lastAlert.clear();
@@ -457,7 +457,10 @@ class LiveTripTracker extends Notifier<LiveTripState>
       body: body,
       tripKey: state.activeKey,
     );
-    AppLog.log('live alert: $title — $body', tag: 'live');
+    AppLog.log(
+      'live alert: ${AppLog.pii(title, 'Text')} — ${AppLog.pii(body, 'Text')}',
+      tag: 'live',
+    );
   }
 
   /// The stopover for a station on a live run, matched by id then by name.

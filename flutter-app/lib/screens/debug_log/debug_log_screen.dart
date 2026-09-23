@@ -18,11 +18,24 @@ import '../../widgets/app_nav_bar.dart';
 
 /// Live debug log — shows what the API layer is doing (vendo / bahn.de / HAFAS),
 /// so issues like "search returns 500" can be diagnosed on-device.
-class DebugLogScreen extends ConsumerWidget {
+class DebugLogScreen extends ConsumerStatefulWidget {
   const DebugLogScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DebugLogScreen> createState() => _DebugLogScreenState();
+}
+
+class _DebugLogScreenState extends ConsumerState<DebugLogScreen> {
+  /// On by default: most people open this log to paste it into a public
+  /// issue, and station names and trip keys say where they travel (#103).
+  bool _hidePersonal = true;
+
+  List<String> _visible(List<String> lines) => _hidePersonal
+      ? AppLog.redact(lines)
+      : [for (final l in lines) AppLog.plain(l)];
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Debug-Log'),
@@ -38,15 +51,30 @@ class DebugLogScreen extends ConsumerWidget {
             onPressed: () => _exportBahnCardHtml(context, ref),
           ),
           IconButton(
+            tooltip: _hidePersonal
+                ? 'Persönliche Daten ausgeblendet — antippen zum Einblenden'
+                : 'Persönliche Daten ausblenden',
+            isSelected: _hidePersonal,
+            icon: const Icon(Icons.visibility_outlined),
+            selectedIcon: const Icon(Icons.visibility_off_outlined),
+            onPressed: () => setState(() => _hidePersonal = !_hidePersonal),
+          ),
+          IconButton(
             tooltip: 'Kopieren',
             icon: const Icon(Icons.copy),
             onPressed: () {
               Clipboard.setData(
-                ClipboardData(text: AppLog.messages.value.join('\n')),
+                ClipboardData(text: _visible(AppLog.messages.value).join('\n')),
               );
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('Log kopiert')));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    _hidePersonal
+                        ? 'Log ohne persönliche Daten kopiert'
+                        : 'Log kopiert (mit Stationen & Nummern)',
+                  ),
+                ),
+              );
             },
           ),
           IconButton(
@@ -58,7 +86,8 @@ class DebugLogScreen extends ConsumerWidget {
       ),
       body: ValueListenableBuilder<List<String>>(
         valueListenable: AppLog.messages,
-        builder: (context, lines, _) {
+        builder: (context, raw, _) {
+          final lines = _visible(raw);
           if (lines.isEmpty) {
             return const Center(
               child: Padding(

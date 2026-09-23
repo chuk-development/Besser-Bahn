@@ -342,7 +342,7 @@ class _TrainMapState extends ConsumerState<TrainMap> {
       }
       if (!mounted) break;
       AppLog.log(
-        '${failed ? (permanent ? "∅" : "✗") : "✓"} ${s.stop.name} '
+        '${failed ? (permanent ? "∅" : "✗") : "✓"} ${AppLog.pii(s.stop.name)} '
         '${sw.elapsedMilliseconds}ms',
         tag: 'route',
       );
