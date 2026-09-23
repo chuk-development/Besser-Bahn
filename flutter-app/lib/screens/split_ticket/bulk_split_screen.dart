@@ -7,6 +7,7 @@ import '../../providers/bulk_split_provider.dart';
 import '../../providers/split_ticket_provider.dart';
 import '../../theme/app_colors.dart';
 import '../../utils/dticket_optimizer.dart';
+import '../../widgets/app_nav_bar.dart';
 
 /// Bulk price comparison: take the connections from one search and show, for
 /// each departure, the direct fare vs the cheapest split — so the rider can
@@ -113,7 +114,7 @@ class _BulkSplitScreenState extends ConsumerState<BulkSplitScreen> {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.only(bottom: 32),
+        padding: EdgeInsets.only(bottom: 32 + AppNavBar.insetOf(context)),
         children: [
           if (offerDTicket)
             Padding(

@@ -14,6 +14,7 @@ import '../../models/journey.dart';
 import '../../models/station.dart';
 import '../../providers/account_provider.dart';
 import '../../services/live_update_service.dart';
+import '../../widgets/app_nav_bar.dart';
 
 /// Live debug log — shows what the API layer is doing (vendo / bahn.de / HAFAS),
 /// so issues like "search returns 500" can be diagnosed on-device.
@@ -71,7 +72,12 @@ class DebugLogScreen extends ConsumerWidget {
             );
           }
           return ListView.builder(
-            padding: const EdgeInsets.all(8),
+            padding: EdgeInsets.fromLTRB(
+              8,
+              8,
+              8,
+              8 + AppNavBar.insetOf(context),
+            ),
             itemCount: lines.length,
             itemBuilder: (context, i) {
               final line = lines[lines.length - 1 - i]; // newest first

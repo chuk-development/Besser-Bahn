@@ -5,6 +5,7 @@ import '../../models/traewelling_models.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/traewelling_provider.dart';
 import '../../widgets/trwl_status_card.dart';
+import '../../widgets/app_nav_bar.dart';
 
 /// Which set of check-ins the Feed tab shows.
 enum _FeedSource { friends, global, mine }
@@ -92,7 +93,10 @@ class _TraewellingFeedScreenState extends ConsumerState<TraewellingFeedScreen> {
                 child: statuses.isEmpty
                     ? _empty(theme)
                     : ListView.builder(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        padding: EdgeInsets.only(
+                          top: 8,
+                          bottom: 8 + AppNavBar.insetOf(context),
+                        ),
                         itemCount: statuses.length,
                         itemBuilder: (context, i) {
                           final s = statuses[i];

@@ -14,6 +14,7 @@ import '../../providers/account_provider.dart';
 import '../../providers/service_providers.dart';
 import '../connection_search/connection_detail_screen.dart';
 import 'widgets/bahncard_view.dart' show openFirstBahnCardControl;
+import '../../widgets/app_nav_bar.dart';
 
 /// Entry point for a booked ticket from the Reisen tab. Loads the ticket,
 /// parses its `verbindung` into a [Journey], then defers to
@@ -521,7 +522,7 @@ class _FallbackTicket extends StatelessWidget {
     final t = ticket;
     final theme = Theme.of(context);
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, 32 + AppNavBar.insetOf(context)),
       children: [
         Card(
           margin: EdgeInsets.zero,

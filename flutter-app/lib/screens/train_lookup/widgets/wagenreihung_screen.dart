@@ -9,6 +9,7 @@ import '../../../theme/app_colors.dart';
 import 'coach_sequence_view.dart' show splitTrainBanner;
 import 'platform_track_view.dart';
 import 'seat_map_view.dart';
+import '../../../widgets/app_nav_bar.dart';
 
 /// Dedicated, full-screen Wagenreihung + Sitzplatz view. The inline card is
 /// cramped (especially the platform layout and the seat plan); here both get
@@ -85,7 +86,7 @@ class _WagenreihungScreenState extends ConsumerState<WagenreihungScreen> {
         ),
       ),
       body: ListView(
-        padding: const EdgeInsets.only(bottom: 32),
+        padding: EdgeInsets.only(bottom: 32 + AppNavBar.insetOf(context)),
         children: [
           if (gleis.isNotEmpty)
             Padding(
@@ -152,8 +153,7 @@ class _WagenreihungScreenState extends ConsumerState<WagenreihungScreen> {
                   _legendItem(AppColors.locomotive, 'Triebkopf'),
                   // Only when this train actually carries one — an entry that
                   // is always there teaches nothing (#100).
-                  if (_hasUnavailableCoach(sequence))
-                    _unavailableLegendItem(),
+                  if (_hasUnavailableCoach(sequence)) _unavailableLegendItem(),
                 ],
               ),
             ),

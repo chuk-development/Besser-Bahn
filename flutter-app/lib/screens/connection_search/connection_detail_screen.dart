@@ -51,6 +51,7 @@ import '../../widgets/trwl_checkin_sheet.dart';
 import '../train_lookup/widgets/train_detail_view.dart';
 import 'widgets/leg_switcher.dart';
 import 'widgets/transfer_coach_hint.dart';
+import '../../widgets/app_nav_bar.dart';
 
 /// In-memory cache (app session) so a leg's train data is fetched once and
 /// reused — scrolling away and back never re-downloads or rebuilds from
@@ -505,7 +506,7 @@ class _ConnectionDetailScreenState
         // leg sections fresh (new keys), so all live data re-fetches.
         onRefresh: _refreshAll,
         child: ListView(
-          padding: const EdgeInsets.only(bottom: 32),
+          padding: EdgeInsets.only(bottom: 32 + AppNavBar.insetOf(context)),
           // Always scrollable so the pull-to-refresh gesture works even when the
           // content is short.
           physics: const AlwaysScrollableScrollPhysics(),

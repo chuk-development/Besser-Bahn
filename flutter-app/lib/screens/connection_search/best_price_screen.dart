@@ -6,6 +6,7 @@ import '../../models/best_price.dart';
 import '../../models/station.dart';
 import '../../providers/best_price_provider.dart';
 import 'widgets/journey_card.dart';
+import '../../widgets/app_nav_bar.dart';
 
 /// Route arguments for `/best-price` — GoRouter's `extra`, so the stations
 /// travel as objects instead of being re-resolved from a query string.
@@ -167,7 +168,7 @@ class _BestPriceScreenState extends ConsumerState<BestPriceScreen> {
       );
     }
     return ListView(
-      padding: const EdgeInsets.only(bottom: 32),
+      padding: EdgeInsets.only(bottom: 32 + AppNavBar.insetOf(context)),
       children: [
         if (!day.hasPrices)
           Padding(

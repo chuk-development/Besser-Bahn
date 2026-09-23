@@ -7,6 +7,7 @@ import '../../providers/service_providers.dart';
 import '../../providers/traewelling_provider.dart';
 import '../../services/traewelling_service.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/app_nav_bar.dart';
 
 /// Multi-step check-in: pick station → departure → destination stop → check in.
 class TraewellingCheckinScreen extends ConsumerStatefulWidget {
@@ -179,7 +180,12 @@ class _TraewellingCheckinScreenState
     return Scaffold(
       appBar: AppBar(title: const Text('Einchecken')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          16,
+          16,
+          16 + AppNavBar.insetOf(context),
+        ),
         children: [
           // Step 1: station
           TextField(

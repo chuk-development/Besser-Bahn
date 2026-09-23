@@ -22,6 +22,7 @@ import '../../services/notification_service.dart';
 import '../../services/update_check_service.dart';
 import '../../widgets/traewelling_logo.dart';
 import '../../widgets/update_banner.dart';
+import '../../widgets/app_nav_bar.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -35,7 +36,7 @@ class SettingsScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Einstellungen')),
       body: ListView(
-        padding: const EdgeInsets.only(bottom: 32),
+        padding: EdgeInsets.only(bottom: 32 + AppNavBar.insetOf(context)),
         children: [
           // App info
           Card(

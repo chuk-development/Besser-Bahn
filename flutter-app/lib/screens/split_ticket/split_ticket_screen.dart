@@ -17,6 +17,7 @@ import '../../utils/split_stops.dart';
 import '../../widgets/ui/message_card.dart';
 import '../../theme/app_colors.dart';
 import '../connection_search/widgets/reisende_sheet.dart';
+import '../../widgets/app_nav_bar.dart';
 
 /// Split-ticket analysis viewer + entry point.
 ///
@@ -121,7 +122,7 @@ class _SplitTicketScreenState extends ConsumerState<SplitTicketScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Split-Ticketing')),
       body: ListView(
-        padding: const EdgeInsets.only(bottom: 32),
+        padding: EdgeInsets.only(bottom: 32 + AppNavBar.insetOf(context)),
         children: [
           // Global entry (no journey): paste a DB share link to analyse.
           if (journey == null) _buildLinkInput(context),
