@@ -343,4 +343,38 @@ void main() {
     await tester.pumpAndSettle();
     expect(_onScreen(tester), {'SUCHE'});
   });
+
+  testWidgets('only the tab on screen keeps its tickers running', (
+    tester,
+  ) async {
+    // REGRESSION: a custom navigatorContainerBuilder gets none of the
+    // TickerMode muting go_router's IndexedStack does for inactive branches.
+    // Every spinner and animation in the three parked tabs kept ticking, so
+    // each tab change paid for all four — and AutoRefreshMixin, which reads
+    // the same flag, kept polling tabs nobody was looking at.
+    final (:app, :router) = _app();
+    await tester.pumpWidget(app);
+    await tester.pumpAndSettle();
+
+    bool ticking(String label) => TickerMode.valuesOf(
+      tester.element(
+        find.byKey(ValueKey('page-$label'), skipOffstage: false),
+      ),
+    ).enabled;
+
+    // Visit every tab once so all four are mounted on the strip.
+    for (final path in [..._paths.reversed, _paths.first]) {
+      router.go(path);
+      await tester.pumpAndSettle();
+    }
+    expect(ticking('SUCHE'), isTrue);
+    for (final l in _labels.skip(1)) {
+      expect(ticking(l), isFalse, reason: '$l is parked');
+    }
+
+    router.go('/journeys');
+    await tester.pumpAndSettle();
+    expect(ticking('REISEN'), isTrue);
+    expect(ticking('SUCHE'), isFalse);
+  });
 }

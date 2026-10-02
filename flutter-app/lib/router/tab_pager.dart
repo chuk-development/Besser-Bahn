@@ -189,7 +189,14 @@ class _TabPagerState extends State<TabPager> {
             // looking at gets to speak: everyone else is stopped right here
             // (returning true = handled, don't bubble).
             onNotification: (_) => index != current,
-            child: child,
+            // Parked tabs are frozen. go_router's own IndexedStack container
+            // wraps every inactive branch in `TickerMode(enabled: false)`; a
+            // custom navigatorContainerBuilder gets nothing of the kind. So
+            // without this, every spinner, progress bar and animation in the
+            // three tabs nobody is looking at kept ticking — scheduling frames
+            // and rebuilding off-screen — and every tab change paid for all
+            // four. `AutoRefreshMixin` reads the same flag to stop polling.
+            child: TickerMode(enabled: index == current, child: child),
           ),
       ],
     );
