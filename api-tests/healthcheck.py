@@ -10,8 +10,9 @@ Two ways to run:
     python3 healthcheck.py            # human-readable table, exit 1 on failure
     pytest healthcheck.py             # CI / assertion mode
 
-Zero hard deps beyond `requests`. `curl_cffi` is OPTIONAL: the /mob and DB
-login probes use it (Akamai TLS-fingerprints plain `requests` there). The
+Zero hard deps beyond `requests`. `curl_cffi` is OPTIONAL but the default
+transport for every probe when installed (Akamai TLS-fingerprints plain
+`requests` on /mob, gsd and the DB login). The
 bahn.de wagenreihung checks need a `dart` binary instead — Akamai blocks every
 Python fingerprint there, only dart:io (the app's stack) passes; without
 `dart` those checks SKIP.
@@ -75,20 +76,15 @@ except Exception:  # pragma: no cover
     _cc = None
 
 
-# accounts.bahn.de (DB login, Keycloak realm `db`) joined the list in 2026-10:
-# its Akamai edge now answers plain `requests` with an "Access Denied" page, even
-# on .well-known. The app's dart:io client and the Custom Tab's Chrome pass.
-_IMPERSONATE_HOSTS = ("app.services-bahn.de", "accounts.bahn.de")
-
-
 def _raw_request(method, url, *args, **kwargs):
-    # curl_cffi (real Chrome TLS) ONLY for _IMPERSONATE_HOSTS — the DB Navigator
-    # backend (app.services-bahn.de: /mob + gsd) and the DB login, whose Akamai
-    # edges block plain-`requests` TLS. Everything else stays on plain
-    # requests on purpose: www.bahn.de must still read as OPS_BLOCKED (that check
-    # asserts it), and Träwelling's UA-rule check must see what a normal client
-    # sees — impersonation would mask both (#mob).
-    if _cc is not None and any(h in str(url) for h in _IMPERSONATE_HOSTS):
+    # curl_cffi (real Chrome TLS) for EVERY host. Akamai TLS-fingerprints plain
+    # `requests` on more and more DB hosts (/mob, gsd, and since 2026-10 the
+    # DB login at accounts.bahn.de, which answers "Access Denied" even on
+    # .well-known). A per-host allow-list only ever learned about the next host
+    # after it had already cried "API changed". Checks that depend on a
+    # specific client identity (Träwelling's UA rule) set that header
+    # explicitly instead of relying on the transport's default.
+    if _cc is not None:
         kwargs.setdefault("impersonate", "chrome")
         try:
             return _cc.request(method, url, *args, **kwargs)
@@ -3498,9 +3494,12 @@ def check_traewelling_user_agent() -> str:
     """
     url = "https://traewelling.de/api/v1/trains/station/autocomplete/Berlin"
 
-    # Direction 1: a generic library UA is refused. (`requests` sends
-    # `python-requests/x` by default — one of the UAs Träwelling blocks.)
-    generic = _get(url, headers={"Accept": "application/json"}, timeout=TIMEOUT)
+    # Direction 1: a generic library UA is refused. Sent explicitly — the
+    # transport (curl_cffi impersonating Chrome) would otherwise add a browser
+    # UA. `Dart/…` is the one that matters: it is what broke the login in #34.
+    generic = _get(url, headers={"Accept": "application/json",
+                                 "User-Agent": "Dart/3.10 (dart:io)"},
+                   timeout=TIMEOUT)
     if generic.status_code != 403:
         raise CheckError(
             "Träwelling no longer 403s a generic User-Agent "
