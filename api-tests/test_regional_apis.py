@@ -191,7 +191,8 @@ def test_efa_backend_platforms(profile):
     dm = _call(pid, _efa, base, "XML_DM_REQUEST",
                {"name_dm": locs[0]["id"], "type_dm": "stop", "mode": "direct",
                 "useRealtime": "1", "limit": "30"})
-    assert dm.get("stopEvents"), f"{pid}: empty board at {probe}"
+    assert dm.get("stopEvents"), (
+        f"{pid}: empty board at {probe} {dm.get('systemMessages') or ''}")
     # Whether this stop names both platform fields is the aggregate's job — VRN
     # resolves "Mannheim Hauptbahnhof" to a bay-less tram halt, which is a data
     # quirk of one stop, not a broken backend.

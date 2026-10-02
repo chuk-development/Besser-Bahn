@@ -10,9 +10,11 @@ Two ways to run:
     python3 healthcheck.py            # human-readable table, exit 1 on failure
     pytest healthcheck.py             # CI / assertion mode
 
-Zero hard deps beyond `requests`. `curl_cffi` is OPTIONAL: only the bahn.de
-wagenreihung checks need it (Akamai TLS-fingerprints plain `requests` there and
-403s it, while the app itself gets 200) — without it those checks SKIP.
+Zero hard deps beyond `requests`. `curl_cffi` is OPTIONAL: the /mob and DB
+login probes use it (Akamai TLS-fingerprints plain `requests` there). The
+bahn.de wagenreihung checks need a `dart` binary instead — Akamai blocks every
+Python fingerprint there, only dart:io (the app's stack) passes; without
+`dart` those checks SKIP.
 
 Endpoint map (see app code in flutter-app/lib/services/):
   bahn.de GET endpoints      -> autocomplete, departures, train run. Not bot-gated.
@@ -32,6 +34,8 @@ import re
 import base64
 import struct
 import pathlib
+import shutil
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -71,14 +75,20 @@ except Exception:  # pragma: no cover
     _cc = None
 
 
+# accounts.bahn.de (DB login, Keycloak realm `db`) joined the list in 2026-10:
+# its Akamai edge now answers plain `requests` with an "Access Denied" page, even
+# on .well-known. The app's dart:io client and the Custom Tab's Chrome pass.
+_IMPERSONATE_HOSTS = ("app.services-bahn.de", "accounts.bahn.de")
+
+
 def _raw_request(method, url, *args, **kwargs):
-    # curl_cffi (real Chrome TLS) ONLY for the DB Navigator backend
-    # (app.services-bahn.de: /mob + gsd), the one host whose Akamai edge blocks
-    # plain-`requests` TLS with 452/OPS_BLOCKED. Everything else stays on plain
+    # curl_cffi (real Chrome TLS) ONLY for _IMPERSONATE_HOSTS — the DB Navigator
+    # backend (app.services-bahn.de: /mob + gsd) and the DB login, whose Akamai
+    # edges block plain-`requests` TLS. Everything else stays on plain
     # requests on purpose: www.bahn.de must still read as OPS_BLOCKED (that check
     # asserts it), and Träwelling's UA-rule check must see what a normal client
     # sees — impersonation would mask both (#mob).
-    if _cc is not None and "app.services-bahn.de" in str(url):
+    if _cc is not None and any(h in str(url) for h in _IMPERSONATE_HOSTS):
         kwargs.setdefault("impersonate", "chrome")
         try:
             return _cc.request(method, url, *args, **kwargs)
@@ -165,33 +175,53 @@ def _browser_headers() -> dict:
 
 
 # Akamai in front of www.bahn.de fingerprints the TLS handshake, not the
-# headers: `requests` gets a flat 403 OPS_BLOCKED on the wagenreihung endpoint
-# no matter what User-Agent it sends, while the app's own dart:io client and any
-# real browser get 200. So a `requests` 403 here is NOT evidence the endpoint
-# died — checking it that way just cries wolf forever. curl_cffi replays a real
-# Chrome fingerprint and sees what the app sees.
+# headers. Since 2026-10 it 403s (OPS_BLOCKED) EVERY Python/curl fingerprint on
+# the wagenreihung endpoint — plain `requests` and curl_cffi's Chrome/okhttp
+# impersonation alike — while the app's own dart:io client still gets 200. So
+# a 403 from Python is NOT evidence the endpoint died. The probe shells out to
+# `dart_get.dart` (same TLS stack as the app) and sees what the app sees.
 #
-# Optional import on purpose: this file promises zero hard deps beyond
-# `requests` (see module docstring). Without curl_cffi the wagenreihung checks
-# skip instead of lying.
-try:  # pragma: no cover - env dependent
-    from curl_cffi import requests as _curl_cffi_requests
-except ImportError:  # pragma: no cover
-    _curl_cffi_requests = None
+# Optional on purpose: this file promises zero hard deps beyond `requests`.
+# Without a `dart` binary the wagenreihung checks skip instead of lying.
+_DART = shutil.which("dart")
+_DART_GET = pathlib.Path(__file__).with_name("dart_get.dart")
 
 
 class _SkipCheck(Exception):
     """Check can't run here (missing optional dep) — reported, not failed."""
 
 
+class _DartResponse:
+    """Just enough of `requests.Response` for the wagenreihung callers."""
+
+    def __init__(self, url: str, status_code: int, text: str):
+        self.url, self.status_code, self.text = url, status_code, text
+
+    def json(self):
+        return json.loads(self.text)
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(
+                f"HTTP Error {self.status_code}: {self.text[:80]}")
+
+
 def _wagenreihung_get(params: dict):
-    """GET the vehicle-sequence endpoint the way the APP reaches it."""
-    if _curl_cffi_requests is None:
-        raise _SkipCheck("curl_cffi not installed (pip install curl_cffi) — "
-                         "plain requests is TLS-fingerprinted by Akamai")
-    return _curl_cffi_requests.get(
-        "https://www.bahn.de/web/api/reisebegleitung/wagenreihung/vehicle-sequence",
-        params=params, impersonate="chrome124", timeout=TIMEOUT)
+    """GET the vehicle-sequence endpoint the way the APP reaches it (dart:io)."""
+    if _DART is None:
+        raise _SkipCheck("dart not on PATH — Akamai blocks every Python TLS "
+                         "fingerprint here, only dart:io gets through")
+    url = ("https://www.bahn.de/web/api/reisebegleitung/wagenreihung/"
+           "vehicle-sequence?" + urllib.parse.urlencode(params))
+    try:
+        out = subprocess.run(
+            [_DART, "run", str(_DART_GET), url, json.dumps(_browser_headers())],
+            capture_output=True, text=True, timeout=TIMEOUT + 30, check=True,
+        ).stdout
+    except (subprocess.SubprocessError, OSError) as e:
+        raise requests.RequestException(f"dart_get failed: {e}") from e
+    status, _, body = out.partition("\n")
+    return _DartResponse(url, int(status), body)
 
 
 def _wagenreihung(category: str, number, eva: str, when: datetime):
@@ -3254,7 +3284,7 @@ def check_regional_platform_sources() -> str:
 # `platformName` is the same planned/live pair HAFAS calls dPlatfS/dPlatfR.
 EFA_PROFILES = [
     ("vvs", "VVS Stuttgart", "https://www3.vvs.de/mngvvs", "Stuttgart Hauptbahnhof"),
-    ("mvv", "MVV München", "https://efa.mvv-muenchen.de/mobile", "München Hauptbahnhof"),
+    ("mvv", "MVV München", "https://efa.mvv-muenchen.de/ng", "München Hauptbahnhof"),
     ("vvo", "VVO Dresden", "https://efa.vvo-online.de/VMSSL3", "Dresden Hauptbahnhof"),
     ("vrr", "VRR", "https://efa.vrr.de/vrr", "Essen Hauptbahnhof"),
     ("vrn", "VRN", "https://www.vrn.de/mngvrn", "Mannheim Hauptbahnhof"),
@@ -3300,7 +3330,12 @@ def check_efa_platform_sources() -> str:
             dm.raise_for_status()
             events = dm.json().get("stopEvents") or []
             if not events:
-                raise CheckError("leere Tafel")
+                # "invalid date" (-4001) = the backend's timetable period ran
+                # out (MVV /mobile stopped at 2026-09-30) — name it.
+                msgs = [m.get("text") for m in
+                        (dm.json().get("systemMessages") or [])
+                        if m.get("type") == "error"]
+                raise CheckError(f"leere Tafel {msgs}" if msgs else "leere Tafel")
             both = 0
             for e in events:
                 props = ((e.get("location") or {}).get("properties") or {})
@@ -3627,6 +3662,11 @@ def check_db_account_token_endpoint() -> str:
     )
     if r.status_code in (404, 410):
         raise CheckError(f"token path gone (status={r.status_code})")
+    # An Akamai "Access Denied" page is the edge, not Keycloak — it used to
+    # pass as "403 = live" and hid that the probe never reached the realm.
+    if "access denied" in r.text[:300].lower():
+        raise CheckError("Akamai edge blocks the probe (Access Denied), "
+                         "realm not reached — TLS fingerprint?")
     # A live realm rejects the bogus grant with an OAuth 4xx; some Keycloak
     # builds answer 500 to a malformed refresh token. Either way the realm +
     # client path exists, which is all this reachability probe asserts.

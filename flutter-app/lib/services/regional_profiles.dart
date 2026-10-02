@@ -296,7 +296,7 @@ const List<RegionalProfile> kRegionalProfiles = [
   RegionalProfile(
     id: 'mvv',
     label: 'MVV München',
-    endpoint: 'https://efa.mvv-muenchen.de/mobile',
+    endpoint: 'https://efa.mvv-muenchen.de/ng',
     backend: RegionalBackend.efa,
     minLat: 47.85,
     minLon: 11.00,
