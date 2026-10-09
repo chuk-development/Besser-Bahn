@@ -60,7 +60,9 @@ void main() {
         'reisendenInformation': [
           {'anzahl': 1, 'typ': 'ERWACHSENER'},
         ],
-        'ticket': {'ticket': _html('<html>Mecklenburg-Vorpommern-Ticket</html>')},
+        'ticket': {
+          'ticket': _html('<html>Mecklenburg-Vorpommern-Ticket</html>'),
+        },
       }),
     );
     expect(t.angebotsname, 'Mecklenburg-Vorpommern-Ticket');
@@ -109,14 +111,48 @@ void main() {
     expect(t.firstClass, isFalse);
   });
 
-  test('an order with no class stays unknown instead of claiming 2. Klasse', () {
+  test('a reservation without a ticket keeps its Reiseplan (#105)', () {
+    // Booked on its own, a seat reservation sits under `autonomeReservierung`.
+    // Unread, the Reisen tile had no Verbindung and the trip only showed up
+    // as a separate "Gemerkte Reise".
     final t = DbTicket.fromJson(
-      _order('katalog', 'katalogInfos', {'angebotsname': 'Irgendwas'}),
+      _order('autonomeReservierung', 'autonomeReservierungInfos', {
+        'angebotsname': 'Sitzplatzreservierung',
+        'klasse': 'KLASSE_2',
+        'verbindung': {
+          'tripUUID': 'abc-123',
+          'verbindung': {'verbindungsAbschnitte': []},
+        },
+        'reservierungen': [
+          <String, dynamic>{'serviceName': 'ICE', 'zugnummer': '584'},
+        ],
+      }),
     );
-    expect(t.klasse, isNull);
-    expect(t.hasClass, isFalse);
-    expect(t.firstClass, isFalse);
+    expect(t.auftragsnummer, '977758847570');
+    expect(t.status, 'GUELTIG');
+    expect(t.isReservationOnly, isTrue);
+    expect(t.verbindungJson, isNotNull);
+    expect(t.tripUUID, 'abc-123');
+    expect(t.reservierungen.single.trainLabel, 'ICE 584');
+    expect(t.barcode, isNull);
   });
+
+  test('a booked journey is not a reservation-only order', () {
+    final t = DbTicket.fromJson(_order('reise', 'reiseInfos', {}));
+    expect(t.isReservationOnly, isFalse);
+  });
+
+  test(
+    'an order with no class stays unknown instead of claiming 2. Klasse',
+    () {
+      final t = DbTicket.fromJson(
+        _order('katalog', 'katalogInfos', {'angebotsname': 'Irgendwas'}),
+      );
+      expect(t.klasse, isNull);
+      expect(t.hasClass, isFalse);
+      expect(t.firstClass, isFalse);
+    },
+  );
 
   test('an unknown payload does not throw', () {
     final t = DbTicket.fromJson(const {'unbekannt': {}});

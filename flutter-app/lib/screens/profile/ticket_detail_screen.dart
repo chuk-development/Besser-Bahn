@@ -296,11 +296,12 @@ class _TicketStatusBlock extends StatelessWidget {
     final statusColor = stornoed || expired
         ? const Color(0xFFD32011) // red
         : const Color(0xFF0E7A2C); // green
+    final noun = ticket.isReservationOnly ? 'Reservierung' : 'Ticket';
     final statusText = stornoed
-        ? 'Ticket storniert'
+        ? '$noun storniert'
         : expired
-        ? 'Ticket nicht mehr gültig'
-        : 'Ticket gültig';
+        ? '$noun nicht mehr gültig'
+        : '$noun gültig';
 
     final date = ticket.gueltigAb != null
         ? DateFormat('dd.MM.yyyy').format(ticket.gueltigAb!)
@@ -312,6 +313,8 @@ class _TicketStatusBlock extends StatelessWidget {
         : null;
     final name = ticket.angebotsname?.trim().isNotEmpty == true
         ? ticket.angebotsname!
+        : ticket.isReservationOnly
+        ? 'Sitzplatzreservierung'
         : 'Einzelkarte';
     final tariff = klasse == null ? name : '$name $klasse';
     // Prefer the station name + Haltestellen-Nummer printed on the ticket
@@ -540,11 +543,17 @@ class _FallbackTicket extends StatelessWidget {
                     gaplessPlayback: true,
                   )
                 else
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 32),
                     child: Text(
-                      'Kein Barcode in diesem Ticket.',
-                      style: TextStyle(color: Colors.black54),
+                      // A reservation alone is no ticket, so there is nothing
+                      // to scan — say so instead of looking broken (#105).
+                      t.isReservationOnly
+                          ? 'Reine Sitzplatzreservierung – kein Fahrschein, '
+                                'daher kein Barcode.'
+                          : 'Kein Barcode in diesem Ticket.',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.black54),
                     ),
                   ),
                 const SizedBox(height: 8),
