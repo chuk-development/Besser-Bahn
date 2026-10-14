@@ -1070,7 +1070,11 @@ final ticketTripsProvider = FutureProvider<List<DbTicketTrip>>((ref) async {
       try {
         final parsed = vendo.parseConnection(t.verbindungJson!);
         if (parsed.legs.isNotEmpty) j = parsed;
-        _logTicketTimes(key, t.verbindungJson!, parsed);
+        try {
+          _logTicketTimes(key, t.verbindungJson!, parsed);
+        } catch (_) {
+          /* logging is best effort */
+        }
       } catch (_) {
         /* keep the ticket, just without a trip */
       }
@@ -1111,8 +1115,10 @@ final ticketTripsProvider = FutureProvider<List<DbTicketTrip>>((ref) async {
 /// tell a wrong offset from DB apart from a parser mistake. Times and the
 /// device zone are no personal data; the order key is masked.
 void _logTicketTimes(String key, Map<String, dynamic> raw, Journey parsed) {
-  final vb = raw['verbindung'] as Map<String, dynamic>? ?? raw;
-  final abschnitte = vb['verbindungsAbschnitte'] as List<dynamic>? ?? const [];
+  final v = raw['verbindung'];
+  final vb = v is Map<String, dynamic> ? v : raw;
+  final a = vb['verbindungsAbschnitte'];
+  final abschnitte = a is List ? a : const [];
   final rawTimes = abschnitte
       .whereType<Map<String, dynamic>>()
       .map((a) => '${a['abgangsDatum']}/${a['ezAbgangsDatum'] ?? '-'}')

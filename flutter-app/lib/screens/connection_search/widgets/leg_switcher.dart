@@ -405,6 +405,7 @@ class LegAlternativeSwitcherState
         // Shown train is the first loaded one → page back, then step onto
         // whatever now sits before it (#106).
         await _loadMore(earlier: true);
+        if (!mounted) return;
         final now = _alts.indexWhere(
           (j) => j.legs.firstOrNull?.tripId == curId,
         );
@@ -437,6 +438,7 @@ class LegAlternativeSwitcherState
       var earlier = before();
       if (earlier.isEmpty) {
         await _loadMore(earlier: true);
+        if (!mounted) return;
         earlier = before();
       }
       if (earlier.isNotEmpty) _select(earlier.last);
