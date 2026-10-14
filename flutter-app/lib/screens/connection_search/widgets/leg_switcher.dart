@@ -103,6 +103,11 @@ class LegAlternativeSwitcherState
     extends ConsumerState<LegAlternativeSwitcher> {
   final List<Journey> _alts = [];
   String? _laterRef;
+
+  /// Paging context for departures BEFORE the first one loaded. Without it the
+  /// "Frühere Abfahrt" button did nothing whenever the shown train was the
+  /// first in the list (#106).
+  String? _earlierRef;
   bool _loading = false;
   bool _loaded = false;
   String? _error;
@@ -188,6 +193,7 @@ class LegAlternativeSwitcherState
       setState(() {
         _merge(res.journeys);
         _laterRef = res.laterRef;
+        _earlierRef = res.earlierRef;
         _loaded = true;
       });
       _prefetchNeighbors();
@@ -239,8 +245,11 @@ class LegAlternativeSwitcherState
     }
   }
 
-  Future<void> _loadMore() async {
-    if (_laterRef == null || _loading) return;
+  /// Load the next page of departures — later ones by default, earlier ones
+  /// with [earlier].
+  Future<void> _loadMore({bool earlier = false}) async {
+    final pageRef = earlier ? _earlierRef : _laterRef;
+    if (pageRef == null || _loading) return;
     final leg = widget.leg;
     final an = leg.plannedArrival ?? leg.arrival;
     if (an == null) return;
@@ -255,12 +264,18 @@ class LegAlternativeSwitcherState
             produktGattungen: VendoService.produktGattungenFor(
               leg.line?.product,
             ),
-            context: _laterRef,
+            context: pageRef,
           );
       if (!mounted) return;
       setState(() {
         _merge(res.journeys);
-        _laterRef = res.laterRef;
+        // Each direction keeps its own cursor: an earlier page must not
+        // reset where "later" continues, and vice versa.
+        if (earlier) {
+          _earlierRef = res.earlierRef;
+        } else {
+          _laterRef = res.laterRef;
+        }
       });
       _prefetchNeighbors();
     } catch (_) {
@@ -386,7 +401,16 @@ class LegAlternativeSwitcherState
 
     if (idx >= 0) {
       final next = idx + dir;
-      if (next < 0) return;
+      if (next < 0) {
+        // Shown train is the first loaded one → page back, then step onto
+        // whatever now sits before it (#106).
+        await _loadMore(earlier: true);
+        final now = _alts.indexWhere(
+          (j) => j.legs.firstOrNull?.tripId == curId,
+        );
+        if (now > 0) _select(_alts[now - 1]);
+        return;
+      }
       if (next >= _alts.length) {
         await _loadMore();
         if (idx + 1 < _alts.length) _select(_alts[idx + 1]);
@@ -408,9 +432,13 @@ class LegAlternativeSwitcherState
       );
       _select(j);
     } else {
-      final earlier = _alts
-          .where((a) => (_depOf(a) ?? curDep).isBefore(curDep))
-          .toList();
+      List<Journey> before() =>
+          _alts.where((a) => (_depOf(a) ?? curDep).isBefore(curDep)).toList();
+      var earlier = before();
+      if (earlier.isEmpty) {
+        await _loadMore(earlier: true);
+        earlier = before();
+      }
       if (earlier.isNotEmpty) _select(earlier.last);
     }
   }

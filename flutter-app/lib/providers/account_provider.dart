@@ -1070,6 +1070,7 @@ final ticketTripsProvider = FutureProvider<List<DbTicketTrip>>((ref) async {
       try {
         final parsed = vendo.parseConnection(t.verbindungJson!);
         if (parsed.legs.isNotEmpty) j = parsed;
+        _logTicketTimes(key, t.verbindungJson!, parsed);
       } catch (_) {
         /* keep the ticket, just without a trip */
       }
@@ -1102,6 +1103,29 @@ final ticketTripsProvider = FutureProvider<List<DbTicketTrip>>((ref) async {
     );
   return [...upcoming, ...past];
 });
+
+/// Log a ticket's raw section times next to what the parser made of them.
+///
+/// #106: a ticket with a Deutschland-Ticket first leg showed every train one
+/// hour late. Without the raw strings (offset included) the debug log cannot
+/// tell a wrong offset from DB apart from a parser mistake. Times and the
+/// device zone are no personal data; the order key is masked.
+void _logTicketTimes(String key, Map<String, dynamic> raw, Journey parsed) {
+  final vb = raw['verbindung'] as Map<String, dynamic>? ?? raw;
+  final abschnitte = vb['verbindungsAbschnitte'] as List<dynamic>? ?? const [];
+  final rawTimes = abschnitte
+      .whereType<Map<String, dynamic>>()
+      .map((a) => '${a['abgangsDatum']}/${a['ezAbgangsDatum'] ?? '-'}')
+      .join(', ');
+  final parsedTimes = parsed.legs
+      .map((l) => l.plannedDeparture?.toIso8601String() ?? '-')
+      .join(', ');
+  AppLog.log(
+    'ticket ${AppLog.pii(key, 'Ticket')} raw=[$rawTimes] '
+    'parsed=[$parsedTimes] tz=${DateTime.now().timeZoneName}',
+    tag: 'db-account',
+  );
+}
 
 /// Tracked-but-unpaid trips (reiseIndizes, "Reise merken"), newest start first.
 final savedReisenProvider = FutureProvider<List<DbSavedReiseIndex>>((
