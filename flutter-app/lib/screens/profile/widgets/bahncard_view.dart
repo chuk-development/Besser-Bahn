@@ -12,6 +12,7 @@ import '../../../core/bahncard_art_cache.dart';
 import '../../../core/bahncard_webview_cache.dart';
 import '../../../models/db_account.dart';
 import '../../../providers/account_provider.dart';
+import '../../../core/berlin_time.dart';
 
 /// True when the platform has a [WebViewWidget] implementation. Linux /
 /// Windows / web don't — fall back to a native card there.
@@ -149,8 +150,8 @@ class BahnCardView extends StatelessWidget {
   }
 
   String _d(String iso) {
-    final dt = DateTime.tryParse(iso);
-    return dt != null ? DateFormat('dd.MM.yyyy').format(dt) : iso;
+    final dt = parseDbTimestamp(iso);
+    return dt != null ? DateFormat('dd.MM.yyyy').format(toBerlin(dt)) : iso;
   }
 }
 

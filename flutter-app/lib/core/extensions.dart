@@ -1,18 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:timezone/timezone.dart' as tz;
+
+import 'berlin_time.dart';
 
 extension DateTimeFormatting on DateTime {
-  // Always render in the device's local zone. DateFormat formats the raw
-  // wall-clock fields, so a DateTime still flagged UTC (e.g. parsed from a "…Z"
-  // timestamp) would print 2 h off — toLocal() guards against that. No-op when
-  // the value is already local.
-  String get hhmm => DateFormat('HH:mm').format(toLocal());
+  /// Wall-clock as DB prints it — Europe/Berlin, never the device's zone.
+  /// A phone abroad showed every booked train an hour off (#106).
+  tz.TZDateTime get berlin => toBerlin(this);
 
-  String get dayMonthYear => DateFormat('dd.MM.yyyy').format(toLocal());
+  // Formatted in German rail time (see [berlin]). DateFormat prints the raw
+  // wall-clock fields, so a DateTime still flagged UTC (e.g. parsed from a
+  // "…Z" timestamp) would print 2 h off — TZDateTime.from guards against
+  // that and pins the zone.
+  String get hhmm => DateFormat('HH:mm').format(berlin);
 
-  String get isoDate => DateFormat('yyyy-MM-dd').format(toLocal());
+  String get dayMonthYear => DateFormat('dd.MM.yyyy').format(berlin);
 
-  String get fullDateTime => DateFormat('dd.MM.yyyy HH:mm').format(toLocal());
+  String get isoDate => DateFormat('yyyy-MM-dd').format(berlin);
+
+  String get fullDateTime => DateFormat('dd.MM.yyyy HH:mm').format(berlin);
 }
 
 extension DelayFormatting on int {

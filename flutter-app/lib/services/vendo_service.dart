@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:http/http.dart' as http;
 import '../core/app_log.dart';
+import '../core/berlin_time.dart';
 import '../models/station.dart';
 import 'db_api_service.dart' show SegmentPrice;
 import '../models/best_price.dart';
@@ -1644,7 +1645,7 @@ class VendoService {
   }
 
   DateTime? _parse(dynamic v) =>
-      v is String ? DateTime.tryParse(v)?.toLocal() : null;
+      v is String ? parseDbTimestamp(v) : null;
 
   /// Vendo durations (`verfuegbareZeit`, `abschnittsDauer`) are seconds.
   Duration? _seconds(dynamic v) =>

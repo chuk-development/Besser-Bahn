@@ -6,6 +6,7 @@ import '../models/station.dart';
 import '../utils/stopover_plan.dart';
 import 'service_providers.dart';
 import 'settings_provider.dart';
+import '../core/extensions.dart';
 
 /// What a stopover plan is asked for: get from [from] to [to], be there by
 /// [deadline], and break the trip at [hub] on the way.
@@ -295,9 +296,7 @@ class StopoverPlanNotifier extends Notifier<StopoverPlanState> {
       j.refreshToken ??
       '${j.departure?.toIso8601String()}|${j.arrival?.toIso8601String()}';
 
-  static String _hhmm(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:'
-      '${dt.minute.toString().padLeft(2, '0')}';
+  static String _hhmm(DateTime dt) => dt.hhmm;
 }
 
 final stopoverPlanProvider =

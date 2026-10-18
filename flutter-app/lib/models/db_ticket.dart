@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../core/berlin_time.dart';
+
 /// One entry of `reisenuebersicht.auftragsIndizes` — a paid order with one or
 /// more `kundenwunschIds`. The full ticket is fetched lazily per id.
 class DbReiseIndex {
@@ -19,9 +21,9 @@ class DbReiseIndex {
     kundenwunschIds: (j['kundenwunschIds'] as List<dynamic>? ?? const [])
         .map((e) => e.toString())
         .toList(),
-    aenderungsDatum: DateTime.tryParse(
+    aenderungsDatum: parseDbTimestamp(
       (j['aenderungsDatum'] ?? '').toString(),
-    )?.toLocal(),
+    ),
   );
 }
 
@@ -46,12 +48,12 @@ class DbSavedReiseIndex {
       DbSavedReiseIndex(
         rkUuid: (j['rkUuid'] ?? '').toString(),
         reisekettenId: (j['reisekettenId'] as num?)?.toInt(),
-        aenderungsDatum: DateTime.tryParse(
+        aenderungsDatum: parseDbTimestamp(
           (j['aenderungsDatum'] ?? '').toString(),
-        )?.toLocal(),
-        startDatum: DateTime.tryParse(
+        ),
+        startDatum: parseDbTimestamp(
           (j['startDatum'] ?? '').toString(),
-        )?.toLocal(),
+        ),
       );
 }
 
@@ -275,7 +277,7 @@ class DbTicket {
   }
 
   static DateTime? _parse(dynamic v) =>
-      v is String ? DateTime.tryParse(v)?.toLocal() : null;
+      v is String ? parseDbTimestamp(v) : null;
 
   /// The ticket body is base64-encoded HTML.
   static String? _decodeTicketHtml(String? b64) {

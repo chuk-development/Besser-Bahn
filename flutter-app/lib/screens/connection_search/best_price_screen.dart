@@ -7,6 +7,7 @@ import '../../models/station.dart';
 import '../../providers/best_price_provider.dart';
 import 'widgets/journey_card.dart';
 import '../../widgets/app_nav_bar.dart';
+import '../../core/extensions.dart';
 
 /// Route arguments for `/best-price` — GoRouter's `extra`, so the stations
 /// travel as objects instead of being re-resolved from a query string.
@@ -226,8 +227,8 @@ class _IntervalTile extends StatelessWidget {
     // 00:00 as an end bound means midnight — "19:00 – 00:00" reads better than
     // the "19:00 – 00:00" of the next day it technically is.
     final label =
-        '${hhmm.format(interval.from)} – '
-        '${hhmm.format(interval.to)}';
+        '${hhmm.format(interval.from.berlin)} – '
+        '${hhmm.format(interval.to.berlin)}';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

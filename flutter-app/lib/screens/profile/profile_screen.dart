@@ -10,6 +10,7 @@ import '../../providers/account_provider.dart';
 import '../../widgets/app_nav_bar.dart';
 import '../../services/update_check_service.dart';
 import 'widgets/bahncard_view.dart';
+import '../../core/berlin_time.dart';
 
 /// "Profil" tab — the signed-in DB account: identity, BahnBonus, BahnCards and
 /// booked tickets. Logged out, it shows a single DB-login call to action.
@@ -546,8 +547,8 @@ class _LoggedIn extends ConsumerWidget {
   );
 
   static String _date(String iso) {
-    final dt = DateTime.tryParse(iso);
-    return dt != null ? DateFormat('dd.MM.yyyy').format(dt) : iso;
+    final dt = parseDbTimestamp(iso);
+    return dt != null ? DateFormat('dd.MM.yyyy').format(toBerlin(dt)) : iso;
   }
 }
 
@@ -695,8 +696,8 @@ class _BahnCardTile extends StatelessWidget {
   }
 
   static String _d(String iso) {
-    final dt = DateTime.tryParse(iso);
-    return dt != null ? DateFormat('dd.MM.yyyy').format(dt) : iso;
+    final dt = parseDbTimestamp(iso);
+    return dt != null ? DateFormat('dd.MM.yyyy').format(toBerlin(dt)) : iso;
   }
 }
 
@@ -716,7 +717,7 @@ class _TicketTile extends StatelessWidget {
         leading: const Icon(Icons.confirmation_number_outlined),
         title: Text('Auftrag ${index.auftragsnummer}'),
         subtitle: date != null
-            ? Text(DateFormat('dd.MM.yyyy').format(date))
+            ? Text(DateFormat('dd.MM.yyyy').format(toBerlin(date)))
             : null,
         trailing: const Icon(Icons.chevron_right),
         onTap: kwId.isEmpty

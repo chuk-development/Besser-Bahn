@@ -390,16 +390,18 @@ class JourneysScreen extends ConsumerWidget {
     );
   }
 
-  /// "Heute" / "Morgen" / "Gestern" else the date.
+  /// "Heute" / "Morgen" / "Gestern" else the date — day boundaries in German
+  /// rail time, so a connection around midnight keeps its DB day abroad.
   String _relativeDate(DateTime dt) {
-    final now = DateTime.now();
-    final d = DateTime(dt.year, dt.month, dt.day);
+    final b = dt.berlin;
+    final now = DateTime.now().berlin;
+    final d = DateTime(b.year, b.month, b.day);
     final today = DateTime(now.year, now.month, now.day);
     final diff = d.difference(today).inDays;
-    if (diff == 0) return 'Heute · ${dt.hhmm}';
-    if (diff == 1) return 'Morgen · ${dt.hhmm}';
-    if (diff == -1) return 'Gestern · ${dt.hhmm}';
-    return dt.dayMonthYear;
+    if (diff == 0) return 'Heute · ${b.hhmm}';
+    if (diff == 1) return 'Morgen · ${b.hhmm}';
+    if (diff == -1) return 'Gestern · ${b.hhmm}';
+    return b.dayMonthYear;
   }
 
   Widget _sectionHeader(BuildContext context, String title, int count) {
@@ -597,7 +599,7 @@ class _SavedReiseTile extends ConsumerWidget {
                 ? DateFormat(
                     'EEE, dd.MM.yyyy · HH:mm',
                     'de',
-                  ).format(index.startDatum!)
+                  ).format(index.startDatum!.berlin)
                 : 'Gemerkte Reise',
           ),
           subtitle: Text(
@@ -664,7 +666,9 @@ class _OfficialTicketTile extends ConsumerWidget {
               if ((t?.gueltigAb ?? index.aenderungsDatum) != null)
                 DateFormat(
                   'dd.MM.yyyy',
-                ).format(t?.gueltigAb ?? index.aenderungsDatum!),
+                ).format(
+                  (t?.gueltigAb ?? index.aenderungsDatum)!.berlin,
+                ),
               if (t != null && t.hasClass) t.firstClass ? '1. Kl.' : '2. Kl.',
               if (t?.angebotsname != null) t!.angebotsname!,
             ].where((s) => s.isNotEmpty).join(' · '),
@@ -703,7 +707,7 @@ class _OfficialTicketTile extends ConsumerWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 16, 0),
               child: Text(
-                DateFormat('dd.MM.yyyy').format(dep),
+                DateFormat('dd.MM.yyyy').format(dep.berlin),
                 style: theme.textTheme.labelMedium?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                   fontWeight: FontWeight.w600,

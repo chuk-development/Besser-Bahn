@@ -1,4 +1,5 @@
 import '../models/journey.dart';
+import 'extensions.dart';
 import '../models/station.dart';
 import '../models/trip.dart';
 
@@ -57,12 +58,7 @@ DateTime? _liveTime(
       : (leg.departure ?? leg.plannedDeparture);
 }
 
-String _hhmm(DateTime? t) {
-  if (t == null) return '';
-  final l = t.toLocal();
-  return '${l.hour.toString().padLeft(2, '0')}:'
-      '${l.minute.toString().padLeft(2, '0')}';
-}
+String _hhmm(DateTime? t) => t?.hhmm ?? '';
 
 /// Train label as the DB Navigator app prints it. DB only parenthesises the
 /// train number when the line itself is numbered ("RE7 (11283)", "S1 (…)");

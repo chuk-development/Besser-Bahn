@@ -1,4 +1,5 @@
 import '../models/journey.dart';
+import 'extensions.dart';
 
 /// The kind of fare the trip was made on. It decides how the delay compensation
 /// is calculated: a percentage of the fare for single/return tickets, a fixed
@@ -184,12 +185,7 @@ class PassengerRights {
   /// Copy-ready summary the user can paste into the DB form (or keep as proof):
   /// route, date, trains, scheduled vs actual arrival and the delay.
   String prefillText(Journey journey) {
-    String hhmm(DateTime? t) {
-      final l = t?.toLocal();
-      return l == null
-          ? '—'
-          : '${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
-    }
+    String hhmm(DateTime? t) => t?.hhmm ?? '—';
 
     final transit = journey.legs.where((l) => !l.isWalking).toList();
     final o = journey.origin?.name ?? '';

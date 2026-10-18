@@ -15,6 +15,7 @@ import '../../providers/service_providers.dart';
 import '../connection_search/connection_detail_screen.dart';
 import 'widgets/bahncard_view.dart' show openFirstBahnCardControl;
 import '../../widgets/app_nav_bar.dart';
+import '../../core/extensions.dart';
 
 /// Entry point for a booked ticket from the Reisen tab. Loads the ticket,
 /// parses its `verbindung` into a [Journey], then defers to
@@ -304,7 +305,7 @@ class _TicketStatusBlock extends StatelessWidget {
         : '$noun gültig';
 
     final date = ticket.gueltigAb != null
-        ? DateFormat('dd.MM.yyyy').format(ticket.gueltigAb!)
+        ? DateFormat('dd.MM.yyyy').format(ticket.gueltigAb!.berlin)
         : '';
     // The class is only appended when the order actually states one — a
     // ticket whose payload carries no class must not be labelled "2.Kl" (#99).
@@ -590,14 +591,14 @@ class _FallbackTicket extends StatelessWidget {
                   theme,
                   Icons.schedule,
                   'Gültig ab',
-                  DateFormat('dd.MM.yyyy, HH:mm').format(t.gueltigAb!),
+                  DateFormat('dd.MM.yyyy, HH:mm').format(t.gueltigAb!.berlin),
                 ),
               if (t.gueltigBis != null)
                 _row(
                   theme,
                   Icons.event_busy_outlined,
                   'Gültig bis',
-                  DateFormat('dd.MM.yyyy, HH:mm').format(t.gueltigBis!),
+                  DateFormat('dd.MM.yyyy, HH:mm').format(t.gueltigBis!.berlin),
                 ),
               _row(theme, Icons.verified_outlined, 'Status', t.status),
             ],

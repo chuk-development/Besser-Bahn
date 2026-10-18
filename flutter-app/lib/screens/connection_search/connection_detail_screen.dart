@@ -2508,10 +2508,7 @@ class _LegCancelBanner extends StatelessWidget {
   const _LegCancelBanner({required this.leg});
 
   /// " um 00:04", or nothing when the time is unknown.
-  static String? _hhmm(DateTime? t) => t == null
-      ? null
-      : ' um ${t.hour.toString().padLeft(2, '0')}:'
-            '${t.minute.toString().padLeft(2, '0')}';
+  static String? _hhmm(DateTime? t) => t == null ? null : ' um ${t.hhmm}';
 
   @override
   Widget build(BuildContext context) {

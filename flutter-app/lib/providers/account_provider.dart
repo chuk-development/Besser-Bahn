@@ -15,6 +15,7 @@ import '../models/split_ticket.dart' show BahnCardType;
 import '../models/station.dart';
 import '../services/db_account_service.dart';
 import '../services/oauth_browser.dart';
+import '../core/extensions.dart';
 import 'library_provider.dart';
 import 'service_providers.dart';
 import 'settings_provider.dart';
@@ -1124,7 +1125,11 @@ void _logTicketTimes(String key, Map<String, dynamic> raw, Journey parsed) {
       .map((a) => '${a['abgangsDatum']}/${a['ezAbgangsDatum'] ?? '-'}')
       .join(', ');
   final parsedTimes = parsed.legs
-      .map((l) => l.plannedDeparture?.toIso8601String() ?? '-')
+      .map(
+        (l) =>
+            '${l.plannedDeparture?.toIso8601String() ?? '-'}'
+            '${l.plannedDeparture != null ? ' = ${l.plannedDeparture!.berlin.hhmm} Berlin' : ''}',
+      )
       .join(', ');
   AppLog.log(
     'ticket ${AppLog.pii(key, 'Ticket')} raw=[$rawTimes] '

@@ -9,6 +9,7 @@ import '../../providers/library_provider.dart';
 import '../../providers/stopover_plan_provider.dart';
 import '../../utils/stopover_plan.dart';
 import 'widgets/journey_card.dart';
+import '../../core/extensions.dart';
 
 /// "Ich muss um 09:48 beim Zahnarzt sein — und die Wartezeit vorher ist mir
 /// recht."
@@ -227,7 +228,7 @@ class _RouteCard extends StatelessWidget {
                       child: Text(
                         'Da sein um '
                         '${DateFormat('HH:mm').format(args.deadline)}'
-                        ' · ${DateFormat('dd.MM.').format(args.deadline)}',
+                        ' · ${DateFormat('dd.MM.').format(args.deadline.berlin)}',
                         style: theme.textTheme.bodyMedium?.copyWith(
                           fontWeight: FontWeight.w600,
                         ),
