@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../core/berlin_time.dart';
 import '../core/trip_metrics.dart';
 import '../models/journey.dart';
 import '../models/purchased_split.dart';
@@ -160,4 +161,167 @@ String journeysToGeoJson(List<Journey> journeys) {
   return const JsonEncoder.withIndent(
     '  ',
   ).convert({'type': 'FeatureCollection', 'features': features});
+}
+
+/// What a row of the Reisen tab is (#72) — the user splits money spent on
+/// tickets from trips that were only planned.
+enum TripExportKind {
+  /// A ticket bought on the DB account.
+  ticket('Ticket'),
+
+  /// A seat reservation booked without a ticket (`autonomeReservierung`).
+  reservation('Reservierung'),
+
+  /// A trip marked on the DB account ("Gemerkte Reise"), not bought.
+  dbSaved('Gemerkte Reise'),
+
+  /// A trip saved only in this app.
+  local('Gespeicherte Reise');
+
+  const TripExportKind(this.label);
+  final String label;
+}
+
+/// One trip of the Reisen tab, flattened for [tripsToCsv]. Every field except
+/// [kind] is optional: a ticket whose Verbindung will not parse still exports
+/// its order data, and a local trip has no order data at all.
+class TripExportRow {
+  final TripExportKind kind;
+  final Journey? journey;
+
+  /// Used for the departure column when [journey] is unknown (ticket validity
+  /// start, the gemerkte Reise's start day).
+  final DateTime? fallbackStart;
+  final String? fallbackFrom;
+  final String? fallbackTo;
+
+  final double? price;
+
+  /// Where [price] comes from: the printed ticket, or the search result the
+  /// trip was saved from (a search price, not proof of what was paid).
+  final String? priceSource;
+  final String? offerName; // "Flexpreis", "Super Sparpreis" …
+  final String? travelClass; // KLASSE_1 / KLASSE_2
+  final List<String> discounts; // "BahnCard 25" …
+  final String? travellers;
+  final DateTime? bookedAt;
+  final String? orderNumber;
+
+  const TripExportRow({
+    required this.kind,
+    this.journey,
+    this.fallbackStart,
+    this.fallbackFrom,
+    this.fallbackTo,
+    this.price,
+    this.priceSource,
+    this.offerName,
+    this.travelClass,
+    this.discounts = const [],
+    this.travellers,
+    this.bookedAt,
+    this.orderNumber,
+  });
+
+  DateTime? get start =>
+      journey?.plannedDeparture ?? journey?.departure ?? fallbackStart;
+}
+
+/// The Reisen tab as CSV (#72): one row per trip, oldest first, for the
+/// user's own analysis (money spent, tariffs, train numbers).
+///
+/// Times are German wall-clock (`yyyy-MM-dd HH:mm`, Europe/Berlin), the same
+/// time the ticket shows (#106). Planned times, not live ones: an export of a
+/// past trip should not depend on when the delay was last fetched. Money and
+/// distances use a dot decimal, so every spreadsheet reads them as numbers
+/// once the file is imported as comma-separated.
+String tripsToCsv(List<TripExportRow> rows) {
+  String two(int v) => v.toString().padLeft(2, '0');
+  String stamp(DateTime? dt) {
+    if (dt == null) return '';
+    final b = toBerlin(dt);
+    return '${b.year}-${two(b.month)}-${two(b.day)} '
+        '${two(b.hour)}:${two(b.minute)}';
+  }
+
+  String klasse(String? k) => switch (k) {
+    'KLASSE_1' => '1',
+    'KLASSE_2' => '2',
+    _ => '',
+  };
+
+  String trains(Journey j) => [
+    for (final l in j.legs)
+      if (!l.isWalking && l.line != null)
+        _trainLabel(l.line!.name, l.line!.fahrtNr),
+  ].join(' + ');
+
+  final sorted = [...rows]
+    ..sort(
+      (a, b) =>
+          (a.start ?? DateTime(9999)).compareTo(b.start ?? DateTime(9999)),
+    );
+
+  final b = StringBuffer();
+  b.writeln(
+    _row([
+      'Typ',
+      'Abfahrt',
+      'Ankunft',
+      'Von',
+      'Nach',
+      'Dauer (Min)',
+      'Umstiege',
+      'Züge',
+      'Kilometer',
+      'Preis (EUR)',
+      'Preisquelle',
+      'Angebot',
+      'Klasse',
+      'BahnCard',
+      'Reisende',
+      'Gebucht am',
+      'Auftragsnummer',
+    ]),
+  );
+  for (final r in sorted) {
+    final j = r.journey;
+    final dep = j?.plannedDeparture ?? j?.departure ?? r.fallbackStart;
+    final arr = j?.plannedArrival ?? j?.arrival;
+    final minutes = (dep != null && arr != null)
+        ? arr.difference(dep).inMinutes
+        : null;
+    final km = j == null ? null : TripMetrics.distanceKm(j);
+    b.writeln(
+      _row([
+        r.kind.label,
+        stamp(dep),
+        stamp(arr),
+        j?.legs.firstOrNull?.origin.name ?? r.fallbackFrom,
+        j?.legs.lastOrNull?.destination.name ?? r.fallbackTo,
+        minutes,
+        j == null ? null : (j.transfers < 0 ? 0 : j.transfers),
+        j == null ? null : trains(j),
+        (km == null || km <= 0) ? null : km.toStringAsFixed(1),
+        r.price?.toStringAsFixed(2),
+        r.price == null ? null : r.priceSource,
+        r.offerName,
+        klasse(r.travelClass),
+        r.discounts.join(' + '),
+        r.travellers,
+        stamp(r.bookedAt),
+        r.orderNumber,
+      ]),
+    );
+  }
+  return b.toString();
+}
+
+/// "ICE 584" stays as it is; "RE1" with run number 21012 becomes
+/// "RE1 (21012)" — a line name alone does not identify the train.
+String _trainLabel(String name, String fahrtNr) {
+  final n = name.trim();
+  final nr = fahrtNr.trim();
+  if (nr.isEmpty || n.contains(nr)) return n;
+  return n.isEmpty ? nr : '$n ($nr)';
 }

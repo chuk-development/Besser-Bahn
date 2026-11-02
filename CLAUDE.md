@@ -50,3 +50,11 @@ caches (`.playwright-mcp/`), signing keys. They're gitignored — keep them out.
   `lib/core/polyline_cache.dart`.
 - New app structure lives under `flutter-app/lib/screens/`,
   `providers/` (Riverpod), `router/` (GoRouter), `services/`.
+- **DB orders carry no price.** `GET /mob/auftrag/.../kundenwunsch/...` has no
+  price field (checked in the DB Navigator APK: `StandardInfosModel`,
+  `ReiseInfosModel`, `KatalogInfosModel`). The only source is the printed
+  ticket HTML → `DbTicket.priceFromTicketHtml` (best effort, null when the
+  ticket prints none). Local saved trips only have the search price.
+- **`flutter test` flakes:** a few files fail with `Unable to connect to
+  flutter_tester process: WebSocketException` on a full parallel run. That is
+  the runner, not the test — rerun those files alone before you debug.

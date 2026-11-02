@@ -21,9 +21,7 @@ class DbReiseIndex {
     kundenwunschIds: (j['kundenwunschIds'] as List<dynamic>? ?? const [])
         .map((e) => e.toString())
         .toList(),
-    aenderungsDatum: parseDbTimestamp(
-      (j['aenderungsDatum'] ?? '').toString(),
-    ),
+    aenderungsDatum: parseDbTimestamp((j['aenderungsDatum'] ?? '').toString()),
   );
 }
 
@@ -51,9 +49,7 @@ class DbSavedReiseIndex {
         aenderungsDatum: parseDbTimestamp(
           (j['aenderungsDatum'] ?? '').toString(),
         ),
-        startDatum: parseDbTimestamp(
-          (j['startDatum'] ?? '').toString(),
-        ),
+        startDatum: parseDbTimestamp((j['startDatum'] ?? '').toString()),
       );
 }
 
@@ -119,6 +115,17 @@ class DbTicket {
   /// (`autonomeReservierung`). It has a Reiseplan but never a barcode (#105).
   final bool isReservationOnly;
 
+  /// BahnCard discounts on this order ("BahnCard 25" …), from
+  /// `reisendenProfil`. Also folded into [reisendeText]; kept apart so the
+  /// trips export can give them their own column (#72).
+  final List<String> ermaessigungen;
+
+  /// What the order cost, read from the printed ticket HTML. The order JSON
+  /// carries no price at all (DB Navigator's `StandardInfosModel` /
+  /// `ReiseInfosModel` have no price field), so this is null whenever the
+  /// ticket does not print one.
+  double? get paidPrice => priceFromTicketHtml(ticketHtml);
+
   const DbTicket({
     required this.auftragsnummer,
     required this.kundenwunschId,
@@ -141,7 +148,42 @@ class DbTicket {
     this.reservierungen = const [],
     this.verbindungJson,
     this.isReservationOnly = false,
+    this.ermaessigungen = const [],
   });
+
+  /// The total printed on a DB ticket ("Gesamtpreis 29,99 €", "Summe 29,99€"),
+  /// or null when none is found. A total label wins over a bare "Preis", so a
+  /// per-position price never stands in for the order sum.
+  static double? priceFromTicketHtml(String? html) {
+    if (html == null || html.isEmpty) return null;
+    // Drop the embedded base64 images first: they are most of the payload and
+    // carry no text.
+    final text = html
+        .replaceAll(RegExp('data:[^"\' ]+'), ' ')
+        .replaceAll(RegExp(r'<[^>]*>'), ' ')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&#160;', ' ')
+        .replaceAll('&euro;', '€')
+        .replaceAll('&#8364;', '€')
+        .replaceAll(RegExp(r'\s+'), ' ');
+    for (final label in const [
+      'Gesamtpreis',
+      'Gesamtbetrag',
+      'Summe',
+      'Preis',
+    ]) {
+      // "Summe 29,99 €" or "Summe EUR 29,99" — the currency on either side.
+      const amount = r'(\d{1,3}(?:\.\d{3})*,\d{2})';
+      final m = RegExp(
+        '$label\\s*:?\\s*(?:(?:EUR|€)\\s*$amount|$amount\\s*(?:€|EUR))',
+      ).firstMatch(text);
+      if (m == null) continue;
+      final raw = m.group(1) ?? m.group(2)!;
+      final v = double.tryParse(raw.replaceAll('.', '').replaceAll(',', '.'));
+      if (v != null) return v;
+    }
+    return null;
+  }
 
   bool get firstClass => klasse == 'KLASSE_1';
 
@@ -273,6 +315,7 @@ class DbTicket {
           .toList(),
       verbindungJson: info['verbindung'] as Map<String, dynamic>?,
       isReservationOnly: node == 'autonomeReservierung',
+      ermaessigungen: _ermaessigungen(info),
     );
   }
 
@@ -320,7 +363,13 @@ class DbTicket {
       final typ = (r['typ'] ?? '').toString();
       parts.add('$anzahl× ${_paxType(typ)}');
     }
-    // BahnCard discount, if any, from the traveller profile.
+    final erm = _ermaessigungen(info);
+    final base = parts.isEmpty ? '1× Reisende:r' : parts.join(', ');
+    return erm.isEmpty ? base : '$base · ${erm.join(', ')}';
+  }
+
+  /// BahnCard discounts, if any, from the traveller profile.
+  static List<String> _ermaessigungen(Map<String, dynamic> info) {
     final profil = info['reisendenProfil'] as Map<String, dynamic>?;
     final reisende = profil?['reisende'] as List<dynamic>? ?? const [];
     final erm = <String>{};
@@ -330,8 +379,7 @@ class DbTicket {
         if (label != null) erm.add(label);
       }
     }
-    final base = parts.isEmpty ? '1× Reisende:r' : parts.join(', ');
-    return erm.isEmpty ? base : '$base · ${erm.join(', ')}';
+    return erm.toList();
   }
 
   static String _paxType(String typ) {

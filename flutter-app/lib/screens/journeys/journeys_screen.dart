@@ -1,9 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../core/extensions.dart';
+import '../../models/journey.dart';
 import '../../models/library_models.dart';
 import '../../models/db_ticket.dart';
 import '../../models/travel_stats.dart';
@@ -13,6 +18,7 @@ import '../../providers/library_provider.dart';
 import '../../providers/offline_package_provider.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/travel_stats_provider.dart';
+import '../../utils/data_export.dart';
 import '../../widgets/app_menu_button.dart';
 import '../../widgets/app_nav_bar.dart';
 import '../../widgets/offline_package_bar.dart';
@@ -35,6 +41,68 @@ Set<String> boughtSavedReiseIds({
   for (final e in savedReiseIds.entries)
     if (ticketKeys.contains(e.key)) e.value,
 };
+
+/// Every trip of the Reisen tab as export rows (#72), with the same dedupe the
+/// tab itself applies: a bought ticket wins over its gemerkte Reise (#80) and
+/// over a local bookmark of the same trip (#23), a DB trip wins over its local
+/// twin (#15). [savedJourneys] maps a gemerkte Reise's rkUuid to its resolved
+/// Verbindung (null when it would not load).
+List<TripExportRow> tripExportRows({
+  required List<DbTicketTrip> tickets,
+  required List<DbSavedReiseIndex> savedReisen,
+  required Map<String, Journey?> savedJourneys,
+  required List<SavedJourney> local,
+  required Map<String, String> savedReiseIds,
+}) {
+  final ticketKeys = {
+    for (final t in tickets)
+      if (t.journeyKey != null) t.journeyKey!,
+  };
+  final bought = boughtSavedReiseIds(
+    savedReiseIds: savedReiseIds,
+    ticketKeys: ticketKeys,
+  );
+  final savedKeys = {
+    for (final e in savedJourneys.entries)
+      if (e.value != null) SavedJourney(journey: e.value!, savedAtMs: 0).key,
+    ...savedReiseIds.keys,
+  };
+  return [
+    for (final t in tickets)
+      TripExportRow(
+        kind: (t.ticket?.isReservationOnly ?? false)
+            ? TripExportKind.reservation
+            : TripExportKind.ticket,
+        journey: t.journey,
+        fallbackStart: t.ticket?.gueltigAb,
+        fallbackFrom: t.ticket?.vonName,
+        fallbackTo: t.ticket?.nachName,
+        price: t.ticket?.paidPrice,
+        priceSource: 'Ticket',
+        offerName: t.ticket?.angebotsname,
+        travelClass: t.ticket?.klasse,
+        discounts: t.ticket?.ermaessigungen ?? const [],
+        travellers: t.ticket?.reisendeText,
+        bookedAt: t.ticket?.buchungsdatum,
+        orderNumber: t.index.auftragsnummer,
+      ),
+    for (final s in savedReisen)
+      if (!bought.contains(s.rkUuid))
+        TripExportRow(
+          kind: TripExportKind.dbSaved,
+          journey: savedJourneys[s.rkUuid],
+          fallbackStart: s.startDatum,
+        ),
+    for (final j in local)
+      if (!ticketKeys.contains(j.key) && !savedKeys.contains(j.key))
+        TripExportRow(
+          kind: TripExportKind.local,
+          journey: j.journey,
+          price: j.journey.price?.amount,
+          priceSource: 'Suche',
+        ),
+  ];
+}
 
 /// "Reisen" — the user's saved connections, like the DB Navigator. Upcoming
 /// trips on top, completed ones under "Vergangene Reisen". Trips bookmark from
@@ -106,10 +174,16 @@ class JourneysScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Reisen'),
-        actions: const [
+        actions: [
+          if (loggedIn || hasLocal)
+            IconButton(
+              tooltip: 'Reisen als CSV exportieren',
+              icon: const Icon(Icons.ios_share),
+              onPressed: () => _exportTrips(context, ref),
+            ),
           // The big "deine Reisestatistik" card below is the way to the stats —
           // the AppBar icon was a second button to the same screen.
-          AppMenuButton(),
+          const AppMenuButton(),
         ],
       ),
       body: (!loggedIn && !hasLocal)
@@ -206,6 +280,55 @@ class JourneysScreen extends ConsumerWidget {
               ),
             ),
     );
+  }
+
+  /// The Reisen tab as CSV through the share sheet (#72). Loads what the tiles
+  /// may not have loaded yet (tickets, gemerkte Reisen) — every one of those
+  /// is disk-cached, so this is quick after the tab has been open once.
+  Future<void> _exportTrips(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Reisen werden zusammengestellt …')),
+    );
+    try {
+      final loggedIn = ref.read(dbAuthProvider).isLoggedIn;
+      final tickets = loggedIn
+          ? await ref.read(ticketTripsProvider.future)
+          : const <DbTicketTrip>[];
+      final saved = loggedIn
+          ? await ref.read(savedReisenProvider.future)
+          : const <DbSavedReiseIndex>[];
+      final savedJourneys = <String, Journey?>{};
+      for (final s in saved) {
+        try {
+          savedJourneys[s.rkUuid] = await ref.read(
+            savedReiseJourneyProvider(s.rkUuid).future,
+          );
+        } catch (_) {
+          savedJourneys[s.rkUuid] = null;
+        }
+      }
+      final lib = ref.read(libraryProvider);
+      final rows = tripExportRows(
+        tickets: tickets,
+        savedReisen: saved,
+        savedJourneys: savedJourneys,
+        local: [...lib.pastJourneys, ...lib.upcomingJourneys],
+        savedReiseIds: ref.read(dbSavedReiseIdsProvider),
+      );
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/besser-bahn-reisen.csv');
+      await file.writeAsString(tripsToCsv(rows));
+      messenger.hideCurrentSnackBar();
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(file.path)], subject: 'Reisen (CSV)'),
+      );
+    } catch (e) {
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(content: Text('Export fehlgeschlagen: $e')),
+      );
+    }
   }
 
   /// "Vergangene Reisen": bought tickets and local bookmarks in ONE list, most
@@ -666,9 +789,7 @@ class _OfficialTicketTile extends ConsumerWidget {
               if ((t?.gueltigAb ?? index.aenderungsDatum) != null)
                 DateFormat(
                   'dd.MM.yyyy',
-                ).format(
-                  (t?.gueltigAb ?? index.aenderungsDatum)!.berlin,
-                ),
+                ).format((t?.gueltigAb ?? index.aenderungsDatum)!.berlin),
               if (t != null && t.hasClass) t.firstClass ? '1. Kl.' : '2. Kl.',
               if (t?.angebotsname != null) t!.angebotsname!,
             ].where((s) => s.isNotEmpty).join(' · '),
