@@ -46,6 +46,7 @@ import '../../widgets/fahrgastrechte_card.dart';
 import '../../widgets/offline_package_bar.dart';
 import '../../widgets/prediction_badge.dart';
 import '../../widgets/product_badge.dart';
+import '../../widgets/traewelling_logo.dart';
 import '../../widgets/trip_progress_inline.dart';
 import '../../widgets/trwl_checkin_sheet.dart';
 import '../train_lookup/widgets/train_detail_view.dart';
@@ -2259,6 +2260,26 @@ class _LegSectionState extends ConsumerState<_LegSection>
     context.push('/station-map');
   }
 
+  /// Per-leg check-in (#108). Shown on every train in the connection, including
+  /// the timeline rebuilt from the search when the live run fails to load.
+  Widget? _trwlCheckinButton(Trip trip) {
+    final leg = widget.leg;
+    if (leg.isWalking || leg.line == null) return null;
+    return IconButton(
+      icon: const TraewellingLogo(size: 20),
+      tooltip: 'In Träwelling einchecken',
+      visualDensity: VisualDensity.compact,
+      onPressed: () => startTrwlCheckin(
+        context,
+        ref,
+        trip,
+        boardingName: leg.origin.name,
+        boardingDeparture: leg.plannedDeparture ?? leg.departure,
+        alightingName: leg.destination.name,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context); // required by AutomaticKeepAliveClientMixin
@@ -2290,9 +2311,10 @@ class _LegSectionState extends ConsumerState<_LegSection>
         alightingId: leg.destination.id.isNotEmpty
             ? leg.destination.id
             : leg.destination.name,
-        // No header buttons: the alternative-departure arrows live in the
-        // switcher bar below (no doubled "Weitere Abfahrten" button), and
-        // Träwelling check-in is automatic on save for every train leg.
+        // "Weitere Abfahrten" stays in the switcher bar below. The Träwelling
+        // symbol stays here: saving a journey only checks in when that setting
+        // is on, and the documented check-in is a tap on this symbol (#108).
+        headerAction: _trwlCheckinButton(trip),
         predictionStrip: (!leg.isWalking && leg.line != null)
             ? LegPredictionBadge(leg: leg, nextLeg: widget.nextTransitLeg)
             : null,
@@ -2337,6 +2359,7 @@ class _LegSectionState extends ConsumerState<_LegSection>
               alightingId: leg.destination.id.isNotEmpty
                   ? leg.destination.id
                   : leg.destination.name,
+              headerAction: _trwlCheckinButton(degraded),
               legDestinationName: leg.destination.name.isNotEmpty
                   ? leg.destination.name
                   : null,

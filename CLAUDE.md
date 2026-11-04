@@ -58,3 +58,9 @@ caches (`.playwright-mcp/`), signing keys. They're gitignored — keep them out.
 - **`flutter test` flakes:** a few files fail with `Unable to connect to
   flutter_tester process: WebSocketException` on a full parallel run. That is
   the runner, not the test — rerun those files alone before you debug.
+- **Träwelling symbol on each train in the connection view** (`_LegSection` →
+  `TrainDetailView.headerAction`, tooltip „In Träwelling einchecken“). Commit
+  `fcfeb9c` dropped it together with the redundant „Weitere Abfahrten“ button.
+  Auto-check-in on save only runs when that setting is on. The symbol is the
+  documented per-leg check-in (#108). Do not remove it when cleaning header
+  buttons. The Zugnummer screen has its own copy in the search row.
