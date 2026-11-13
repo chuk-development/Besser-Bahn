@@ -55,6 +55,21 @@ caches (`.playwright-mcp/`), signing keys. They're gitignored — keep them out.
   `ReiseInfosModel`, `KatalogInfosModel`). The only source is the printed
   ticket HTML → `DbTicket.priceFromTicketHtml` (best effort, null when the
   ticket prints none). Local saved trips only have the search price.
+- **„Ticket hinzufügen“ ist nicht im Konto.** DB Navigator lädt ein fremdes
+  Ticket mit `POST /mob/auftrag/{nr}/manuellLaden` (Body `{"nachname": …}`,
+  ohne Login, Media `auftraege.v11`) und speichert es NUR auf dem Gerät
+  (Tabelle `manuellGeladeneAuftragsinfos`). Darum taucht es weder in
+  `reisenuebersicht` noch auf einem zweiten Gerät auf. Die Antwort enthält
+  jedes Ticket komplett (`auftragsbezogeneReisen[]`, gleiche Form wie
+  `GET …/kundenwunsch`). Der mitgelieferte `anonymerZugriff.accessToken`
+  bringt bei `GET …/kundenwunsch` nur `403 TOKEN`; wir laden zum
+  Aktualisieren einfach neu per Nachname (`ManualOrdersController`,
+  Speicher: Secure Storage `db_manual_orders_v1`, bleibt nach Logout).
+  Fehler stehen in `details.typ` (`AUFTRAG_NICHT_GEFUNDEN`,
+  `AUFTRAG_LOGIN_REQUIRED`, …). Der Aufruf mit curl ohne Chrome-TLS gibt
+  `452 OPS_BLOCKED`, also im Test `curl_cffi` nehmen.
+- **BahnBonus-Nummer** kommt im normalen Login mit: `bbStatus.loyaltyNumber`.
+  Dafür ist kein zweiter BahnBonus-Login nötig (der gilt nur für CO₂).
 - **`flutter test` flakes:** a few files fail with `Unable to connect to
   flutter_tester process: WebSocketException` on a full parallel run. That is
   the runner, not the test — rerun those files alone before you debug.

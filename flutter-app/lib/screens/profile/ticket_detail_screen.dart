@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart'
@@ -14,6 +15,7 @@ import '../../providers/account_provider.dart';
 import '../../providers/service_providers.dart';
 import '../connection_search/connection_detail_screen.dart';
 import 'widgets/bahncard_view.dart' show openFirstBahnCardControl;
+import '../../widgets/add_ticket_dialog.dart';
 import '../../widgets/app_nav_bar.dart';
 import '../../core/extensions.dart';
 
@@ -121,6 +123,8 @@ class TicketViewScreen extends ConsumerWidget {
     final ticket = ref.watch(ticketProvider(key));
     final reservations = ticket.asData?.value.reservierungen ?? const [];
     final loggedIn = ref.watch(dbAuthProvider).isLoggedIn;
+    final manual = (ref.watch(manualOrdersProvider).asData?.value ?? const [])
+        .any((o) => o.auftragsnummer == ticketRef.auftragsnummer);
 
     return Scaffold(
       // Theme background (the dark/brown app surface) shows between the two
@@ -144,6 +148,22 @@ class TicketViewScreen extends ConsumerWidget {
               icon: const Icon(Icons.event_seat_outlined),
               tooltip: 'Reservierte Sitzplätze',
               onPressed: () => _showReservations(context, reservations),
+            ),
+          // Added by order number + surname: only this device knows it, so
+          // only here can it be dropped again.
+          if (manual)
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Von diesem Gerät entfernen',
+              onPressed: () async {
+                final router = GoRouter.of(context);
+                final removed = await confirmRemoveManualTicket(
+                  context,
+                  ref,
+                  ticketRef.auftragsnummer,
+                );
+                if (removed) router.go('/journeys');
+              },
             ),
         ],
       ),

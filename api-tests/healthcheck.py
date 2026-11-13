@@ -317,6 +317,41 @@ def check_vendo_departures() -> str:
             f"{e.get('richtung', '?')}, zuglaufId len={len(e['zuglaufId'])}")
 
 
+AUFTRAG_MEDIA = "application/x.db.vendo.mob.auftraege.v11+json"
+
+
+def check_vendo_manuell_laden() -> str:
+    """POST /mob/auftrag/{nr}/manuellLaden — "Ticket hinzufügen" (order number
+    + surname, no login). An unknown number must come back as a typed 404
+    AUFTRAG_NICHT_GEFUNDEN and a malformed one as 400 VALIDIERUNG — the app maps
+    exactly those to user text. A real order answers 200 with
+    `auftragsbezogeneReisen[]` (same shape as GET …/kundenwunsch) plus
+    `anonymerZugriff.accessToken`; no public test order exists for that path."""
+    headers = _vendo_headers(AUFTRAG_MEDIA)
+    r = _post(
+        f"https://{MOB_HOST}/mob/auftrag/990000000001/manuellLaden",
+        headers=headers,
+        data=json.dumps({"nachname": "Mustermann"}),
+        timeout=20,
+    )
+    if r.status_code != 404:
+        raise CheckError(f"unknown order: expected 404, got {r.status_code}: "
+                         f"{r.text[:200]}")
+    typ = ((r.json() or {}).get("details") or {}).get("typ")
+    if typ not in ("AUFTRAG_NICHT_GEFUNDEN", "AUFTRAG_NOT_FOUND"):
+        raise CheckError(f"unknown order: unexpected details.typ {typ!r}")
+    r2 = _post(
+        f"https://{MOB_HOST}/mob/auftrag/ABC123/manuellLaden",
+        headers=_vendo_headers(AUFTRAG_MEDIA),
+        data=json.dumps({"nachname": "Mustermann"}),
+        timeout=20,
+    )
+    if r2.status_code != 400 or (r2.json() or {}).get("code") != "VALIDIERUNG":
+        raise CheckError(f"bad order number: expected 400 VALIDIERUNG, got "
+                         f"{r2.status_code}: {r2.text[:200]}")
+    return f"unknown order → 404 {typ}, malformed → 400 VALIDIERUNG"
+
+
 def check_iris_board_via() -> str:
     """GET iris.noncd.db.de/iris-tts/timetable/plan/{eva}/{yymmdd}/{hh} — the
     station plan feed. It is the only cheap source of the "Über" stops the app
@@ -3925,6 +3960,7 @@ def check_github_releases_api() -> str:
 CHECKS = [
     ("bahn.de web API blocked (reiseloesung)", check_bahn_web_api_blocked, True),
     ("vendo departures (bahnhofstafel)", check_vendo_departures, False),
+    ("vendo Ticket hinzufügen (manuellLaden)", check_vendo_manuell_laden, False),
     ("vendo arrivals (bahnhofstafel)", check_vendo_arrivals, False),
     ("vendo board semantics (gattung/cancel)", check_vendo_board_semantics, False),
     ("IRIS plan via stops (board \"Über\")", check_iris_board_via, False),

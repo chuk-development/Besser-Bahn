@@ -38,6 +38,52 @@ class DbBahnBonusAuthorizationRequired extends DbAccountException {
     : super('BahnBonus muss einmalig verknüpft werden', 403);
 }
 
+/// "Ticket hinzufügen" failed. [message] is ready for the user. Kept apart from
+/// [DbAccountException] on purpose: the call is anonymous, so none of its
+/// failures may be read as a dead account session.
+class DbManualOrderException implements Exception {
+  final String message;
+  final int? status;
+  final String? typ;
+  const DbManualOrderException(this.message, {this.status, this.typ});
+
+  /// Maps the backend's error `details.typ` (the same set DB Navigator's
+  /// `ManuellLadenEndpointErrorMapper` knows) to German user text.
+  factory DbManualOrderException.fromResponse(http.Response res) {
+    String? typ;
+    String? code;
+    try {
+      final body = json.decode(utf8.decode(res.bodyBytes));
+      if (body is Map<String, dynamic>) {
+        code = body['code']?.toString();
+        final details = body['details'];
+        if (details is Map<String, dynamic>) typ = details['typ']?.toString();
+      }
+    } catch (_) {}
+    final message = switch (typ) {
+      'AUFTRAG_NICHT_GEFUNDEN' || 'AUFTRAG_NOT_FOUND' =>
+        'Kein Ticket gefunden. Prüfe Auftragsnummer und Nachnamen.',
+      'AUFTRAG_LOGIN_REQUIRED' =>
+        'Dieses Ticket lässt sich nur mit dem DB-Konto laden, mit dem es '
+            'gebucht wurde.',
+      'AUFTRAG_KEIN_ANONYMES_LADEN_ERLAUBT' =>
+        'Dieses Ticket darf die Bahn nicht ohne Anmeldung herausgeben.',
+      'AUFTRAG_NOT_SUPPORTED' => 'Diese Ticketart kann die App nicht laden.',
+      'AUFTRAG_KEIN_FOLGEAUFTRAG' =>
+        'Dieser Auftrag lässt sich nicht hinzufügen.',
+      _ when code == 'VALIDIERUNG' || res.statusCode == 400 =>
+        'Die Auftragsnummer ist ungültig.',
+      _ when res.statusCode == 429 =>
+        'Zu viele Anfragen. Bitte in ein paar Minuten erneut versuchen.',
+      _ => 'Ticket konnte nicht geladen werden (HTTP ${res.statusCode}).',
+    };
+    return DbManualOrderException(message, status: res.statusCode, typ: typ);
+  }
+
+  @override
+  String toString() => message;
+}
+
 /// Authenticated client for the signed-in user's DB account: profile,
 /// BahnBonus, BahnCards and booked tickets — read from the same DB Navigator
 /// backend (`app.services-bahn.de/mob`) the official app uses, authenticated
@@ -1211,6 +1257,90 @@ class DbAccountService {
     if (res.statusCode == 304) return null;
     return _decode(res, 'auftrag');
   }
+
+  // --- Manually added tickets ("Ticket hinzufügen") --------------------------
+
+  /// Loads a ticket bought by someone else (or without an account) by order
+  /// number and surname — DB Navigator's "Ticket hinzufügen".
+  ///
+  /// This does NOT link the order to the DB account. Navigator keeps the result
+  /// only on the device (table `manuellGeladeneAuftragsinfos`: accessToken +
+  /// nachname), which is why a ticket added there never shows up here. The call
+  /// is anonymous (no Authorization header) and the response already carries
+  /// every ticket of the order in full — the same `{reise|katalog|…: {
+  /// standardInfos, *Infos}}` shape as `GET …/kundenwunsch/{id}`, so each entry
+  /// parses with [DbTicket.fromJson] unchanged. The returned anonymous
+  /// `accessToken` is not used: `GET …/kundenwunsch` answers it with
+  /// `403 TOKEN`, and Navigator itself falls back to calling this endpoint
+  /// again with the stored surname. We do the same on every refresh.
+  Future<List<Map<String, dynamic>>> manuellLaden(
+    String auftragsnummer,
+    String nachname,
+  ) {
+    final nr = auftragsnummer.replaceAll(RegExp(r'\s'), '').toUpperCase();
+    return _coalescer.run('MANUELL $nr', () async {
+      await _ensureDeviceInfo();
+      await _ensureCorrelationId();
+      final headers = _headers(DbAccountConstants.auftragMedia)
+        ..remove('Authorization')
+        ..['Content-Type'] = DbAccountConstants.auftragMedia;
+      final http.Response res;
+      try {
+        res = await _client
+            .post(
+              Uri.parse(
+                '${DbAccountConstants.mobBase}/auftrag/'
+                '${Uri.encodeComponent(nr)}/manuellLaden',
+              ),
+              headers: headers,
+              body: utf8.encode(json.encode({'nachname': nachname.trim()})),
+            )
+            .timeout(_timeout);
+      } on TimeoutException {
+        throw const DbManualOrderException(
+          'Zeitüberschreitung – die Bahn antwortet nicht.',
+        );
+      }
+      if (res.statusCode != 200) {
+        throw DbManualOrderException.fromResponse(res);
+      }
+      final data = json.decode(utf8.decode(res.bodyBytes));
+      final list = data is Map<String, dynamic>
+          ? data['auftragsbezogeneReisen']
+          : null;
+      final tickets = (list is List ? list : const [])
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      AppLog.log(
+        'manuellLaden ${AppLog.pii(nr, 'Auftrag')}: ${tickets.length} Ticket(s)',
+        tag: 'db-account',
+      );
+      if (tickets.isEmpty) {
+        throw const DbManualOrderException(
+          'Die Bahn hat zu diesem Auftrag kein Ticket geliefert.',
+        );
+      }
+      return tickets;
+    });
+  }
+
+  static const _kManualOrders = 'db_manual_orders_v1';
+
+  /// The orders added by number + surname. In secure storage, because order
+  /// number + surname are enough to open the ticket. Kept across logout: they
+  /// never belonged to the account.
+  Future<List<Map<String, dynamic>>> loadManualOrders() async {
+    final raw = await _read(_kManualOrders);
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final data = json.decode(raw);
+      if (data is List) return data.whereType<Map<String, dynamic>>().toList();
+    } catch (_) {}
+    return const [];
+  }
+
+  Future<void> saveManualOrders(List<Map<String, dynamic>> orders) =>
+      _writeKey(_kManualOrders, json.encode(orders));
 
   // --- Saved trips ("Meine Reisen") -----------------------------------------
 

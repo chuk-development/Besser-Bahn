@@ -994,10 +994,139 @@ final reisenuebersichtProvider =
       ReisenUebersichtController.new,
     );
 
-/// Bought tickets only (auftragsIndizes), newest first.
+/// Tickets added by order number + surname ("Ticket hinzufügen"). Not in the
+/// DB account — DB Navigator keeps them only on the device as well — so they
+/// stay here across logout and also work without any login.
+///
+/// Each ticket's full JSON goes into the same per-ticket disk cache the account
+/// tickets use, so the Reisen tab and the ticket view need no second path.
+class ManualOrdersController extends AsyncNotifier<List<DbManualOrder>> {
+  @override
+  Future<List<DbManualOrder>> build() async {
+    final raw = await ref.read(dbAccountServiceProvider).loadManualOrders();
+    return raw.map(DbManualOrder.fromJson).toList();
+  }
+
+  Future<List<DbManualOrder>> _current() async =>
+      state.asData?.value ?? await future;
+
+  Future<void> _persist(List<DbManualOrder> orders) async {
+    await ref.read(dbAccountServiceProvider).saveManualOrders([
+      for (final o in orders) o.toJson(),
+    ]);
+    state = AsyncData(orders);
+  }
+
+  /// Loads the order and stores it. Returns how many tickets it carries.
+  /// Throws [DbManualOrderException] with a message for the user.
+  Future<int> add(String auftragsnummer, String nachname) async {
+    final order = await _load(auftragsnummer, nachname, DateTime.now());
+    final others = (await _current())
+        .where((o) => o.auftragsnummer != order.auftragsnummer)
+        .toList();
+    await _persist([order, ...others]);
+    for (final kw in order.kundenwunschIds) {
+      ref.invalidate(ticketProvider('${order.auftragsnummer}/$kw'));
+    }
+    return order.kundenwunschIds.length;
+  }
+
+  Future<DbManualOrder> _load(
+    String auftragsnummer,
+    String nachname,
+    DateTime addedAt,
+  ) async {
+    final tickets = await ref
+        .read(dbAccountServiceProvider)
+        .manuellLaden(auftragsnummer, nachname);
+    String? nr;
+    final ids = <String>[];
+    for (final t in tickets) {
+      final parsed = DbTicket.fromJson(t);
+      if (parsed.kundenwunschId.isEmpty) continue;
+      nr ??= parsed.auftragsnummer;
+      ids.add(parsed.kundenwunschId);
+      await _DbTicketCache.save(
+        '${parsed.auftragsnummer}/${parsed.kundenwunschId}',
+        t,
+      );
+    }
+    if (nr == null || ids.isEmpty) {
+      throw const DbManualOrderException(
+        'Die Bahn hat zu diesem Auftrag kein lesbares Ticket geliefert.',
+      );
+    }
+    return DbManualOrder(
+      auftragsnummer: nr,
+      nachname: nachname.trim(),
+      kundenwunschIds: ids,
+      addedAt: addedAt,
+    );
+  }
+
+  /// Reloads one order from DB (Navigator does the same: it re-runs the
+  /// surname lookup when its stored token is no longer accepted).
+  Future<void> reload(String auftragsnummer) async {
+    final orders = await _current();
+    final old = orders
+        .where((o) => o.auftragsnummer == auftragsnummer)
+        .firstOrNull;
+    if (old == null) return;
+    final fresh = await _load(old.auftragsnummer, old.nachname, old.addedAt);
+    await _persist([
+      for (final o in await _current())
+        o.auftragsnummer == auftragsnummer ? fresh : o,
+    ]);
+  }
+
+  /// Pull-to-refresh: reload every order; one failure doesn't stop the rest.
+  Future<void> refreshAll() async {
+    for (final o in await _current()) {
+      try {
+        await reload(o.auftragsnummer);
+        for (final kw in o.kundenwunschIds) {
+          ref.invalidate(ticketProvider('${o.auftragsnummer}/$kw'));
+        }
+      } catch (e) {
+        AppLog.log(
+          'manual order ${AppLog.pii(o.auftragsnummer, 'Auftrag')} '
+          'refresh failed: $e',
+          tag: 'db-account',
+        );
+      }
+    }
+  }
+
+  Future<void> remove(String auftragsnummer) async {
+    final orders = await _current();
+    for (final o in orders.where((o) => o.auftragsnummer == auftragsnummer)) {
+      for (final kw in o.kundenwunschIds) {
+        await _DbTicketCache.remove('${o.auftragsnummer}/$kw');
+      }
+    }
+    await _persist(
+      orders.where((o) => o.auftragsnummer != auftragsnummer).toList(),
+    );
+  }
+}
+
+final manualOrdersProvider =
+    AsyncNotifierProvider<ManualOrdersController, List<DbManualOrder>>(
+      ManualOrdersController.new,
+    );
+
+/// Bought tickets: the account's orders (auftragsIndizes, newest first), then
+/// the ones added by number + surname. An added order that has since shown up
+/// in the account is listed once, as the account's.
 final ticketIndicesProvider = FutureProvider<List<DbReiseIndex>>((ref) async {
   final uebersicht = await ref.watch(reisenuebersichtProvider.future);
-  return uebersicht.orders;
+  final manual = await ref.watch(manualOrdersProvider.future);
+  final inAccount = {for (final o in uebersicht.orders) o.auftragsnummer};
+  return [
+    ...uebersicht.orders,
+    for (final m in manual)
+      if (!inAccount.contains(m.auftragsnummer)) m.toIndex(),
+  ];
 });
 
 /// A bought ticket with its trip resolved — the order index alone carries no
@@ -1209,6 +1338,13 @@ class _DbTicketCache {
     } catch (_) {}
   }
 
+  static Future<void> remove(String key) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_k(key));
+    } catch (_) {}
+  }
+
   static Future<void> clearAll() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1244,6 +1380,22 @@ final ticketProvider = FutureProvider.family<DbTicket, String>((
   ref,
   key,
 ) async {
+  // A ticket added by number + surname has no account behind it: the account
+  // endpoint would answer 403. Reload it the way it was added.
+  final nr = key.split('/').first;
+  final manual = (await ref.read(
+    manualOrdersProvider.future,
+  )).any((o) => o.auftragsnummer == nr);
+  if (manual) {
+    final cached = await _DbTicketCache.load(key);
+    if (cached != null) return DbTicket.fromJson(cached);
+    await ref.read(manualOrdersProvider.notifier).reload(nr);
+    final fresh = await _DbTicketCache.load(key);
+    if (fresh != null) return DbTicket.fromJson(fresh);
+    throw const DbManualOrderException(
+      'Dieses Ticket gehört nicht mehr zum Auftrag.',
+    );
+  }
   final cached = await _DbTicketCache.load(key);
   if (cached != null) {
     // Best-effort background revalidation so future opens reflect any

@@ -10,10 +10,15 @@ class DbReiseIndex {
   final List<String> kundenwunschIds;
   final DateTime? aenderungsDatum;
 
+  /// Added by order number + surname ("Ticket hinzufügen"), not part of the
+  /// DB account. Lives only on this device; see [DbManualOrder].
+  final bool manual;
+
   const DbReiseIndex({
     required this.auftragsnummer,
     required this.kundenwunschIds,
     this.aenderungsDatum,
+    this.manual = false,
   });
 
   factory DbReiseIndex.fromJson(Map<String, dynamic> j) => DbReiseIndex(
@@ -22,6 +27,47 @@ class DbReiseIndex {
         .map((e) => e.toString())
         .toList(),
     aenderungsDatum: parseDbTimestamp((j['aenderungsDatum'] ?? '').toString()),
+  );
+}
+
+/// A ticket order added by order number + surname ("Ticket hinzufügen"). DB
+/// keeps no link to the account for it — DB Navigator stores the same data only
+/// on the device — so this record is what lets the app reload the ticket.
+class DbManualOrder {
+  final String auftragsnummer;
+  final String nachname;
+  final List<String> kundenwunschIds;
+  final DateTime addedAt;
+
+  const DbManualOrder({
+    required this.auftragsnummer,
+    required this.nachname,
+    required this.kundenwunschIds,
+    required this.addedAt,
+  });
+
+  factory DbManualOrder.fromJson(Map<String, dynamic> j) => DbManualOrder(
+    auftragsnummer: (j['auftragsnummer'] ?? '').toString(),
+    nachname: (j['nachname'] ?? '').toString(),
+    kundenwunschIds: (j['kundenwunschIds'] as List<dynamic>? ?? const [])
+        .map((e) => e.toString())
+        .toList(),
+    addedAt:
+        DateTime.tryParse((j['addedAt'] ?? '').toString()) ?? DateTime(2000),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'auftragsnummer': auftragsnummer,
+    'nachname': nachname,
+    'kundenwunschIds': kundenwunschIds,
+    'addedAt': addedAt.toIso8601String(),
+  };
+
+  DbReiseIndex toIndex() => DbReiseIndex(
+    auftragsnummer: auftragsnummer,
+    kundenwunschIds: kundenwunschIds,
+    aenderungsDatum: addedAt,
+    manual: true,
   );
 }
 

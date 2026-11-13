@@ -9,6 +9,7 @@ import '../../models/db_ticket.dart';
 import '../../providers/account_provider.dart';
 import '../../widgets/app_nav_bar.dart';
 import '../../services/update_check_service.dart';
+import '../../widgets/add_ticket_dialog.dart';
 import 'widgets/bahncard_view.dart';
 import '../../core/berlin_time.dart';
 
@@ -373,7 +374,16 @@ class _LoggedIn extends ConsumerWidget {
             ],
           ),
           // Tickets
-          _sectionTitle(context, 'Meine Tickets'),
+          Row(
+            children: [
+              Expanded(child: _sectionTitle(context, 'Meine Tickets')),
+              TextButton.icon(
+                onPressed: () => showAddTicketDialog(context),
+                icon: const Icon(Icons.add_card, size: 20),
+                label: const Text('Ticket hinzufügen'),
+              ),
+            ],
+          ),
           tickets.when(
             data: (list) => list.isEmpty
                 ? _emptyTickets(context)
@@ -559,6 +569,11 @@ class _BahnBonusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // Comes with the normal DB login (`bbStatus`), so no second BahnBonus
+    // login is needed to show it.
+    final number = bonus.loyaltyNumber?.trim().isNotEmpty == true
+        ? bonus.loyaltyNumber!.trim()
+        : null;
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       color: theme.colorScheme.primaryContainer,
@@ -586,13 +601,53 @@ class _BahnBonusCard extends StatelessWidget {
                     '${bonus.activeStatusPoints} Statuspunkte',
                     style: theme.textTheme.bodyMedium,
                   ),
+                  if (number != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'BahnBonus-Nummer',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onPrimaryContainer.withAlpha(
+                          180,
+                        ),
+                      ),
+                    ),
+                    SelectableText(
+                      _grouped(number),
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
+            if (number != null)
+              IconButton(
+                tooltip: 'BahnBonus-Nummer kopieren',
+                icon: const Icon(Icons.copy_rounded),
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: number));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('BahnBonus-Nummer kopiert')),
+                  );
+                },
+              ),
           ],
         ),
       ),
     );
+  }
+
+  /// "3081471234567890" → "3081 4712 3456 7890", easier to read out or type.
+  static String _grouped(String raw) {
+    final digits = raw.replaceAll(' ', '');
+    final buf = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      if (i > 0 && i % 4 == 0) buf.write(' ');
+      buf.write(digits[i]);
+    }
+    return buf.toString();
   }
 }
 
@@ -608,7 +663,10 @@ class _BahnBonusCard extends StatelessWidget {
 /// record; this is the one you can't miss.
 Future<void> _pullToRefresh(BuildContext context, WidgetRef ref) async {
   final messenger = ScaffoldMessenger.of(context);
-  await ref.read(accountRefreshProvider).refresh();
+  await Future.wait([
+    ref.read(accountRefreshProvider).refresh(),
+    ref.read(manualOrdersProvider.notifier).refreshAll(),
+  ]);
   final error = ref.read(dbAuthProvider).error;
   if (error == null) return;
   messenger
@@ -701,12 +759,12 @@ class _BahnCardTile extends StatelessWidget {
   }
 }
 
-class _TicketTile extends StatelessWidget {
+class _TicketTile extends ConsumerWidget {
   final DbReiseIndex index;
   const _TicketTile({required this.index});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final kwId = index.kundenwunschIds.isNotEmpty
         ? index.kundenwunschIds.first
         : '';
@@ -716,10 +774,23 @@ class _TicketTile extends StatelessWidget {
       child: ListTile(
         leading: const Icon(Icons.confirmation_number_outlined),
         title: Text('Auftrag ${index.auftragsnummer}'),
-        subtitle: date != null
-            ? Text(DateFormat('dd.MM.yyyy').format(toBerlin(date)))
-            : null,
-        trailing: const Icon(Icons.chevron_right),
+        subtitle: Text(
+          [
+            if (index.manual) 'Hinzugefügt',
+            if (date != null) DateFormat('dd.MM.yyyy').format(toBerlin(date)),
+          ].join(' · '),
+        ),
+        trailing: index.manual
+            ? IconButton(
+                tooltip: 'Von diesem Gerät entfernen',
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () => confirmRemoveManualTicket(
+                  context,
+                  ref,
+                  index.auftragsnummer,
+                ),
+              )
+            : const Icon(Icons.chevron_right),
         onTap: kwId.isEmpty
             ? null
             : () => context.push(

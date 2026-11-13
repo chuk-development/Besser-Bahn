@@ -19,6 +19,7 @@ import '../../providers/offline_package_provider.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/travel_stats_provider.dart';
 import '../../utils/data_export.dart';
+import '../../widgets/add_ticket_dialog.dart';
 import '../../widgets/app_menu_button.dart';
 import '../../widgets/app_nav_bar.dart';
 import '../../widgets/offline_package_bar.dart';
@@ -124,7 +125,13 @@ class JourneysScreen extends ConsumerWidget {
     // list. Logged out, only the local/offline saved trips show — that fallback
     // stays exactly as before.
     final loggedIn = ref.watch(dbAuthProvider).isLoggedIn;
-    final tickets = loggedIn ? ref.watch(ticketTripsProvider) : null;
+    // Tickets added by order number + surname need no login, so the ticket
+    // list is watched either way (logged out it only holds those).
+    final hasManual =
+        (ref.watch(manualOrdersProvider).asData?.value ?? const []).isNotEmpty;
+    final tickets = (loggedIn || hasManual)
+        ? ref.watch(ticketTripsProvider)
+        : null;
     final ticketTrips = tickets?.asData?.value ?? const <DbTicketTrip>[];
     // A trip that's ALSO a bought ticket renders as that ticket — bookmarking
     // it locally used to list it twice, once per section (#23). Same rule the
@@ -175,7 +182,12 @@ class JourneysScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Reisen'),
         actions: [
-          if (loggedIn || hasLocal)
+          IconButton(
+            tooltip: 'Ticket hinzufügen',
+            icon: const Icon(Icons.add_card),
+            onPressed: () => showAddTicketDialog(context),
+          ),
+          if (loggedIn || hasLocal || hasManual)
             IconButton(
               tooltip: 'Reisen als CSV exportieren',
               icon: const Icon(Icons.ios_share),
@@ -186,7 +198,7 @@ class JourneysScreen extends ConsumerWidget {
           const AppMenuButton(),
         ],
       ),
-      body: (!loggedIn && !hasLocal)
+      body: (!loggedIn && !hasLocal && !hasManual)
           ? _empty(context)
           : RefreshIndicator(
               onRefresh: () async {
@@ -194,9 +206,11 @@ class JourneysScreen extends ConsumerWidget {
                 // disk cache's stale-while-revalidate). The controller
                 // handles fallback to the cache on failure so the user is
                 // never left with an empty list.
-                if (loggedIn) {
-                  await ref.read(reisenuebersichtProvider.notifier).refresh();
-                }
+                await Future.wait([
+                  if (loggedIn)
+                    ref.read(reisenuebersichtProvider.notifier).refresh(),
+                  ref.read(manualOrdersProvider.notifier).refreshAll(),
+                ]);
               },
               child: ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
@@ -220,7 +234,7 @@ class JourneysScreen extends ConsumerWidget {
                   // still ahead. No section header — tickets render directly so
                   // the surface stays glanceable, the way DB Navigator's Reisen
                   // tab does. The ones already travelled drop to the bottom.
-                  if (loggedIn && tickets != null)
+                  if (tickets != null)
                     tickets.when(
                       data: (_) => Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -292,9 +306,7 @@ class JourneysScreen extends ConsumerWidget {
     );
     try {
       final loggedIn = ref.read(dbAuthProvider).isLoggedIn;
-      final tickets = loggedIn
-          ? await ref.read(ticketTripsProvider.future)
-          : const <DbTicketTrip>[];
+      final tickets = await ref.read(ticketTripsProvider.future);
       final saved = loggedIn
           ? await ref.read(savedReisenProvider.future)
           : const <DbSavedReiseIndex>[];
@@ -569,6 +581,12 @@ class JourneysScreen extends ConsumerWidget {
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () => showAddTicketDialog(context),
+              icon: const Icon(Icons.add_card),
+              label: const Text('Ticket hinzufügen'),
             ),
           ],
         ),
