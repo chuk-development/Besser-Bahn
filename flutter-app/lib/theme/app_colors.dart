@@ -20,6 +20,10 @@ class AppColors {
   // Coach sequence — saturated enough to fill a whole car body and still read.
   static const firstClass = Color(0xFFE3B23C); // warm gold (1. Klasse)
   static const secondClass = Color(0xFF2F6CC0); // clean DB blue (2. Klasse)
+
+  /// The rider's own reserved seat in a seat plan — violet, so it stands out
+  /// from free (green), taken (grey) and both class colours.
+  static const mySeat = Color(0xFF7B3FE4);
   static const restaurant = Color(0xFFC85C2E); // warm terracotta (Bordbistro)
   static const locomotive = Color(0xFF5B6770); // graphite Triebkopf
   static const closedCoach = Color(0xFFB0B8BE);

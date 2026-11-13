@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -425,11 +426,16 @@ class CoachSeatPlan extends StatelessWidget {
   /// px per grid unit — bumped up on the fullscreen screen for a bigger plan.
   final double unit;
 
+  /// Seat numbers in this coach the rider holds (their reservation): drawn in
+  /// their own colour with a ring, so "your seat" is found at a glance.
+  final Set<String> mySeats;
+
   const CoachSeatPlan({
     super.key,
     required this.coach,
     required this.layout,
     this.unit = 7.0,
+    this.mySeats = const {},
   });
 
   static const _margin = 2.0; // grid-unit padding around the content
@@ -450,6 +456,7 @@ class CoachSeatPlan extends StatelessWidget {
         unit: unit,
         margin: _margin,
         onSurfaceVariant: Theme.of(context).colorScheme.onSurfaceVariant,
+        mySeats: mySeats,
       ),
     );
   }
@@ -462,6 +469,7 @@ class _CoachPainter extends CustomPainter {
   final double unit;
   final double margin;
   final Color onSurfaceVariant;
+  final Set<String> mySeats;
 
   _CoachPainter({
     required this.coach,
@@ -470,6 +478,7 @@ class _CoachPainter extends CustomPainter {
     required this.unit,
     required this.margin,
     required this.onSurfaceVariant,
+    this.mySeats = const {},
   });
 
   // Translate a grid coordinate into canvas pixels (content centred via bbox).
@@ -521,11 +530,24 @@ class _CoachPainter extends CustomPainter {
 
   void _paintSeat(Canvas canvas, LayoutElement el, Offset o, double s) {
     final status = coach.statusOf(el.number ?? '');
+    final mine = mySeats.contains(el.number);
     final rect = Rect.fromLTWH(o.dx, o.dy, s, s);
     canvas.drawRRect(
       RRect.fromRectAndRadius(rect, Radius.circular(unit * 0.6)),
-      Paint()..color = _statusColor(status),
+      Paint()..color = mine ? AppColors.mySeat : _statusColor(status),
     );
+    if (mine) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          rect.inflate(unit * 0.45),
+          Radius.circular(unit * 0.9),
+        ),
+        Paint()
+          ..color = AppColors.mySeat
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = unit * 0.35,
+      );
+    }
 
     // Backrest: a thicker bar on the side the seat faces. Directions are
     // remapped for the 90° rotation (grid-X→screen-Y, grid-Y→screen-X):
@@ -559,7 +581,7 @@ class _CoachPainter extends CustomPainter {
             fontSize: unit * 1.25,
             height: 1.0,
             fontWeight: FontWeight.w700,
-            color: status == SeatStatus.free
+            color: (mine || status == SeatStatus.free)
                 ? Colors.white
                 : Colors.black.withValues(alpha: 0.55),
           ),
@@ -714,5 +736,7 @@ class _CoachPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _CoachPainter old) =>
-      old.coach != coach || old.layout != layout;
+      old.coach != coach ||
+      old.layout != layout ||
+      !setEquals(old.mySeats, mySeats);
 }

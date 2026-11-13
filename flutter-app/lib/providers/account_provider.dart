@@ -1611,3 +1611,52 @@ Future<DbKciStatus> kciCheckin(
   ref.invalidate(kciStatusProvider(ticketKey));
   return status;
 }
+
+// --- My seats ------------------------------------------------------------------
+
+/// `yyyy-MM-dd` of [dt] in German time — the day a train run belongs to.
+String berlinDay(DateTime dt) {
+  final b = dt.berlin;
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${b.year}-${two(b.month)}-${two(b.day)}';
+}
+
+/// The seats the rider holds on train [key] — `"<fahrtNr>|<yyyy-MM-dd>"`, the
+/// run's number and its (German) day — collected from every ticket's
+/// reservations: account tickets and tickets added by order number alike.
+///
+/// A reservation only names the train number, so the day comes from the
+/// ticket: a leg of its Verbindung with that number on that day, else the
+/// day the ticket starts to be valid. Seat-only parts ("Platz 76, 78") are
+/// split into single seat numbers.
+final mySeatsProvider = FutureProvider.autoDispose
+    .family<List<DbPlatz>, String>((ref, key) async {
+      final [fahrtNr, day] = key.split('|');
+      if (fahrtNr.isEmpty) return const [];
+      final trips = await ref.watch(ticketTripsProvider.future);
+      final seats = <DbPlatz>[];
+      for (final t in trips) {
+        final ticket = t.ticket;
+        if (ticket == null) continue;
+        final legs = t.journey?.legs ?? const [];
+        final onDay = legs.isNotEmpty
+            ? legs.any((l) {
+                final dep = l.plannedDeparture ?? l.departure;
+                return l.line?.fahrtNr.trim() == fahrtNr &&
+                    dep != null &&
+                    berlinDay(dep) == day;
+              })
+            : (ticket.gueltigAb != null && berlinDay(ticket.gueltigAb!) == day);
+        if (!onDay) continue;
+        for (final r in ticket.reservierungen) {
+          if (r.zugnummer.trim() != fahrtNr) continue;
+          if ((r.kategorie ?? 'SITZPLATZ') != 'SITZPLATZ') continue;
+          for (final p in r.plaetze) {
+            for (final m in RegExp(r'\d+').allMatches(p.platz)) {
+              seats.add(DbPlatz(wagen: p.wagen, platz: m.group(0)!));
+            }
+          }
+        }
+      }
+      return seats;
+    });

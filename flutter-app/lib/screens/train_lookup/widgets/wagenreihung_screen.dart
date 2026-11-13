@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../models/coach_sequence.dart';
 import '../../../models/seat_map.dart';
+import '../../../models/db_ticket.dart';
 import '../../../models/trip.dart';
+import '../../../providers/account_provider.dart';
 import '../../../providers/seat_map_provider.dart';
 import '../../../theme/app_colors.dart';
 import 'coach_sequence_view.dart' show splitTrainBanner;
@@ -45,6 +47,22 @@ class WagenreihungScreen extends ConsumerStatefulWidget {
 class _WagenreihungScreenState extends ConsumerState<WagenreihungScreen> {
   int? _selectedWagon;
 
+  /// The rider's reserved seats on THIS run (number + German day), from their
+  /// tickets. Empty when they hold none.
+  List<DbPlatz> _mySeats() {
+    final fahrtNr = widget.trip.line.fahrtNr.trim();
+    final stops = widget.trip.stopovers;
+    final dep = stops.isEmpty
+        ? null
+        : (stops.first.plannedDeparture ?? stops.first.departure);
+    if (fahrtNr.isEmpty || dep == null) return const [];
+    return ref
+            .watch(mySeatsProvider('$fahrtNr|${berlinDay(dep)}'))
+            .asData
+            ?.value ??
+        const [];
+  }
+
   @override
   void initState() {
     super.initState();
@@ -71,7 +89,11 @@ class _WagenreihungScreenState extends ConsumerState<WagenreihungScreen> {
         if (nr != null) freeByWagon[nr] = c.freeCount;
       }
     }
-    final effectiveWagon = _effectiveWagon(seatMap);
+    final mySeats = _mySeats();
+    final myWagon = mySeats.isEmpty ? null : int.tryParse(mySeats.first.wagen);
+    // Open on the rider's own coach when they hold a reservation here.
+    final effectiveWagon =
+        _selectedWagon ?? myWagon ?? _effectiveWagon(seatMap);
 
     final showTrack =
         sequence != null && PlatformTrackView.hasGeometry(sequence);
@@ -88,6 +110,8 @@ class _WagenreihungScreenState extends ConsumerState<WagenreihungScreen> {
       body: ListView(
         padding: EdgeInsets.only(bottom: 32 + AppNavBar.insetOf(context)),
         children: [
+          if (mySeats.isNotEmpty)
+            _myReservation(theme, mySeats, myWagon, effectiveWagon),
           if (gleis.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -164,7 +188,7 @@ class _WagenreihungScreenState extends ConsumerState<WagenreihungScreen> {
 
           if (reservable) ...[
             const Divider(height: 28),
-            _seatSection(theme, seatAsync, effectiveWagon),
+            _seatSection(theme, seatAsync, effectiveWagon, mySeats),
           ],
         ],
       ),
@@ -231,10 +255,75 @@ class _WagenreihungScreenState extends ConsumerState<WagenreihungScreen> {
     );
   }
 
+  /// "Deine Reservierung · Wagen 5, Platz 76" — tap jumps to that coach.
+  Widget _myReservation(
+    ThemeData theme,
+    List<DbPlatz> seats,
+    int? myWagon,
+    int? shownWagon,
+  ) {
+    final byWagon = <String, List<String>>{};
+    for (final s in seats) {
+      (byWagon[s.wagen] ??= []).add(s.platz);
+    }
+    final label = byWagon.entries
+        .map(
+          (e) =>
+              'Wagen ${e.key}, Platz${e.value.length > 1 ? 'e' : ''} '
+              '${e.value.join(', ')}',
+        )
+        .join(' · ');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Material(
+        color: AppColors.mySeat.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: myWagon == null
+              ? null
+              : () => setState(() => _selectedWagon = myWagon),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                const Icon(Icons.event_seat, color: AppColors.mySeat),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Deine Reservierung',
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: AppColors.mySeat,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(label, style: theme.textTheme.bodyLarge),
+                    ],
+                  ),
+                ),
+                if (myWagon != null && shownWagon != myWagon)
+                  Text(
+                    'Zeigen',
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: AppColors.mySeat,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _seatSection(
     ThemeData theme,
     AsyncValue<SeatMap?>? async,
     int? wagon,
+    List<DbPlatz> mySeats,
   ) {
     if (async == null) return const SizedBox.shrink();
     return async.when(
@@ -284,6 +373,14 @@ class _WagenreihungScreenState extends ConsumerState<WagenreihungScreen> {
                           coach: coach,
                           layout: coach.layout!,
                           unit: 10,
+                          mySeats: {
+                            for (final s in mySeats)
+                              if (s.wagen == coach.number ||
+                                  (int.tryParse(s.wagen) != null &&
+                                      int.tryParse(s.wagen) ==
+                                          int.tryParse(coach.number)))
+                                s.platz,
+                          },
                         ),
                       ),
                     ),
@@ -298,6 +395,8 @@ class _WagenreihungScreenState extends ConsumerState<WagenreihungScreen> {
                 children: [
                   _legendItem(AppColors.onTime, 'frei'),
                   _legendItem(AppColors.closedCoach, 'reserviert'),
+                  if (mySeats.isNotEmpty)
+                    _legendItem(AppColors.mySeat, 'dein Platz'),
                 ],
               ),
             ),
