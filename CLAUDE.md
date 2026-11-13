@@ -83,6 +83,11 @@ caches (`.playwright-mcp/`), signing keys. They're gitignored — keep them out.
   `nahsh.hafas.cloud/gate`.
 - **BahnBonus-Nummer** kommt im normalen Login mit: `bbStatus.loyaltyNumber`.
   Dafür ist kein zweiter BahnBonus-Login nötig (der gilt nur für CO₂).
+- **Karten-Performance messen:** `flutter-app/tool/map_bench` (README dort).
+  Emulator mit `-gpu host`, sonst SwiftShader und wertlose Raster-Zeiten. Die
+  bahnhof.de-Etagenkarte darf unter Zoom 14 nie Kacheln laden (`_IndoorLayer`
+  in `app_map.dart`); sonst lädt flutter_map z14-Kacheln für den ganzen
+  Ausschnitt (ICE-Streckenkarte: 1,4 GB RAM, Absturz, App lahm nach Zurück).
 - **`flutter test` flakes:** a few files fail with `Unable to connect to
   flutter_tester process: WebSocketException` on a full parallel run. That is
   the runner, not the test — rerun those files alone before you debug.

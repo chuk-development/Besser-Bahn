@@ -1,0 +1,7 @@
+name: map_bench
+description: Frame + memory benchmark of the app's maps over the Dart VM service.
+publish_to: none
+environment:
+  sdk: ^3.10.0
+dependencies:
+  vm_service: ^15.0.0

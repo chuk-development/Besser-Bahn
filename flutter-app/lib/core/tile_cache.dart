@@ -96,7 +96,14 @@ class TileCache {
   /// (see [_BreakerTileProvider]). When the disk store is down it degrades to
   /// network-only but still shares the connection-capped [_tileHttp].
   /// [headers] is forwarded (e.g. the `Referer` the indoor tiles require).
-  static TileProvider provider({Map<String, String>? headers}) {
+  /// [allow], when given, is asked for EVERY tile right before it would be
+  /// fetched; false serves the shared transparent tile instead (no network,
+  /// decoded once). The indoor floor plan uses it to refuse tiles while the
+  /// live camera is zoomed out — see `_IndoorLayer` in app_map.dart.
+  static TileProvider provider({
+    Map<String, String>? headers,
+    bool Function()? allow,
+  }) {
     return _BreakerTileProvider(
       _CachingTileProvider(
         client: _tileHttp,
@@ -104,8 +111,13 @@ class TileCache {
         persist: _ready,
         validDuration: _validDuration,
       ),
+      allow: allow,
     );
   }
+
+  /// One shared transparent tile. A single [MemoryImage] instance, so the
+  /// image cache decodes it once however many tiles it stands in for.
+  static final MemoryImage _blank = MemoryImage(_transparentTile);
 
   // --- Circuit breaker -------------------------------------------------------
   // When a tile host goes unreachable, flutter_map re-request the missing
@@ -374,6 +386,8 @@ class TileCache {
     cacheFolder: vectorCacheDir,
     fileCacheMaximumSizeInBytes: _vectorCacheMaxBytes,
     maximumZoom: 20,
+    // Raster, not vector: measured 2026-11-13 (tool/map_bench) the vector
+    // mode doubled the raster time and used more RAM.
     layerMode: VectorTileLayerMode.raster,
   );
 
@@ -397,11 +411,13 @@ class TileCache {
 /// instead of hitting the network, so a dead host can't saturate the connection.
 class _BreakerTileProvider extends TileProvider {
   final TileProvider _inner;
-  _BreakerTileProvider(this._inner);
+  final bool Function()? _allow;
+  _BreakerTileProvider(this._inner, {bool Function()? allow}) : _allow = allow;
 
   @override
   ImageProvider getImage(TileCoordinates coordinates, TileLayer options) {
     if (TileCache.tilesBlocked) return MemoryImage(_transparentTile);
+    if (_allow != null && !_allow()) return TileCache._blank;
     return _inner.getImage(coordinates, options);
   }
 

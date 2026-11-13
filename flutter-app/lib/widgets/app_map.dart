@@ -95,18 +95,7 @@ class AppMap extends StatelessWidget {
             valueListenable: AppLog.tilesPaused,
             builder: (_, paused, child) => paused
                 ? const SizedBox.shrink()
-                : TileLayer(
-                    urlTemplate: StationMap.indoorTileUrl(indoorLevel!),
-                    tileDimension: 256,
-                    minNativeZoom: 14,
-                    maxNativeZoom: 18,
-                    maxZoom: 20,
-                    tileProvider: TileCache.provider(
-                      headers: {'Referer': 'https://www.bahnhof.de/'},
-                    ),
-                    userAgentPackageName: 'de.chuk.besserebahn',
-                    errorTileCallback: (_, _, _) {},
-                  ),
+                : _IndoorLayer(level: indoorLevel!),
           ),
         ...children,
         const Scalebar(
@@ -126,6 +115,69 @@ class AppMap extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// The bahnhof.de floor plan, only from [_IndoorLayer.minZoom] on.
+///
+/// The plan's tiles exist from zoom 14 (`minNativeZoom`). flutter_map serves a
+/// lower map zoom by loading the NATIVE z14 tiles for the whole viewport and
+/// scaling them down, and neither its `minZoom` nor unmounting the layer stops
+/// that: the layer reacts to a camera move before the rebuild that would remove
+/// it. The route map hit exactly that on open — first frame at the default
+/// zoom 17, then the fit to the whole run at zoom ~7 — and loaded ~1800 z14
+/// tiles at once: RAM jumped by ~1 GB, the map stalled, and the queued
+/// downloads kept the app slow after leaving it (2026-11-13, measured on the
+/// ICE 775 map).
+///
+/// Two guards, both needed: the layer is not in the tree below [minZoom]
+/// (cheap overview), and its tile provider asks the LIVE camera for every
+/// single tile and serves a blank one while zoomed out.
+class _IndoorLayer extends StatefulWidget {
+  final String level;
+  const _IndoorLayer({required this.level});
+
+  static const minZoom = 14.0;
+
+  @override
+  State<_IndoorLayer> createState() => _IndoorLayerState();
+}
+
+class _IndoorLayerState extends State<_IndoorLayer> {
+  MapController? _controller;
+
+  // One provider for the layer's life: this widget rebuilds on every camera
+  // move, and a new provider instance would make the TileLayer start over.
+  // TileLayer disposes its provider on unmount, and the base dispose is a
+  // no-op, so remounting it later is safe.
+  late final TileProvider _provider = TileCache.provider(
+    headers: {'Referer': 'https://www.bahnhof.de/'},
+    allow: () {
+      final zoom = _controller?.camera.zoom;
+      return zoom != null && zoom >= _IndoorLayer.minZoom;
+    },
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _controller = MapController.maybeOf(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final zoom = MapCamera.of(context).zoom;
+    if (zoom < _IndoorLayer.minZoom) return const SizedBox.shrink();
+    return TileLayer(
+      urlTemplate: StationMap.indoorTileUrl(widget.level),
+      tileDimension: 256,
+      minNativeZoom: 14,
+      maxNativeZoom: 18,
+      maxZoom: 20,
+      tileProvider: _provider,
+      userAgentPackageName: 'de.chuk.besserebahn',
+      errorTileCallback: (_, _, _) {},
     );
   }
 }
