@@ -209,7 +209,12 @@ class LiveTripTracker extends Notifier<LiveTripState>
       LiveUpdateService.chipShowsStops = ref
           .read(settingsProvider)
           .liveChipStops;
-      unawaited(LiveUpdateService.show(journey.journey, tripKey: journey.key));
+      unawaited(
+        LiveUpdateService.show(
+          withLiveTimes(journey.journey, state.trips),
+          tripKey: journey.key,
+        ),
+      );
     } catch (e) {
       AppLog.log('live poll failed ($e)', tag: 'live');
     } finally {
@@ -502,3 +507,61 @@ class LiveTripTracker extends Notifier<LiveTripState>
 
 final liveTripTrackerProvider =
     NotifierProvider<LiveTripTracker, LiveTripState>(LiveTripTracker.new);
+
+/// [journey] with each leg's departure/arrival (and delays, cancellation)
+/// taken from the live run the tracker holds for it, matched by `tripId` and
+/// the leg's own boarding/alighting stop. Legs without a live run stay as
+/// they are.
+///
+/// The saved trip keeps the times it was saved with. Every progress display
+/// — the Live Update chip, the Reisen cards — computed "where am I" from
+/// those, so a train running 17 minutes late showed as already arrived once
+/// its planned arrival had passed.
+Journey withLiveTimes(Journey journey, Map<String, Trip> trips) {
+  if (trips.isEmpty) return journey;
+  Stopover? stopFor(Trip trip, String id, String name) {
+    for (final s in trip.stopovers) {
+      if (id.isNotEmpty && s.stop.id == id) return s;
+    }
+    for (final s in trip.stopovers) {
+      if (s.stop.name == name) return s;
+    }
+    return null;
+  }
+
+  var changed = false;
+  final legs = <JourneyLeg>[];
+  for (final leg in journey.legs) {
+    final trip = leg.tripId == null ? null : trips[leg.tripId];
+    if (trip == null || leg.isWalking) {
+      legs.add(leg);
+      continue;
+    }
+    final from = stopFor(trip, leg.origin.id, leg.origin.name);
+    final to = stopFor(trip, leg.destination.id, leg.destination.name);
+    if (from == null && to == null) {
+      legs.add(leg);
+      continue;
+    }
+    changed = true;
+    legs.add(
+      leg.withLiveTimes(
+        departure: from?.departure,
+        departureDelay: from?.departureDelay,
+        arrival: to?.arrival,
+        arrivalDelay: to?.arrivalDelay,
+        cancelled: (from?.cancelled ?? false) || (to?.cancelled ?? false)
+            ? true
+            : null,
+      ),
+    );
+  }
+  if (!changed) return journey;
+  return Journey(
+    legs: legs,
+    refreshToken: journey.refreshToken,
+    price: journey.price,
+    disruptions: journey.disruptions,
+    serviceDaysNote: journey.serviceDaysNote,
+  );
+}

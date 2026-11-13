@@ -264,6 +264,45 @@ class JourneyLeg {
     this.replacementArrivalPlatform,
   });
 
+  /// This leg with fresher times (and delays) from the live train run; all
+  /// other fields unchanged. Null arguments keep the current value.
+  JourneyLeg withLiveTimes({
+    DateTime? departure,
+    int? departureDelay,
+    DateTime? arrival,
+    int? arrivalDelay,
+    bool? cancelled,
+  }) => JourneyLeg(
+    tripId: tripId,
+    origin: origin,
+    destination: destination,
+    departure: departure ?? this.departure,
+    plannedDeparture: plannedDeparture,
+    departureDelay: departureDelay ?? this.departureDelay,
+    departurePlatform: departurePlatform,
+    plannedDeparturePlatform: plannedDeparturePlatform,
+    arrival: arrival ?? this.arrival,
+    plannedArrival: plannedArrival,
+    arrivalDelay: arrivalDelay ?? this.arrivalDelay,
+    arrivalPlatform: arrivalPlatform,
+    plannedArrivalPlatform: plannedArrivalPlatform,
+    line: line,
+    direction: direction,
+    isWalking: isWalking,
+    walkingDistance: walkingDistance,
+    walkingDuration: walkingDuration,
+    transferAvailable: transferAvailable,
+    samePlatformTransfer: samePlatformTransfer,
+    cancelled: cancelled ?? this.cancelled,
+    stopovers: stopovers,
+    occupancy: occupancy,
+    disruptions: disruptions,
+    bike: bike,
+    replacementDestination: replacementDestination,
+    replacementArrival: replacementArrival,
+    replacementArrivalPlatform: replacementArrivalPlatform,
+  );
+
   /// Minutes of slack this transfer really leaves: the window minus the walk.
   /// Null unless DB gave both — never guessed, since "12 min" and "12 min of
   /// which 7 are walking" are different transfers.

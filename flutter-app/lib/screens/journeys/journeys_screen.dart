@@ -15,6 +15,7 @@ import '../../models/travel_stats.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/construction_radar_provider.dart';
 import '../../providers/library_provider.dart';
+import '../../providers/live_trip_provider.dart';
 import '../../providers/offline_package_provider.dart';
 import '../../providers/service_providers.dart';
 import '../../providers/travel_stats_provider.dart';
@@ -114,6 +115,9 @@ class JourneysScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final lib = ref.watch(libraryProvider);
+    // Live runs of the tracked trip: progress is drawn from these, not from
+    // the times the trip was saved with (a late train showed as arrived).
+    final liveTrips = ref.watch(liveTripTrackerProvider.select((s) => s.trips));
     // A trip bookmarked while signed in exists locally AND in the DB account,
     // and this screen renders both lists — so it appeared twice (#15). The DB
     // section wins (it can delete both sides); drop the local twin. The keys
@@ -225,7 +229,7 @@ class JourneysScreen extends ConsumerWidget {
                   // in-app stand-in for a Live Activity / home widget.
                   if (upcoming.isNotEmpty)
                     TripProgressCard(
-                      journey: upcoming.first.journey,
+                      journey: withLiveTimes(upcoming.first.journey, liveTrips),
                       activeOnly: true,
                     ),
                   _constructionRadar(context, ref),
@@ -487,6 +491,7 @@ class JourneysScreen extends ConsumerWidget {
     SavedJourney saved, {
     bool past = false,
   }) {
+    final liveTrips = ref.watch(liveTripTrackerProvider.select((s) => s.trips));
     return Dismissible(
       key: ValueKey(saved.key),
       direction: DismissDirection.endToStart,
@@ -499,7 +504,7 @@ class JourneysScreen extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _dateLabel(context, saved),
-            JourneyCard(journey: saved.journey),
+            JourneyCard(journey: withLiveTimes(saved.journey, liveTrips)),
             // Only for trips still ahead: packing a trip you've already taken
             // is pure noise (and would auto-refresh nothing).
             if (!past)
@@ -785,7 +790,13 @@ class _OfficialTicketTile extends ConsumerWidget {
     final theme = Theme.of(context);
     final Widget tile;
     if (trip.journey != null) {
-      tile = JourneyCard(journey: trip.journey!, onTap: onTap);
+      tile = JourneyCard(
+        journey: withLiveTimes(
+          trip.journey!,
+          ref.watch(liveTripTrackerProvider.select((s) => s.trips)),
+        ),
+        onTap: onTap,
+      );
     } else {
       // Placeholder while loading / when verbindung can't be parsed.
       tile = Card(
