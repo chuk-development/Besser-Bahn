@@ -11,7 +11,7 @@ import 'package:besser_bahn/services/db_account_service.dart';
 Map<String, dynamic> _entry() => {
   'reise': {
     'standardInfos': {
-      'kundenwunschId': '8d10a09f-0000-0000-0000-000000000000',
+      'kundenwunschId': '00000000-0000-4000-8000-000000000001',
       'auftragsnummer': '990000000001',
       'status': 'GUELTIG',
       'zeitlicheGueltigkeit': {
@@ -43,7 +43,7 @@ void main() {
   test('a manuellLaden entry parses as a ticket', () {
     final t = DbTicket.fromJson(_entry());
     expect(t.auftragsnummer, '990000000001');
-    expect(t.kundenwunschId, '8d10a09f-0000-0000-0000-000000000000');
+    expect(t.kundenwunschId, '00000000-0000-4000-8000-000000000001');
     expect(t.angebotsname, 'Flexpreis Young');
     expect(t.kciTicketRefId, 'ABCDEF12');
   });

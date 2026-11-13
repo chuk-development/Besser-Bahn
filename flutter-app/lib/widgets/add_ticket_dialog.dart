@@ -101,7 +101,7 @@ class _AddTicketDialogState extends ConsumerState<_AddTicketDialog> {
               ],
               decoration: const InputDecoration(
                 labelText: 'Auftragsnummer',
-                hintText: 'z. B. 992533686225',
+                hintText: '12 Ziffern, steht oben auf dem Ticket',
                 border: OutlineInputBorder(),
               ),
               onChanged: (_) => setState(() {}),

@@ -114,7 +114,7 @@ const List<RegionalProfile> kRegionalProfiles = [
   RegionalProfile(
     id: 'bvg',
     label: 'BVG Berlin',
-    endpoint: 'https://bvg-apps-ext.hafas.de/bin/mgate.exe',
+    endpoint: 'https://bvg.hafas.cloud/apps/gate',
     clientId: 'VBB',
     clientName: 'webapp',
     aid: 'dVg4TZbW8anjx9ztPwe2uk4LVRi9wO',
@@ -207,7 +207,7 @@ const List<RegionalProfile> kRegionalProfiles = [
   RegionalProfile(
     id: 'nahsh',
     label: 'NAH.SH',
-    endpoint: 'https://nah.sh.hafas.de/bin/mgate.exe',
+    endpoint: 'https://nahsh.hafas.cloud/gate',
     clientId: 'NAHSH',
     clientName: 'NAHSHPROD',
     aid: 'r0Ot9FLFNAFxijLW',
