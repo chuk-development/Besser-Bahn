@@ -22,6 +22,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../providers/library_provider.dart';
+import '../../providers/live_trip_provider.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/journey_search_provider.dart';
 import '../../providers/service_providers.dart';
@@ -97,6 +98,28 @@ class ConnectionDetailScreen extends ConsumerStatefulWidget {
   @override
   ConsumerState<ConnectionDetailScreen> createState() =>
       _ConnectionDetailScreenState();
+}
+
+/// [old] up to where [alternative] starts, then [alternative]: the legs
+/// already ridden stay part of the trip (stats, history), the rest is
+/// replaced. A leg of [old] counts as ridden when it arrives no later than the
+/// alternative's first departure.
+Journey mergeAlternative(Journey old, Journey alternative) {
+  final start =
+      alternative.legs.firstOrNull?.departure ??
+      alternative.legs.firstOrNull?.plannedDeparture;
+  final ridden = start == null
+      ? const <JourneyLeg>[]
+      : old.legs.where((l) {
+          final arr = l.arrival ?? l.plannedArrival;
+          return arr != null && !arr.isAfter(start);
+        }).toList();
+  return Journey(
+    legs: [...ridden, ...alternative.legs],
+    refreshToken: alternative.refreshToken,
+    price: old.price,
+    disruptions: alternative.disruptions,
+  );
 }
 
 class _ConnectionDetailScreenState
@@ -580,6 +603,7 @@ class _ConnectionDetailScreenState
             _summary(context),
             _ownExperience(context),
             _bikeNotice(context),
+            _followInstead(context),
             // Offline, the legs below are replayed from this journey's package
             // (see the fallbacks in HafasService/CoachSequenceService/
             // StationMapService). Say how old they are — cached data presented
@@ -1120,6 +1144,59 @@ class _ConnectionDetailScreenState
   /// note — vendo already prices the Fahrradkarte into the total as soon as
   /// the bike is in the party (Kiel→Berlin: 45,99 € → 54,98 €), and drops the
   /// price entirely for connections that can't take one.
+  /// "Diese Verbindung verfolgen": the rider is on a tracked trip to the same
+  /// destination and has picked this connection instead (a cancelled train, a
+  /// missed transfer). One tap swaps the tracked trip — the legs already
+  /// ridden stay, this connection replaces the rest — so the Live Update and
+  /// the transfer alerts follow the trains actually taken from now on.
+  Widget _followInstead(BuildContext context) {
+    final activeKey = ref.watch(
+      liveTripTrackerProvider.select((s) => s.activeKey),
+    );
+    if (activeKey == null) return const SizedBox.shrink();
+    final lib = ref.watch(libraryProvider);
+    final active = lib.journeys.where((j) => j.key == activeKey).firstOrNull;
+    final mine = SavedJourney(journey: journey, savedAtMs: 0).key;
+    if (active == null || active.key == mine) return const SizedBox.shrink();
+    final dest = journey.destination;
+    final activeDest = active.journey.destination;
+    final sameDest =
+        dest != null &&
+        activeDest != null &&
+        ((dest.id.isNotEmpty && dest.id == activeDest.id) ||
+            dest.name == activeDest.name);
+    if (!sameDest) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Card(
+        color: theme.colorScheme.primaryContainer,
+        margin: EdgeInsets.zero,
+        child: ListTile(
+          leading: Icon(
+            Icons.alt_route,
+            color: theme.colorScheme.onPrimaryContainer,
+          ),
+          title: const Text('Diese Verbindung verfolgen'),
+          subtitle: const Text(
+            'Statt deiner bisherigen Reise. Live-Anzeige und '
+            'Umstiegs-Hinweise folgen dann diesen Zügen.',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () {
+            final merged = mergeAlternative(active.journey, journey);
+            ref
+                .read(libraryProvider.notifier)
+                .replaceJourney(active.key, merged);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Wird jetzt verfolgt')),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _bikeNotice(BuildContext context) {
     if (!ref.watch(settingsProvider).searchParty.hasBike) {
       return const SizedBox.shrink();
@@ -2371,7 +2448,7 @@ class _LegSectionState extends ConsumerState<_LegSection>
               earlierAlight: widget.earlierAlight,
             )
           : null;
-      final detail = TrainDetailView(
+      final trainDetail = TrainDetailView(
         trip: trip,
         coach: _coach,
         onStopTap: _openStopMap,
@@ -2390,6 +2467,13 @@ class _LegSectionState extends ConsumerState<_LegSection>
             ? leg.destination.name
             : null,
       );
+      final hints = legHints(context, leg, trip);
+      final detail = hints.isEmpty
+          ? trainDetail
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [...hints, trainDetail],
+            );
       if (switcher == null) return detail;
       // The ENTIRE Fahrtblock is the swipe surface: grab anywhere on the block
       // and fling sideways to cycle this segment's other departures (left →
@@ -2746,4 +2830,102 @@ class _LegNotesState extends State<_LegNotes> {
       ),
     );
   }
+}
+
+/// "Ersatzbus zwischen Banteln und Alfeld (Leine)" from DB's free-text notes
+/// ("Für 82835 verkehrt Ersatzfahrt Bus RE2 zwischen Banteln und
+/// Alfeld(Leine)", "Ein Ersatzverkehr mit Bussen ist … zwischen A und B
+/// eingerichtet"). Null when no note names a replacement section.
+({String from, String to})? replacementBusSection(Iterable<String> notes) {
+  final re = RegExp(
+    r'Ersatz(?:fahrt|verkehr)[^.]*?zwischen\s+(.+?)\s+und\s+(.+?)(?:\s+eingerichtet|[.,;]|$)',
+    caseSensitive: false,
+  );
+  for (final n in notes) {
+    final m = re.firstMatch(n);
+    if (m != null) {
+      String clean(String s) => s.replaceAll(RegExp(r'\s*\('), ' (').trim();
+      return (from: clean(m[1]!), to: clean(m[2]!));
+    }
+  }
+  return null;
+}
+
+/// Hints shown on top of a train section where they matter:
+/// - a replacement bus on this train's run (the rider has to change to it),
+/// - the train begins at the boarding station: it may already stand at the
+///   platform still showing its previous destination — the case that made a
+///   rider in Göttingen ask whether the "Göttingen" train was really his.
+List<Widget> legHints(BuildContext context, JourneyLeg leg, Trip trip) {
+  final theme = Theme.of(context);
+  final out = <Widget>[];
+  Widget hint(IconData icon, Color color, String title, String body) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(height: 22, child: Icon(icon, size: 20, color: color)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    height: 1.4,
+                  ),
+                ),
+                Text(body, style: theme.textTheme.bodySmall),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  final bus = replacementBusSection([...leg.disruptions, ...trip.disruptions]);
+  if (bus != null) {
+    out.add(
+      hint(
+        Icons.directions_bus,
+        AppColors.warning,
+        'Ersatzbus zwischen ${bus.from} und ${bus.to}',
+        'Auf diesem Abschnitt fährt kein Zug. In ${bus.from} bzw. ${bus.to} '
+            'in den Bus umsteigen, danach geht es mit dem Zug weiter.',
+      ),
+    );
+  }
+
+  final first = trip.stopovers.firstOrNull;
+  final dep = leg.departure ?? leg.plannedDeparture;
+  final startsHere =
+      first != null &&
+      ((leg.origin.id.isNotEmpty && first.stop.id == leg.origin.id) ||
+          first.stop.name == leg.origin.name);
+  final soon =
+      dep != null &&
+      dep.isAfter(DateTime.now().subtract(const Duration(minutes: 2))) &&
+      dep.isBefore(DateTime.now().add(const Duration(minutes: 60)));
+  if (startsHere && soon && !leg.isWalking) {
+    out.add(
+      hint(
+        Icons.u_turn_left,
+        theme.colorScheme.primary,
+        'Zug beginnt hier',
+        'Er steht oft schon am Gleis und zeigt noch sein voriges Ziel an. '
+            'Die Anzeige wechselt meist erst kurz vor der Abfahrt.',
+      ),
+    );
+  }
+  return out;
 }
