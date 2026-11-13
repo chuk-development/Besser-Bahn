@@ -1,0 +1,126 @@
+name: API-Health
+
+# Once a day, run the full API health check (api-tests/healthcheck) against
+# every upstream the app relies on: DB Navigator /mob, bahn.de, bahnhof.de,
+# Träwelling, the DB login, OSM/DELFI, the basemap and all regional transport
+# backends (HAFAS, EFA, HVV Geofox). It runs on dart:io — the app's own TLS
+# stack — so an Akamai fingerprint block hits it exactly when it hits the app.
+# A failing run opens a GitHub issue (and closes it again on recovery).
+
+on:
+  schedule:
+    # 05:14 UTC — off the top of the hour, early enough for morning coffee.
+    - cron: "14 5 * * *"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "api-tests/healthcheck/**"
+      - ".github/workflows/api-health.yml"
+
+permissions:
+  contents: read
+  issues: write # the failure notification is a GitHub issue
+
+concurrency:
+  group: api-health
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: api-tests/healthcheck
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same Dart as the app's Flutter (3.47.0 ships Dart 3.13.0).
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: "3.13.0"
+
+      - name: Install deps
+        run: dart pub get
+
+      - name: Run health check
+        id: probe
+        run: |
+          set +e
+          dart run bin/healthcheck.dart > result.txt 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          {
+            echo '```'
+            cat result.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat result.txt
+          exit 0
+
+      - name: Open an issue on failure
+        if: steps.probe.outputs.exit_code != '0' && github.event_name != 'push'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const lines = fs.readFileSync('api-tests/healthcheck/result.txt', 'utf8')
+              .split('\n');
+            const bad = lines.filter(l => l.includes('❌ FAIL')).join('\n');
+            const marker = '<!-- api-health-monitor -->';
+            const body = [
+              marker,
+              'Der tägliche API-Health-Check ist **fehlgeschlagen**.',
+              'Ein harter Check bedeutet: ein Endpunkt hat seine Antwort geändert oder ist',
+              'weg — die App liefert dort dann falsche oder keine Daten.',
+              '',
+              `Lauf: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              '```',
+              bad || lines.slice(-40).join('\n'),
+              '```',
+            ].join('\n');
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'api-health',
+            });
+            if (existing.data.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title: '⚠️ API-Health: täglicher Check fehlgeschlagen',
+                labels: ['api-health'], body,
+              });
+            }
+
+      - name: Close the issue on recovery
+        if: steps.probe.outputs.exit_code == '0' && github.event_name != 'push'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            for (const label of ['api-health', 'regional-apis']) {
+              const open = await github.rest.issues.listForRepo({
+                owner: context.repo.owner, repo: context.repo.repo,
+                state: 'open', labels: label,
+              });
+              for (const issue of open.data) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: issue.number,
+                  body: 'Wieder grün ✅ — automatisch geschlossen.',
+                });
+                await github.rest.issues.update({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: issue.number, state: 'closed',
+                });
+              }
+            }
+
+      - name: Fail the job if the check failed
+        if: steps.probe.outputs.exit_code != '0'
+        run: exit 1

@@ -21,15 +21,19 @@ git add -A && git commit -m "<conventional message>" && git push
 
 ## Network / endpoints — health-check discipline
 
-`api-tests/healthcheck.py` probes every upstream endpoint the app depends on and
-asserts the response still has the shape we parse.
+`api-tests/healthcheck/` (Dart, runs on `dart:io` — the app's own TLS stack)
+probes every upstream endpoint the app depends on and asserts the response still
+has the shape we parse. One file per group in `lib/checks/`, shared HTTP/pacing
+in `lib/src/core.dart`. Daily GitHub Action: `.github/workflows/api-health.yml`
+(opens an issue on failure). There is no Python in the repo any more.
 
 - **At the start of every session that touches network/data code, run it first**
-  (`cd api-tests && python3 healthcheck.py`). If a hard check fails, an upstream
+  (`cd api-tests/healthcheck && dart run bin/healthcheck.dart`, filter with
+  `--only <text>` / `--group <file>`). If a hard check fails, an upstream
   endpoint changed — investigate and switch/fix the endpoint *before* doing other
   work, don't build on a broken API.
 - **Whenever you add or change networking** (a new endpoint, media type, request
-  shape, or response parsing), **add or extend a check in `healthcheck.py`** to
+  shape, or response parsing), **add or extend a check in `api-tests/healthcheck/lib/checks/`** to
   cover it, and run the script to confirm it passes.
 - Soft checks (`soft=True`) warn instead of fail — use for known-flaky sources
   (e.g. the public HAFAS mirror).
@@ -66,14 +70,17 @@ caches (`.playwright-mcp/`), signing keys. They're gitignored — keep them out.
   Aktualisieren einfach neu per Nachname (`ManualOrdersController`,
   Speicher: Secure Storage `db_manual_orders_v1`, bleibt nach Logout).
   Fehler stehen in `details.typ` (`AUFTRAG_NICHT_GEFUNDEN`,
-  `AUFTRAG_LOGIN_REQUIRED`, …). Der Aufruf mit curl ohne Chrome-TLS gibt
-  `452 OPS_BLOCKED`, also im Test `curl_cffi` nehmen.
-- **Healthcheck 452 OPS_BLOCKED ≠ App kaputt.** Seit 2026-11-13 sperrt Akamai
-  auf `/mob` (bahnhofstafel, angebote/*) den Chrome-TLS-Fingerabdruck von
-  `curl_cffi`. Firefox-Profil und das `dart:io` der App kommen durch.
-  `healthcheck.py` probiert darum `firefox` zuerst, dann `chrome`. Prüfen, ob
-  die App wirklich betroffen ist: den echten `VendoService` in einem
-  Wegwerf-`flutter test` mit `HttpOverrides.global = null` laufen lassen.
+  `AUFTRAG_LOGIN_REQUIRED`, …). Mit curl kommt `452 OPS_BLOCKED`
+  (Akamai sperrt den TLS-Fingerabdruck), mit `dart:io` geht es.
+- **Akamai prüft den TLS-Fingerabdruck, nicht die Header.** Seit 2026-11-13
+  sperrt es auf `/mob` (bahnhofstafel, angebote/*) Chrome-artige Clients
+  (`curl_cffi` chrome, curl) mit `452 OPS_BLOCKED`; `dart:io` kommt durch.
+  Darum ist der Healthcheck in Dart. Probe-Requests von Hand: auch mit Dart
+  machen, sonst sieht man eine Sperre, die die App nicht hat.
+- **`dart:io` folgt bei POST keiner Weiterleitung.** BVG und NAH.SH sind
+  2026-11 auf `*.hafas.cloud` umgezogen (307); die App blieb am 307 hängen,
+  Python folgte und meldete grün. Neue Gates: `bvg.hafas.cloud/apps/gate`,
+  `nahsh.hafas.cloud/gate`.
 - **BahnBonus-Nummer** kommt im normalen Login mit: `bbStatus.loyaltyNumber`.
   Dafür ist kein zweiter BahnBonus-Login nötig (der gilt nur für CO₂).
 - **`flutter test` flakes:** a few files fail with `Unable to connect to

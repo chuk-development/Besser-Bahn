@@ -1,0 +1,12 @@
+name: besser_bahn_healthcheck
+description: >-
+  Probes every upstream endpoint the Besser-Bahn app depends on, over dart:io —
+  the same TLS stack the app uses — and asserts the response still has the
+  shape the app parses.
+publish_to: none
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  xml: ^7.0.0

@@ -145,7 +145,6 @@ route — including BahnCard and Deutschland-Ticket discounts.
 | `prediction-service/`| Self-hosted delay/connection prediction API                  |
 | `api-tests/`         | Health checks for every upstream endpoint used               |
 | `docs/`              | Project website                                              |
-| `main.py`            | Split-ticket logic, also as a standalone Python CLI          |
 
 ## Development
 
@@ -162,19 +161,13 @@ Prerequisite: Flutter (SDK ^3.10) installed on the system.
 
 ### Endpoint health check
 
-Before you work on network or data code, `api-tests/healthcheck.py` checks that
-every upstream endpoint still returns the expected response shape:
+Before you work on network or data code, `api-tests/healthcheck` checks that
+every upstream endpoint still returns the response shape we expect. It runs in
+Dart over `dart:io`, the same network stack as the app, and daily as a GitHub
+Action:
 
 ```bash
-cd api-tests && python3 healthcheck.py
-```
-
-### Split ticket as a CLI
-
-The split-ticket analysis also runs without the app:
-
-```bash
-uv run main.py "https://www.bahn.de/buchung/start?vbid=..." [--age 30] [--bahncard BC25_2] [--deutschland-ticket]
+cd api-tests/healthcheck && dart pub get && dart run bin/healthcheck.dart
 ```
 
 ## Recommended open-source rail projects and tools

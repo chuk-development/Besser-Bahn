@@ -146,7 +146,6 @@ gesamte Strecke abdeckt — inklusive BahnCard- und Deutschland-Ticket-Rabatten.
 | `prediction-service/`| Selbst gehostete Verspätungs-/Anschluss-Vorhersage-API        |
 | `api-tests/`         | Health-Checks für alle genutzten Upstream-Endpunkte           |
 | `docs/`              | Projekt-Webseite                                              |
-| `main.py`            | Split-Ticket-Logik auch als eigenständiges Python-CLI         |
 
 ## Development
 
@@ -163,19 +162,13 @@ Voraussetzung: Flutter (SDK ^3.10) auf dem System installiert.
 
 ### Endpunkt-Health-Check
 
-Vor Arbeiten an Netzwerk-/Datencode prüft `api-tests/healthcheck.py`, ob alle
-Upstream-Endpunkte noch die erwartete Antwortform liefern:
+Vor Arbeiten an Netzwerk-/Datencode prüft `api-tests/healthcheck`, ob alle
+Upstream-Endpunkte noch die erwartete Antwortform liefern. Er läuft in Dart
+über `dart:io`, also mit demselben Netzwerk-Stack wie die App, und täglich als
+GitHub Action:
 
 ```bash
-cd api-tests && python3 healthcheck.py
-```
-
-### Split-Ticket als CLI
-
-Die Split-Ticket-Analyse läuft auch ohne App:
-
-```bash
-uv run main.py "https://www.bahn.de/buchung/start?vbid=..." [--age 30] [--bahncard BC25_2] [--deutschland-ticket]
+cd api-tests/healthcheck && dart pub get && dart run bin/healthcheck.dart
 ```
 
 ## Empfohlene Open-Source Bahn-Projekte und Tools

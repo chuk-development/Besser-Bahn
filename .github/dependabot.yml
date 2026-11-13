@@ -1,8 +1,8 @@
 version: 2
 updates:
-  # Python (uv.lock / pyproject.toml at repo root — api-tests + prediction probes)
-  - package-ecosystem: "uv"
-    directory: "/"
+  # Dart health check (api-tests/healthcheck/pubspec.yaml)
+  - package-ecosystem: "pub"
+    directory: "/api-tests/healthcheck"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
