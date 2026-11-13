@@ -88,6 +88,14 @@ caches (`.playwright-mcp/`), signing keys. They're gitignored — keep them out.
   bahnhof.de-Etagenkarte darf unter Zoom 14 nie Kacheln laden (`_IndoorLayer`
   in `app_map.dart`); sonst lädt flutter_map z14-Kacheln für den ganzen
   Ausschnitt (ICE-Streckenkarte: 1,4 GB RAM, Absturz, App lahm nach Zurück).
+- **Störungen unterwegs (2026-11-13):** Der Live-Tracker
+  (`live_trip_provider.dart`) sucht bei „Halt entfällt“ oder verpasstem
+  Anschluss selbst den Ersatz (`_offerReplacement`, `pickReplacement`) und
+  pusht „Nimm RE2 21:04 Gl. 6 → an 21:24“. Fortschritt immer über
+  `withLiveTimes()` (gespeicherte Zeiten sind veraltet). Fahrgastrechte-Regeln
+  je Ticket in `core/disruption_rights.dart` (Quellen im Kopf der Datei),
+  Karte `widgets/rights_now_card.dart`. Ersatzbus/„Zug beginnt hier“:
+  `legHints()` in `connection_detail_screen.dart`.
 - **`flutter test` flakes:** a few files fail with `Unable to connect to
   flutter_tester process: WebSocketException` on a full parallel run. That is
   the runner, not the test — rerun those files alone before you debug.
