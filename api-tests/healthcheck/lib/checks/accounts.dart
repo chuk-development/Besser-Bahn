@@ -7,6 +7,11 @@ import '../src/core.dart';
 /// Ported from api-tests/healthcheck.py.
 final List<Check> accountsChecks = [
   Check(
+    'vendo Komfort-Check-in status (kci)',
+    checkKciStatus,
+    group: 'accounts',
+  ),
+  Check(
     'prediction service (bahn.chuk.dev scores)',
     checkPredictionService,
     soft: true,
@@ -537,4 +542,29 @@ Future<String> checkGithubReleasesApi() async {
     throw CheckError("assets carry no 'browser_download_url'");
   }
   return 'latest=$tag, ${apks.length} apk asset(s)';
+}
+
+
+/// GET /mob/kcistatus/ticketreferenz/{ref}/verbindung/{tripUUID} — Komfort-
+/// Check-in state on the ticket view. Needs a Bearer (login or the anonymous
+/// token of an added order); without one it must answer 401 with the typed
+/// `code: TOKEN` the app keys its token renewal on. A 404 or another shape
+/// means the path or media type moved.
+Future<String> checkKciStatus() async {
+  const media = 'application/x.db.vendo.mob.kci.v3+json';
+  final r = await mobGet(
+    'kcistatus/ticketreferenz/ABCDEF12/verbindung/'
+    '00000000-0000-4000-8000-000000000002',
+    media,
+  );
+  if (r.status != 401 && r.status != 403) {
+    throw CheckError(
+      'expected 401/403 without a token, got ${r.status}: ${clip(r.text)}',
+    );
+  }
+  final code = (r.json() as Map?)?['code'];
+  if (code != 'TOKEN') {
+    throw CheckError('auth error without code TOKEN: ${clip(r.text)}');
+  }
+  return 'kcistatus reachable, auth-gated (${r.status} TOKEN)';
 }

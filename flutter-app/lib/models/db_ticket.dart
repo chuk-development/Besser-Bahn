@@ -39,11 +39,17 @@ class DbManualOrder {
   final List<String> kundenwunschIds;
   final DateTime addedAt;
 
+  /// `anonymerZugriff.accessToken` from the last lookup. Opens the order's
+  /// Komfort-Check-in without a login, exactly like DB Navigator uses it.
+  /// Renewed by loading the order again when DB says `TOKEN`.
+  final String? accessToken;
+
   const DbManualOrder({
     required this.auftragsnummer,
     required this.nachname,
     required this.kundenwunschIds,
     required this.addedAt,
+    this.accessToken,
   });
 
   factory DbManualOrder.fromJson(Map<String, dynamic> j) => DbManualOrder(
@@ -54,6 +60,7 @@ class DbManualOrder {
         .toList(),
     addedAt:
         DateTime.tryParse((j['addedAt'] ?? '').toString()) ?? DateTime(2000),
+    accessToken: j['accessToken'] as String?,
   );
 
   Map<String, dynamic> toJson() => {
@@ -61,6 +68,7 @@ class DbManualOrder {
     'nachname': nachname,
     'kundenwunschIds': kundenwunschIds,
     'addedAt': addedAt.toIso8601String(),
+    if (accessToken != null) 'accessToken': accessToken,
   };
 
   DbReiseIndex toIndex() => DbReiseIndex(
@@ -512,4 +520,115 @@ class DbPlatz {
     wagen: (j['nummer'] ?? '').toString(),
     platz: (j['plaetzeBeschreibung'] ?? '').toString(),
   );
+}
+
+// --- Komfort-Check-in --------------------------------------------------------
+
+/// A seat as KCI names it: coach + seat number, both strings ("5", "76").
+class DbKciPlatz {
+  final String wagennummer;
+  final String platznummer;
+  const DbKciPlatz({required this.wagennummer, required this.platznummer});
+
+  factory DbKciPlatz.fromJson(Map<String, dynamic> j) => DbKciPlatz(
+    wagennummer: (j['wagennummer'] ?? '').toString(),
+    platznummer: (j['platznummer'] ?? '').toString(),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'wagennummer': wagennummer,
+    'platznummer': platznummer,
+  };
+
+  String get label => 'Wagen $wagennummer, Platz $platznummer';
+}
+
+/// KCI state of one section of the trip. [nummer] is the index into the
+/// ticket's `verbindung.verbindungsAbschnitte` (DB spells the JSON key
+/// `verbindnungsabschnittsNummer`, typo included).
+class DbKciAbschnitt {
+  final int nummer;
+  final bool kciFaehig;
+
+  /// `nicht_kontrolliert`, `eingecheckt` or `kontrolliert`.
+  final String kontrollStatus;
+  final List<DbKciPlatz> plaetze;
+  final List<DbKciPlatz> reserviertePlaetze;
+  final DateTime? moeglichAb;
+  final String? checkinId;
+  final bool umcheckenMoeglich;
+
+  const DbKciAbschnitt({
+    required this.nummer,
+    required this.kciFaehig,
+    required this.kontrollStatus,
+    this.plaetze = const [],
+    this.reserviertePlaetze = const [],
+    this.moeglichAb,
+    this.checkinId,
+    this.umcheckenMoeglich = false,
+  });
+
+  factory DbKciAbschnitt.fromJson(Map<String, dynamic> j) {
+    List<DbKciPlatz> seats(dynamic v) => (v is List ? v : const [])
+        .whereType<Map<String, dynamic>>()
+        .map(DbKciPlatz.fromJson)
+        .toList();
+    return DbKciAbschnitt(
+      nummer:
+          ((j['verbindnungsabschnittsNummer'] ??
+                      j['verbindungsabschnittsNummer'])
+                  as num?)
+              ?.toInt() ??
+          0,
+      kciFaehig: j['kciFaehig'] == true,
+      kontrollStatus: (j['kontrollStatus'] ?? 'nicht_kontrolliert').toString(),
+      plaetze: seats(j['plaetze']),
+      reserviertePlaetze: seats(j['reserviertePlaetze']),
+      moeglichAb: DateTime.tryParse((j['moeglichAb'] ?? '').toString()),
+      checkinId: j['checkinId'] as String?,
+      umcheckenMoeglich: j['umcheckenMoeglich'] == true,
+    );
+  }
+
+  bool get eingecheckt =>
+      kontrollStatus == 'eingecheckt' || kontrollStatus == 'kontrolliert';
+
+  bool get kontrolliert => kontrollStatus == 'kontrolliert';
+
+  /// Check-in can be done right now.
+  bool canCheckIn(DateTime now) =>
+      kciFaehig &&
+      !eingecheckt &&
+      (moeglichAb == null || !now.isBefore(moeglichAb!));
+}
+
+/// `GET /mob/kcistatus/ticketreferenz/{kciTicketRefId}/verbindung/{tripUUID}`.
+class DbKciStatus {
+  final String kciTicketRefId;
+  final String tripUuid;
+  final List<DbKciAbschnitt> abschnitte;
+  final bool stichprobe;
+
+  const DbKciStatus({
+    required this.kciTicketRefId,
+    required this.tripUuid,
+    required this.abschnitte,
+    this.stichprobe = false,
+  });
+
+  factory DbKciStatus.fromJson(Map<String, dynamic> j) => DbKciStatus(
+    kciTicketRefId: (j['kciTicketRefId'] ?? '').toString(),
+    tripUuid: (j['tripUUID'] ?? '').toString(),
+    abschnitte:
+        (j['kciVerbindungsAbschnittListe'] as List<dynamic>? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(DbKciAbschnitt.fromJson)
+            .toList(),
+    stichprobe: j['stichprobe'] == true,
+  );
+
+  /// Only the sections where Komfort-Check-in exists at all.
+  List<DbKciAbschnitt> get faehig =>
+      abschnitte.where((a) => a.kciFaehig).toList();
 }

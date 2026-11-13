@@ -1036,9 +1036,10 @@ class ManualOrdersController extends AsyncNotifier<List<DbManualOrder>> {
     String nachname,
     DateTime addedAt,
   ) async {
-    final tickets = await ref
+    final loaded = await ref
         .read(dbAccountServiceProvider)
         .manuellLaden(auftragsnummer, nachname);
+    final tickets = loaded.tickets;
     String? nr;
     final ids = <String>[];
     for (final t in tickets) {
@@ -1061,6 +1062,7 @@ class ManualOrdersController extends AsyncNotifier<List<DbManualOrder>> {
       nachname: nachname.trim(),
       kundenwunschIds: ids,
       addedAt: addedAt,
+      accessToken: loaded.accessToken,
     );
   }
 
@@ -1095,6 +1097,22 @@ class ManualOrdersController extends AsyncNotifier<List<DbManualOrder>> {
         );
       }
     }
+  }
+
+  /// Whether [auftragsnummer] was added by number + surname.
+  Future<bool> contains(String auftragsnummer) async =>
+      (await _current()).any((o) => o.auftragsnummer == auftragsnummer);
+
+  /// The order's anonymous token, loading the order again if none is stored
+  /// yet (orders added before tokens were kept).
+  Future<String?> tokenFor(String auftragsnummer) async {
+    String? token() => (state.asData?.value ?? const <DbManualOrder>[])
+        .where((o) => o.auftragsnummer == auftragsnummer)
+        .firstOrNull
+        ?.accessToken;
+    await _current();
+    if (token() == null) await reload(auftragsnummer);
+    return token();
   }
 
   Future<void> remove(String auftragsnummer) async {
@@ -1525,3 +1543,71 @@ class DbSavedReiseIds extends Notifier<Map<String, String>> {
 
 final dbSavedReiseIdsProvider =
     NotifierProvider<DbSavedReiseIds, Map<String, String>>(DbSavedReiseIds.new);
+
+// --- Komfort-Check-in --------------------------------------------------------
+
+/// Runs one KCI call for the ticket [ticketKey] (`auftragsnummer/kwId`) with the
+/// right credentials: an added ticket uses its anonymous token (renewed once by
+/// loading the order again when DB refuses it), an account ticket the login.
+Future<T> _withKciAuth<T>(
+  ManualOrdersController orders,
+  String ticketKey,
+  Future<T> Function(String? anonToken) call,
+) async {
+  final nr = ticketKey.split('/').first;
+  if (!await orders.contains(nr)) return call(null);
+  try {
+    return await call(await orders.tokenFor(nr));
+  } on DbKciException catch (e) {
+    if (!e.tokenRefused) rethrow;
+    await orders.reload(nr);
+    return call(await orders.tokenFor(nr));
+  }
+}
+
+/// Komfort-Check-in state of a ticket, or null when the ticket has none (no
+/// `kciTicketRefId` / `tripUUID` — Länder-Tickets, Zeitkarten, …).
+final kciStatusProvider = FutureProvider.autoDispose
+    .family<DbKciStatus?, String>((ref, ticketKey) async {
+      final t = await ref.watch(ticketProvider(ticketKey).future);
+      final refId = t.kciTicketRefId;
+      final trip = t.tripUUID;
+      if (refId == null || refId.isEmpty || trip == null || trip.isEmpty) {
+        return null;
+      }
+      return _withKciAuth(
+        ref.read(manualOrdersProvider.notifier),
+        ticketKey,
+        (token) => ref
+            .read(dbAccountServiceProvider)
+            .kciStatus(kciTicketRefId: refId, tripUuid: trip, anonToken: token),
+      );
+    });
+
+/// Checks in on one section and refreshes [kciStatusProvider]. Throws
+/// [DbKciException] with DB's own explanation when DB refuses.
+Future<DbKciStatus> kciCheckin(
+  WidgetRef ref,
+  String ticketKey, {
+  required int abschnitt,
+  required List<DbKciPlatz> plaetze,
+  List<String> bahnCards = const [],
+}) async {
+  final t = await ref.read(ticketProvider(ticketKey).future);
+  final status = await _withKciAuth(
+    ref.read(manualOrdersProvider.notifier),
+    ticketKey,
+    (token) => ref
+        .read(dbAccountServiceProvider)
+        .kciCheckin(
+          kciTicketRefId: t.kciTicketRefId!,
+          tripUuid: t.tripUUID!,
+          abschnitt: abschnitt,
+          plaetze: plaetze,
+          bahnCards: bahnCards,
+          anonToken: token,
+        ),
+  );
+  ref.invalidate(kciStatusProvider(ticketKey));
+  return status;
+}

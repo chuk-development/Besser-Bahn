@@ -41,6 +41,7 @@ const kOrder = <String>[
   'bahn.de web API blocked (reiseloesung)',
   'vendo departures (bahnhofstafel)',
   'vendo Ticket hinzufügen (manuellLaden)',
+  'vendo Komfort-Check-in status (kci)',
   'vendo arrivals (bahnhofstafel)',
   'vendo board semantics (gattung/cancel)',
   'IRIS plan via stops (board "Über")',

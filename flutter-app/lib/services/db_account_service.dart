@@ -38,6 +38,59 @@ class DbBahnBonusAuthorizationRequired extends DbAccountException {
     : super('BahnBonus muss einmalig verknüpft werden', 403);
 }
 
+/// Komfort-Check-in failed. [message] is ready for the user: DB sends its own
+/// display text (`details.anzeigeText`) for most refusals ("zu früh", "Platz
+/// belegt", "BahnCard fehlt" …), and that is what we show.
+class DbKciException implements Exception {
+  final String message;
+  final int? status;
+
+  /// `code` of DB's error body (`TOKEN`, `FACHLICH`, `VALIDIERUNG` …).
+  final String? code;
+  final String? typ;
+  const DbKciException(this.message, {this.status, this.code, this.typ});
+
+  /// The anonymous token of an added ticket is no longer accepted.
+  bool get tokenRefused =>
+      code == 'TOKEN' || code == 'EKTOKEN' || status == 401;
+
+  factory DbKciException.fromResponse(http.Response res) {
+    String? code;
+    String? typ;
+    String? text;
+    try {
+      final body = json.decode(utf8.decode(res.bodyBytes));
+      if (body is Map<String, dynamic>) {
+        code = body['code']?.toString();
+        final d = body['details'];
+        if (d is Map<String, dynamic>) {
+          typ = d['typ']?.toString();
+          text = d['anzeigeText']?.toString();
+        }
+      }
+    } catch (_) {}
+    final message = (text != null && text.trim().isNotEmpty)
+        ? text.trim()
+        : switch (code) {
+            'TOKEN' || 'EKTOKEN' => 'Anmeldung für den Check-in abgelaufen.',
+            'VALIDIERUNG' => 'Die Angaben passen nicht zum Ticket.',
+            'RETRY' => 'Gerade zu viele Anfragen. Bitte gleich nochmal.',
+            _ =>
+              'Komfort-Check-in nicht möglich (HTTP ${res.statusCode}'
+                  '${typ != null ? ', $typ' : ''}).',
+          };
+    return DbKciException(
+      message,
+      status: res.statusCode,
+      code: code,
+      typ: typ,
+    );
+  }
+
+  @override
+  String toString() => message;
+}
+
 /// "Ticket hinzufügen" failed. [message] is ready for the user. Kept apart from
 /// [DbAccountException] on purpose: the call is anonymous, so none of its
 /// failures may be read as a dead account session.
@@ -1269,14 +1322,12 @@ class DbAccountService {
   /// is anonymous (no Authorization header) and the response already carries
   /// every ticket of the order in full — the same `{reise|katalog|…: {
   /// standardInfos, *Infos}}` shape as `GET …/kundenwunsch/{id}`, so each entry
-  /// parses with [DbTicket.fromJson] unchanged. The returned anonymous
-  /// `accessToken` is not used: `GET …/kundenwunsch` answers it with
-  /// `403 TOKEN`, and Navigator itself falls back to calling this endpoint
-  /// again with the stored surname. We do the same on every refresh.
-  Future<List<Map<String, dynamic>>> manuellLaden(
-    String auftragsnummer,
-    String nachname,
-  ) {
+  /// parses with [DbTicket.fromJson] unchanged. The anonymous `accessToken` is
+  /// kept for Komfort-Check-in (`/mob/kci*` accept it as Bearer). Tickets are
+  /// refreshed by calling this endpoint again with the stored surname, as
+  /// Navigator does when its token is refused.
+  Future<({List<Map<String, dynamic>> tickets, String? accessToken})>
+  manuellLaden(String auftragsnummer, String nachname) {
     final nr = auftragsnummer.replaceAll(RegExp(r'\s'), '').toUpperCase();
     return _coalescer.run('MANUELL $nr', () async {
       await _ensureDeviceInfo();
@@ -1308,6 +1359,12 @@ class DbAccountService {
       final list = data is Map<String, dynamic>
           ? data['auftragsbezogeneReisen']
           : null;
+      final anon = data is Map<String, dynamic>
+          ? data['anonymerZugriff']
+          : null;
+      final token = anon is Map<String, dynamic>
+          ? anon['accessToken'] as String?
+          : null;
       final tickets = (list is List ? list : const [])
           .whereType<Map<String, dynamic>>()
           .toList();
@@ -1320,7 +1377,7 @@ class DbAccountService {
           'Die Bahn hat zu diesem Auftrag kein Ticket geliefert.',
         );
       }
-      return tickets;
+      return (tickets: tickets, accessToken: token);
     });
   }
 
@@ -1341,6 +1398,106 @@ class DbAccountService {
 
   Future<void> saveManualOrders(List<Map<String, dynamic>> orders) =>
       _writeKey(_kManualOrders, json.encode(orders));
+
+  // --- Komfort-Check-in ------------------------------------------------------
+
+  /// One KCI call. With [anonToken] (a ticket added by order number + surname)
+  /// the call carries that token as Bearer, like DB Navigator's `X-AddAnonToken`
+  /// interceptor does; without it, the signed-in account's token.
+  ///
+  /// Note: the edge answers a /mob request WITHOUT `X-Correlation-ID` with a
+  /// bare 405 — [_headers] always sets one.
+  Future<http.Response> _kci(
+    String method,
+    String path, {
+    Object? body,
+    String? anonToken,
+  }) async {
+    const media = DbAccountConstants.kciMedia;
+    final url = '${DbAccountConstants.mobBase}/$path';
+    final bytes = body == null ? null : utf8.encode(json.encode(body));
+    if (anonToken == null) {
+      return _dispatch(
+        method,
+        url,
+        media: media,
+        body: bytes,
+        bypassEtag: true,
+      );
+    }
+    await _ensureDeviceInfo();
+    await _ensureCorrelationId();
+    final headers = _headers(media)
+      ..['Authorization'] = 'Bearer $anonToken'
+      ..['Content-Type'] = media;
+    try {
+      final uri = Uri.parse(url);
+      return method == 'GET'
+          ? await _client.get(uri, headers: headers).timeout(_timeout)
+          : await _client
+                .post(uri, headers: headers, body: bytes)
+                .timeout(_timeout);
+    } on TimeoutException {
+      throw const DbKciException(
+        'Zeitüberschreitung – die Bahn antwortet nicht.',
+      );
+    }
+  }
+
+  /// Komfort-Check-in state of every section of a booked trip. The ids come
+  /// from the ticket: `reiseInfos.kciTicketRefId` and `verbindung.tripUUID`.
+  Future<DbKciStatus> kciStatus({
+    required String kciTicketRefId,
+    required String tripUuid,
+    String? anonToken,
+  }) async {
+    final res = await _kci(
+      'GET',
+      'kcistatus/ticketreferenz/${Uri.encodeComponent(kciTicketRefId)}'
+          '/verbindung/${Uri.encodeComponent(tripUuid)}',
+      anonToken: anonToken,
+    );
+    if (res.statusCode != 200) throw DbKciException.fromResponse(res);
+    return DbKciStatus.fromJson(
+      json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>,
+    );
+  }
+
+  /// Checks the traveller in on one section (`POST /mob/kcidurchfuehren`).
+  /// [abschnitt] is [DbKciAbschnitt.nummer]; [plaetze] the seat(s) taken;
+  /// [bahnCards] the BahnCard numbers the ticket's discount relies on. The
+  /// JSON keys copy DB Navigator's `KciCheckinAnfrageModel` exactly, typo in
+  /// `verbidnungsabschnittsNummer` included.
+  Future<DbKciStatus> kciCheckin({
+    required String kciTicketRefId,
+    required String tripUuid,
+    required int abschnitt,
+    required List<DbKciPlatz> plaetze,
+    List<String> bahnCards = const [],
+    String? anonToken,
+  }) async {
+    final res = await _kci(
+      'POST',
+      'kcidurchfuehren',
+      anonToken: anonToken,
+      body: {
+        'kciTicketRefId': kciTicketRefId,
+        'tripUUID': tripUuid,
+        'verbidnungsabschnittsNummer': abschnitt,
+        'plaetze': [for (final p in plaetze) p.toJson()],
+        'bahnCards': [
+          for (final n in bahnCards) {'nummer': n},
+        ],
+      },
+    );
+    AppLog.log('kcidurchfuehren HTTP ${res.statusCode}', tag: 'db-account');
+    if (res.statusCode != 200 && res.statusCode != 201) {
+      throw DbKciException.fromResponse(res);
+    }
+    return DbKciStatus.fromJson(
+      json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>,
+    );
+  }
 
   // --- Saved trips ("Meine Reisen") -----------------------------------------
 

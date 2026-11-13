@@ -15,6 +15,7 @@ import '../../providers/account_provider.dart';
 import '../../providers/service_providers.dart';
 import '../connection_search/connection_detail_screen.dart';
 import 'widgets/bahncard_view.dart' show openFirstBahnCardControl;
+import 'widgets/kci_bar.dart';
 import '../../widgets/add_ticket_dialog.dart';
 import '../../widgets/app_nav_bar.dart';
 import '../../core/extensions.dart';
@@ -192,6 +193,11 @@ class TicketViewScreen extends ConsumerWidget {
         ColoredBox(
           color: Colors.white,
           child: _TicketStatusBlock(ticket: t),
+        ),
+        // Komfort-Check-in — renders nothing when the ticket has none.
+        KomfortCheckinBar(
+          ticketKey: '${ticketRef.auftragsnummer}/${ticketRef.kundenwunschId}',
+          ticket: t,
         ),
         // Themed horizontal divider stripe ("die kleine Lücke mit dem braunen
         // wieder, so 1 cm") — only the gap is themed; sides stay white.
