@@ -45,6 +45,7 @@ import '../../utils/transfer_risk.dart';
 import '../../utils/split_stops.dart';
 import '../../widgets/departure_card.dart';
 import '../../widgets/fahrgastrechte_card.dart';
+import '../../widgets/rights_now_card.dart';
 import '../../widgets/offline_package_bar.dart';
 import '../../widgets/prediction_badge.dart';
 import '../../widgets/product_badge.dart';
@@ -627,6 +628,13 @@ class _ConnectionDetailScreenState
             // pre-departure card (countdown + "wann musst du los") that
             // disappears once the train has left. The on-board progress lives
             // folded into the summary block above (TripProgressInline).
+            RightsNowCard(
+              journey: journey,
+              ticketKey: widget.ticketRef == null
+                  ? null
+                  : '${widget.ticketRef!.auftragsnummer}/'
+                        '${widget.ticketRef!.kundenwunschId}',
+            ),
             FahrgastrechteCard(journey: journey),
             DepartureCard(journey: journey),
             if (missed != null)
