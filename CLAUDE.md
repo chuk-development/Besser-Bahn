@@ -68,6 +68,12 @@ caches (`.playwright-mcp/`), signing keys. They're gitignored — keep them out.
   Fehler stehen in `details.typ` (`AUFTRAG_NICHT_GEFUNDEN`,
   `AUFTRAG_LOGIN_REQUIRED`, …). Der Aufruf mit curl ohne Chrome-TLS gibt
   `452 OPS_BLOCKED`, also im Test `curl_cffi` nehmen.
+- **Healthcheck 452 OPS_BLOCKED ≠ App kaputt.** Seit 2026-11-13 sperrt Akamai
+  auf `/mob` (bahnhofstafel, angebote/*) den Chrome-TLS-Fingerabdruck von
+  `curl_cffi`. Firefox-Profil und das `dart:io` der App kommen durch.
+  `healthcheck.py` probiert darum `firefox` zuerst, dann `chrome`. Prüfen, ob
+  die App wirklich betroffen ist: den echten `VendoService` in einem
+  Wegwerf-`flutter test` mit `HttpOverrides.global = null` laufen lassen.
 - **BahnBonus-Nummer** kommt im normalen Login mit: `bbStatus.loyaltyNumber`.
   Dafür ist kein zweiter BahnBonus-Login nötig (der gilt nur für CO₂).
 - **`flutter test` flakes:** a few files fail with `Unable to connect to

@@ -84,13 +84,41 @@ def _raw_request(method, url, *args, **kwargs):
     # after it had already cried "API changed". Checks that depend on a
     # specific client identity (Träwelling's UA rule) set that header
     # explicitly instead of relying on the transport's default.
+    #
+    # Since 2026-11-13 the /mob edge blocks the *Chrome* fingerprint too
+    # (452 OPS_BLOCKED on bahnhofstafel, angebote/*, …) while Firefox and the
+    # app's own dart:io stack still pass — verified by running the app's
+    # VendoService live. So: Firefox first, and if the edge refuses that
+    # fingerprint, one retry as Chrome (hosts that still want Chrome keep
+    # working). A block on both is a real block.
     if _cc is not None:
-        kwargs.setdefault("impersonate", "chrome")
-        try:
-            return _cc.request(method, url, *args, **kwargs)
-        except Exception as e:  # curl_cffi errors aren't requests.RequestException
-            raise requests.RequestException(str(e)) from e
+        if "impersonate" in kwargs:
+            profiles = [kwargs.pop("impersonate")]
+        else:
+            profiles = list(IMPERSONATE_ORDER)
+        last = None
+        for profile in profiles:
+            try:
+                last = _cc.request(method, url, *args, impersonate=profile,
+                                   **kwargs)
+            except Exception as e:  # curl_cffi errors aren't RequestException
+                raise requests.RequestException(str(e)) from e
+            if not _edge_blocked(last):
+                return last
+        return last
     return requests.request(method, url, *args, **kwargs)
+
+
+# TLS fingerprints to try, in order. See _raw_request.
+IMPERSONATE_ORDER = ("firefox", "chrome")
+
+
+def _edge_blocked(r) -> bool:
+    """Akamai refused the client fingerprint (not an API answer)."""
+    if r.status_code not in (403, 452):
+        return False
+    body = r.text[:300]
+    return "OPS_BLOCKED" in body or "Access Denied" in body
 
 
 def _raw_get(url, *args, **kwargs):
