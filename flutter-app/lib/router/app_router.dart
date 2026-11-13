@@ -202,6 +202,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => ConnectionDetailScreen(
           journey: state.extra as Journey,
           fromSearch: state.uri.queryParameters['src'] == 'search',
+          focusCurrentLeg: state.uri.queryParameters['focus'] == 'now',
         ),
       ),
       // Split-ticket analysis pushed from a connection (above the tab shell) so

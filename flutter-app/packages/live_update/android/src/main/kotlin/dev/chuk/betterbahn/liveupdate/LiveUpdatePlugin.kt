@@ -7,6 +7,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.embedding.engine.plugins.activity.ActivityAware
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
+import io.flutter.plugin.common.PluginRegistry
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
@@ -21,14 +24,26 @@ import io.flutter.plugin.common.MethodChannel
  * A `FlutterPlugin` attaches to *every* engine, and posting a notification needs
  * only a `Context`.
  */
-class LiveUpdatePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
+class LiveUpdatePlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware,
+    PluginRegistry.NewIntentListener {
 
     companion object {
         private const val CHANNEL = "dev.chuk.betterbahn/live_update"
+
+        /** Intent extra on the chip's tap: the key of the trip it shows. */
+        const val EXTRA_TRIP_KEY = "dev.chuk.betterbahn.LIVE_TRIP_KEY"
     }
 
     private var channel: MethodChannel? = null
     private var context: Context? = null
+    private var activityBinding: ActivityPluginBinding? = null
+
+    /**
+     * The trip key a tap on the chip started (or resumed) the activity with.
+     * Taken once by Dart (`takeLaunchTripKey`) so a later resume doesn't jump
+     * to the trip again.
+     */
+    private var pendingTripKey: String? = null
 
     /**
      * Swiping a Live Update away has to stick — otherwise the next poll posts it
@@ -68,6 +83,41 @@ class LiveUpdatePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         context = null
     }
 
+    // --- Tap on the chip → open that trip ------------------------------------
+
+    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
+        activityBinding = binding
+        binding.addOnNewIntentListener(this)
+        // Cold start from the chip: the extra rides on the launch intent.
+        consumeTripKey(binding.activity.intent)
+    }
+
+    override fun onDetachedFromActivityForConfigChanges() = onDetachedFromActivity()
+
+    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) =
+        onAttachedToActivity(binding)
+
+    override fun onDetachedFromActivity() {
+        activityBinding?.removeOnNewIntentListener(this)
+        activityBinding = null
+    }
+
+    /** App already running (SINGLE_TOP): the tap arrives here. */
+    override fun onNewIntent(intent: Intent): Boolean {
+        val key = consumeTripKey(intent) ?: return false
+        channel?.invokeMethod("onTripTapped", key)
+        return false
+    }
+
+    private fun consumeTripKey(intent: Intent?): String? {
+        val key = intent?.getStringExtra(EXTRA_TRIP_KEY)?.takeIf { it.isNotEmpty() }
+        if (key != null) {
+            pendingTripKey = key
+            intent.removeExtra(EXTRA_TRIP_KEY)
+        }
+        return key
+    }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         val ctx = context
         if (ctx == null) {
@@ -78,6 +128,10 @@ class LiveUpdatePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "isSupported" -> result.success(TripLiveUpdate.isSupported(ctx))
             "isPromoted" -> result.success(TripLiveUpdate.isPromoted(ctx))
             "hasMetricStyle" -> result.success(Api37.available)
+            "takeLaunchTripKey" -> {
+                result.success(pendingTripKey)
+                pendingTripKey = null
+            }
             "cancel" -> {
                 TripLiveUpdate.cancel(ctx)
                 result.success(null)
@@ -106,7 +160,9 @@ class LiveUpdatePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         // Tapping the chip opens the app, which lands on the trip — the same
         // place the ordinary trip notifications go.
         val launch = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+        val tripKey = call.argument<String>("tripKey")
         val contentIntent = launch?.let {
+            if (!tripKey.isNullOrEmpty()) it.putExtra(EXTRA_TRIP_KEY, tripKey)
             PendingIntent.getActivity(
                 ctx,
                 0,

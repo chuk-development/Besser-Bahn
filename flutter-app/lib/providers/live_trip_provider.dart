@@ -209,7 +209,7 @@ class LiveTripTracker extends Notifier<LiveTripState>
       LiveUpdateService.chipShowsStops = ref
           .read(settingsProvider)
           .liveChipStops;
-      unawaited(LiveUpdateService.show(journey.journey));
+      unawaited(LiveUpdateService.show(journey.journey, tripKey: journey.key));
     } catch (e) {
       AppLog.log('live poll failed ($e)', tag: 'live');
     } finally {

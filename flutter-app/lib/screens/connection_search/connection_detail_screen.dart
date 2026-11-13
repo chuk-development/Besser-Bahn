@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -81,11 +82,16 @@ class ConnectionDetailScreen extends ConsumerStatefulWidget {
   /// have NO results behind them: the Reisen tab, a ticket, a saved trip.
   final bool fromSearch;
 
+  /// Opened from the Live Update: scroll straight to the train the rider is
+  /// on right now (or the next one), instead of the top of the trip.
+  final bool focusCurrentLeg;
+
   const ConnectionDetailScreen({
     super.key,
     required this.journey,
     this.ticketRef,
     this.fromSearch = false,
+    this.focusCurrentLeg = false,
   });
 
   @override
@@ -99,6 +105,60 @@ class _ConnectionDetailScreenState
   // "Weitere Abfahrten" rebuilds it (and drops the price/recon, which no longer
   // match the custom combination).
   late Journey _journey = widget.journey;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.focusCurrentLeg) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _scrollToCurrentLeg();
+        Future<void>.delayed(const Duration(milliseconds: 900), () {
+          if (mounted) _scrollToCurrentLeg();
+        });
+      });
+    }
+  }
+
+  /// One anchor per leg section, so [_scrollToCurrentLeg] can reach it.
+  final _legAnchors = <int, GlobalKey>{};
+  GlobalKey _legAnchor(int i) => _legAnchors.putIfAbsent(i, GlobalKey.new);
+
+  /// Index of the leg the rider is on now: the transit leg that has departed
+  /// and not yet arrived (live times when known), else the next one to depart,
+  /// else the last. Null when the journey has no transit leg.
+  int? _currentLegIndex(List<JourneyLeg> legs, DateTime now) {
+    int? next;
+    int? last;
+    for (var i = 0; i < legs.length; i++) {
+      final leg = legs[i];
+      if (leg.isWalking) continue;
+      last = i;
+      final dep = _liveDepartureOf(leg) ?? leg.plannedDeparture;
+      final arr = _liveArrivalOf(leg) ?? leg.plannedArrival;
+      if (dep == null) continue;
+      if (!now.isBefore(dep) && (arr == null || now.isBefore(arr))) return i;
+      if (next == null && now.isBefore(dep)) next = i;
+    }
+    return next ?? last;
+  }
+
+  /// Scrolls the current leg to the top. Run twice: once when the list is
+  /// first laid out, once after the live data had a moment to change the
+  /// heights above it.
+  void _scrollToCurrentLeg() {
+    final i = _currentLegIndex(journey.legs, DateTime.now());
+    if (i == null || i == 0) return;
+    final ctx = _legAnchors[i]?.currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      alignment: 0.02,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   Journey get journey => _journey;
 
   /// Bumped on pull-to-refresh. Handed to each leg section as a plain value
@@ -511,6 +571,11 @@ class _ConnectionDetailScreenState
           // Always scrollable so the pull-to-refresh gesture works even when the
           // content is short.
           physics: const AlwaysScrollableScrollPhysics(),
+          // Lay out every leg when we must jump to one: a ListView builds
+          // lazily, and a leg below the fold has no context to scroll to.
+          scrollCacheExtent: widget.focusCurrentLeg
+              ? const ScrollCacheExtent.pixels(100000)
+              : null,
           children: [
             _summary(context),
             _ownExperience(context),
@@ -594,28 +659,31 @@ class _ConnectionDetailScreenState
                     final gap = prev != null
                         ? _gapMinutes(readyAt, _liveDepartureOf(legs[i]))
                         : null;
-                    return _LegSection(
-                      // NB no _refreshTick in the key: a pull-to-refresh must NOT
-                      // remount the section (that wipes its shown data); it flows
-                      // in as refreshTick and triggers an in-place silent re-fetch.
-                      key: ValueKey('leg-$i-${legs[i].tripId}'),
-                      refreshTick: _refreshTick,
-                      leg: legs[i],
-                      index: i,
-                      nextTransitLeg: _nextTransitLeg(legs, i),
-                      incomingGapMinutes: gap,
-                      readyAt: readyAt,
-                      transferStationName: prev?.destination.name,
-                      samePlatformTransfer: journey.samePlatformTransferInto(
-                        legs[i],
+                    return KeyedSubtree(
+                      key: _legAnchor(i),
+                      child: _LegSection(
+                        // NB no _refreshTick in the key: a pull-to-refresh must NOT
+                        // remount the section (that wipes its shown data); it flows
+                        // in as refreshTick and triggers an in-place silent re-fetch.
+                        key: ValueKey('leg-$i-${legs[i].tripId}'),
+                        refreshTick: _refreshTick,
+                        leg: legs[i],
+                        index: i,
+                        nextTransitLeg: _nextTransitLeg(legs, i),
+                        incomingGapMinutes: gap,
+                        readyAt: readyAt,
+                        transferStationName: prev?.destination.name,
+                        samePlatformTransfer: journey.samePlatformTransferInto(
+                          legs[i],
+                        ),
+                        earlierAlight: _earlierAlightInput(legs, i, prev),
+                        // A fresh trip fetch carries live delays → recompute the
+                        // transfer windows above so a shrunk gap shows immediately.
+                        onTripUpdated: () {
+                          if (mounted) setState(() {});
+                        },
+                        onReplaceLeg: _replaceLeg,
                       ),
-                      earlierAlight: _earlierAlightInput(legs, i, prev),
-                      // A fresh trip fetch carries live delays → recompute the
-                      // transfer windows above so a shrunk gap shows immediately.
-                      onTripUpdated: () {
-                        if (mounted) setState(() {});
-                      },
-                      onReplaceLeg: _replaceLeg,
                     );
                   },
                 ),

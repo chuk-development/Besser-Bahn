@@ -52,12 +52,12 @@ class LiveUpdateMetric {
     String? unit,
     int semantic = LiveUpdateSemantic.unspecified,
   }) : this._(
-          label: label,
-          kind: 'count',
-          number: value,
-          unit: unit,
-          semantic: semantic,
-        );
+         label: label,
+         kind: 'count',
+         number: value,
+         unit: unit,
+         semantic: semantic,
+       );
 
   /// Free text — a station name. Keep it short; the template gives each metric
   /// an equal third of the width regardless of content.
@@ -73,20 +73,20 @@ class LiveUpdateMetric {
     required DateTime value,
     int semantic = LiveUpdateSemantic.unspecified,
   }) : this._(
-          label: label,
-          kind: 'clock',
-          number: value.hour * 60 + value.minute,
-          semantic: semantic,
-        );
+         label: label,
+         kind: 'clock',
+         number: value.hour * 60 + value.minute,
+         semantic: semantic,
+       );
 
   Map<String, Object?> toMap() => {
-        'label': label,
-        'kind': kind,
-        'number': number,
-        'text': text,
-        'unit': unit,
-        'semantic': semantic,
-      };
+    'label': label,
+    'kind': kind,
+    'number': number,
+    'text': text,
+    'unit': unit,
+    'semantic': semantic,
+  };
 }
 
 /// Which template to build. [auto] takes the richest one the device has.
@@ -126,7 +126,23 @@ class LiveUpdate {
   static const _channel = MethodChannel('dev.chuk.betterbahn/live_update');
 
   static void Function()? _onDismissed;
+  static void Function(String tripKey)? _onTripTapped;
   static bool _listening = false;
+
+  static void _listen() {
+    if (_listening) return;
+    _listening = true;
+    _channel.setMethodCallHandler((call) async {
+      switch (call.method) {
+        case 'onDismissed':
+          _onDismissed?.call();
+        case 'onTripTapped':
+          final key = call.arguments;
+          if (key is String && key.isNotEmpty) _onTripTapped?.call(key);
+      }
+      return null;
+    });
+  }
 
   /// Called when the rider swipes the Live Update away.
   ///
@@ -134,12 +150,25 @@ class LiveUpdate {
   /// the app is arguing with them once a minute.
   static set onDismissed(void Function()? callback) {
     _onDismissed = callback;
-    if (_listening) return;
-    _listening = true;
-    _channel.setMethodCallHandler((call) async {
-      if (call.method == 'onDismissed') _onDismissed?.call();
+    _listen();
+  }
+
+  /// Called when the rider taps the Live Update while the app is running. The
+  /// argument is the `tripKey` given to [post]. A tap that cold-starts the app
+  /// is read with [takeLaunchTripKey] instead.
+  static set onTripTapped(void Function(String tripKey)? callback) {
+    _onTripTapped = callback;
+    _listen();
+  }
+
+  /// The trip key the app was started with from a tap on the Live Update, or
+  /// null. Returns it once.
+  static Future<String?> takeLaunchTripKey() async {
+    try {
+      return await _channel.invokeMethod<String>('takeLaunchTripKey');
+    } catch (_) {
       return null;
-    });
+    }
   }
 
   /// Whether this device will really promote the notification.
@@ -206,6 +235,7 @@ class LiveUpdate {
     int criticalMetric = -1,
     int titleSemantic = LiveUpdateSemantic.unspecified,
     LiveUpdateStyle style = LiveUpdateStyle.auto,
+    String? tripKey,
   }) async {
     try {
       final result = await _channel.invokeMapMethod<String, Object?>('post', {
@@ -226,6 +256,7 @@ class LiveUpdate {
         'criticalMetric': criticalMetric,
         'titleSemantic': titleSemantic,
         'style': style.wire,
+        'tripKey': tripKey,
       });
       if (result == null) return LiveUpdateResult.none;
       return LiveUpdateResult(
@@ -240,6 +271,8 @@ class LiveUpdate {
   static Future<void> cancel() async {
     try {
       await _channel.invokeMethod<void>('cancel');
-    } catch (_) {/* nothing to cancel */}
+    } catch (_) {
+      /* nothing to cancel */
+    }
   }
 }

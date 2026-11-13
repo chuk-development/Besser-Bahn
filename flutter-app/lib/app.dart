@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:live_update/live_update.dart';
 
 import 'core/app_log.dart';
 import 'core/constants.dart';
@@ -37,6 +38,10 @@ class _BessereBahnAppState extends ConsumerState<BessereBahnApp> {
     _tripOpenSubscription = NotificationService.tripOpens.listen((key) {
       unawaited(_openTrip(key, consumePersisted: true));
     });
+    // A tap on the Live Update while the app runs: open the trip at the train
+    // the rider is on right now.
+    LiveUpdate.onTripTapped = (key) =>
+        unawaited(_openTrip(key, focusCurrentLeg: true));
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final rescue = await NotificationService.takePendingMissedRescue();
       if (rescue != null && mounted) await _openMissedAlternatives(rescue);
@@ -44,6 +49,11 @@ class _BessereBahnAppState extends ConsumerState<BessereBahnApp> {
       // of this existed, so it waited on disk.
       final tripKey = await NotificationService.takePendingTripKey();
       if (tripKey != null && mounted) await _openTrip(tripKey);
+      // Same for a Live Update tap that started the app.
+      final liveKey = await LiveUpdate.takeLaunchTripKey();
+      if (liveKey != null && mounted) {
+        await _openTrip(liveKey, focusCurrentLeg: true);
+      }
     });
   }
 
@@ -60,7 +70,11 @@ class _BessereBahnAppState extends ConsumerState<BessereBahnApp> {
   /// where they left off — usually the search — and makes them find the trip
   /// themselves. The Reisen tab is selected first, so Back leads to the trip
   /// list rather than to whatever screen the app happened to be on.
-  Future<void> _openTrip(String key, {bool consumePersisted = false}) async {
+  Future<void> _openTrip(
+    String key, {
+    bool consumePersisted = false,
+    bool focusCurrentLeg = false,
+  }) async {
     // The stream fired, so the persisted copy (written for the cold-start case)
     // is now stale — drop it before it opens the same trip a second time.
     if (consumePersisted) await NotificationService.takePendingTripKey();
@@ -77,7 +91,10 @@ class _BessereBahnAppState extends ConsumerState<BessereBahnApp> {
       );
       return;
     }
-    router.push('/connection', extra: saved.journey);
+    router.push(
+      focusCurrentLeg ? '/connection?focus=now' : '/connection',
+      extra: saved.journey,
+    );
   }
 
   /// The saved trip for [key], waiting out the library's async load.

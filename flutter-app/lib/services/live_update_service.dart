@@ -63,7 +63,11 @@ class LiveUpdateService {
   ///
   /// Returns whether the system is really promoting it — false means "show the
   /// ordinary notification instead", not "something broke".
-  static Future<bool> show(Journey journey, {DateTime? now}) async {
+  static Future<bool> show(
+    Journey journey, {
+    DateTime? now,
+    String? tripKey,
+  }) async {
     if (_dismissed) {
       AppLog.log(
         'live update: übersprungen — vom Nutzer weggewischt (reset() '
@@ -160,6 +164,8 @@ class LiveUpdateService {
         // has room for only one figure, that is the one.
         criticalMetric: 0,
         style: preferredStyle,
+        // A tap opens THIS trip at the train you are on (see app.dart).
+        tripKey: tripKey,
       );
       // post.promoted is the flag the system set at post time; isPromoted asks
       // the live notification back — they should agree, and a mismatch is worth
