@@ -30,6 +30,10 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # IRIS and the DB boards speak German local time; on a UTC runner the
+      # IRIS plan hour is off by one or two and nothing matches.
+      TZ: Europe/Berlin
     defaults:
       run:
         working-directory: api-tests/healthcheck
