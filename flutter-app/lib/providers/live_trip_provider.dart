@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/app_log.dart';
 import '../core/extensions.dart';
+import '../core/missed_connection.dart';
 import '../models/journey.dart';
 import '../models/library_models.dart';
+import '../models/station.dart';
 import '../models/transfer_profile.dart';
 import '../models/trip.dart';
 import '../services/live_update_service.dart';
@@ -257,6 +259,19 @@ class LiveTripTracker extends Notifier<LiveTripState>
       if (!boarded) {
         // Before boarding: watch the departure at *my* boarding stop.
         final s = _stopFor(curTrip, leg.origin.id, leg.origin.name);
+        if (s != null && s.cancelled) {
+          unawaited(
+            _offerReplacement(
+              journey,
+              legIndex: idx,
+              from: leg.origin,
+              readyAt: now,
+              line: lineName,
+              cancelled: true,
+              key: curTrip.id,
+            ),
+          );
+        }
         if (s != null) {
           _checkCancelled(s, lineName);
           _checkDelay(
@@ -310,7 +325,26 @@ class LiveTripTracker extends Notifier<LiveTripState>
         depStop?.plannedDeparturePlatform,
         tag: 'nextplat',
       );
-      if (liveArr != null && liveDep != null) {
+      // The connection itself is gone: its train skips the transfer stop, or
+      // we arrive after it leaves. Find the replacement now and say which train
+      // to take — the rider should not have to work that out on the platform.
+      final skipsStop = depStop?.cancelled ?? false;
+      final missed =
+          liveArr != null && liveDep != null && liveDep.isBefore(liveArr);
+      if (skipsStop || missed) {
+        unawaited(
+          _offerReplacement(
+            journey,
+            legIndex: idx + 1,
+            from: next.origin,
+            readyAt: liveArr ?? now,
+            line: next.line?.displayName ?? 'Anschluss',
+            cancelled: skipsStop,
+            key: next.tripId!,
+          ),
+        );
+      }
+      if (liveArr != null && liveDep != null && !missed && !skipsStop) {
         final gap = liveDep.difference(liveArr).inMinutes;
         _checkTransfer(
           next.tripId!,
@@ -443,6 +477,103 @@ class LiveTripTracker extends Notifier<LiveTripState>
           : '$line +${delaySec ~/ 60} Min — bei Sparpreis ist die '
                 'Zugbindung aufgehoben, nimm den nächsten passenden Zug.',
     );
+  }
+
+  /// Search what to take instead of a train that is gone (it skips [from], or
+  /// the rider arrives after it left) and push ONE notification that names it:
+  /// "Nimm RE2 21:04 Gl. 6 → an 21:24". Its action opens the full list of
+  /// alternatives from [from]. Once per lost train ([key]); a failed search
+  /// still pushes, then only with the offer to search.
+  Future<void> _offerReplacement(
+    Journey journey, {
+    required int legIndex,
+    required Station from,
+    required DateTime readyAt,
+    required String line,
+    required bool cancelled,
+    required String key,
+  }) async {
+    final to = journey.destination;
+    if (to == null ||
+        from.vendoLocationId.isEmpty ||
+        to.vendoLocationId.isEmpty) {
+      return;
+    }
+    final alertKey = 'replace:$key';
+    if (_lastAlert.containsKey(alertKey)) return;
+    _lastAlert[alertKey] = 'pending';
+    final what = cancelled
+        ? '$line hält nicht in ${from.name}'
+        : 'Anschluss $line in ${from.name} weg';
+    String body = 'Alternativen ab ${from.name} suchen?';
+    try {
+      final result = await ref
+          .read(vendoServiceProvider)
+          .searchJourneys(
+            fromLocationId: from.vendoLocationId,
+            toLocationId: to.vendoLocationId,
+            dateTime: readyAt,
+          );
+      final pick = pickReplacement(result.journeys, readyAt: readyAt);
+      if (pick != null) body = replacementText(pick);
+    } catch (e) {
+      AppLog.log('replacement search failed ($e)', tag: 'live');
+    }
+    _lastAlert[alertKey] = body;
+    await NotificationService.showMissedConnectionPrompt(
+      id: alertKey.hashCode,
+      title: what,
+      body: body,
+      rescue: MissedConnectionRescue(
+        from: from,
+        to: to,
+        scheduledDeparture: readyAt,
+        legIndex: legIndex,
+        isConnection: legIndex > 0,
+      ),
+    );
+    AppLog.log('replacement offered: $what → $body', tag: 'live');
+  }
+
+  /// The first connection the rider can still make: its first train leaves at
+  /// least two minutes after [readyAt] (time to walk to the platform). Pure
+  /// and public for the tests.
+  static Journey? pickReplacement(
+    List<Journey> journeys, {
+    required DateTime readyAt,
+  }) {
+    final earliest = readyAt.add(const Duration(minutes: 2));
+    final ok =
+        journeys.where((j) {
+          final first = j.legs.where((l) => !l.isWalking).firstOrNull;
+          final dep = first?.departure ?? first?.plannedDeparture;
+          return first != null &&
+              !first.cancelled &&
+              dep != null &&
+              !dep.isBefore(earliest);
+        }).toList()..sort((a, b) {
+          DateTime arr(Journey j) =>
+              j.legs.last.arrival ??
+              j.legs.last.plannedArrival ??
+              DateTime(2100);
+          return arr(a).compareTo(arr(b));
+        });
+    return ok.firstOrNull;
+  }
+
+  /// "Nimm RE2 21:04 Gl. 6 → an 21:24" (+ "1 Umstieg" when it has one).
+  static String replacementText(Journey j) {
+    final trains = j.legs.where((l) => !l.isWalking).toList();
+    final first = trains.first;
+    final dep = first.departure ?? first.plannedDeparture;
+    final arr = j.legs.last.arrival ?? j.legs.last.plannedArrival;
+    final gleis = first.departurePlatform ?? first.plannedDeparturePlatform;
+    final changes = trains.length - 1;
+    return 'Nimm ${first.line?.displayName ?? 'den nächsten Zug'}'
+        '${dep != null ? ' ${dep.hhmm}' : ''}'
+        '${gleis != null && gleis.isNotEmpty ? ' Gl. $gleis' : ''}'
+        '${arr != null ? ' → an ${arr.hhmm}' : ''}'
+        '${changes > 0 ? ' ($changes Umstieg${changes > 1 ? 'e' : ''})' : ''}';
   }
 
   /// Fire an alert for [key] only when [value] differs from what we last sent

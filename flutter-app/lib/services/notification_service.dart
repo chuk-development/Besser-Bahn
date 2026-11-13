@@ -323,6 +323,8 @@ class NotificationService {
   static Future<void> showMissedConnectionPrompt({
     required int id,
     required MissedConnectionRescue rescue,
+    String? title,
+    String? body,
   }) async {
     if (!_ready) await init();
     await _ensurePermission();
@@ -358,10 +360,11 @@ class NotificationService {
       );
       await _plugin.show(
         id: 4000 + (id % 1000),
-        title: '${rescue.label}?',
+        title: title ?? '${rescue.label}?',
         body:
+            body ??
             'Deine Position spricht dafür. Jetzt Alternativen ab '
-            '${rescue.from.name} suchen?',
+                '${rescue.from.name} suchen?',
         notificationDetails: details,
         payload: '$_missedPayloadPrefix${rescue.encode()}',
       );
