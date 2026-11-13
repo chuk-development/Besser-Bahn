@@ -11,12 +11,17 @@ const _status = '''
 {"kciTicketRefId":"ABCDEF12","kciVerbindungsAbschnittListe":[
  {"kciFaehig":false,"kontrollStatus":"nicht_kontrolliert","plaetze":[],"reserviertePlaetze":[],"umcheckenMoeglich":false,"umplatziert":false,"verbindnungsabschnittsNummer":0},
  {"kciFaehig":true,"kontrollStatus":"nicht_kontrolliert","plaetze":[],"reserviertePlaetze":[{"platznummer":"76","wagennummer":"5"}],"umcheckenMoeglich":false,"umplatziert":false,"verbindnungsabschnittsNummer":1,"moeglichAb":"2026-11-13T15:13:00Z"},
- {"kciFaehig":true,"kontrollStatus":"eingecheckt","plaetze":[{"platznummer":"12","wagennummer":"7"}],"reserviertePlaetze":[],"umcheckenMoeglich":true,"umplatziert":false,"verbindnungsabschnittsNummer":2,"checkinId":"c-1"}
+ {"kciFaehig":false,"kontrollStatus":"eingecheckt","plaetze":[{"platznummer":"12","wagennummer":"7"}],"reserviertePlaetze":[],"umcheckenMoeglich":true,"umplatziert":false,"verbindnungsabschnittsNummer":2,"checkinId":"c-1"}
 ],"stichprobe":false,"tripUUID":"00000000-0000-4000-8000-000000000002"}
 ''';
 
 void main() {
   final s = DbKciStatus.fromJson(json.decode(_status) as Map<String, dynamic>);
+
+  test('a checked-in section stays listed although DB says kciFaehig false', () {
+    expect(s.abschnitte[2].kciFaehig, isFalse);
+    expect(s.faehig.map((a) => a.nummer), contains(2));
+  });
 
   test('parses sections, seats and the typo key', () {
     expect(s.kciTicketRefId, 'ABCDEF12');

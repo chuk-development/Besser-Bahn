@@ -628,7 +628,10 @@ class DbKciStatus {
     stichprobe: j['stichprobe'] == true,
   );
 
-  /// Only the sections where Komfort-Check-in exists at all.
+  /// The sections that matter for Komfort-Check-in: where it is possible, and
+  /// where the rider is already checked in. DB flips `kciFaehig` to false once
+  /// a section is checked in, so filtering on it alone hid exactly the state
+  /// the rider most wants to see.
   List<DbKciAbschnitt> get faehig =>
-      abschnitte.where((a) => a.kciFaehig).toList();
+      abschnitte.where((a) => a.kciFaehig || a.eingecheckt).toList();
 }
