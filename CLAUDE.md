@@ -105,3 +105,19 @@ caches (`.playwright-mcp/`), signing keys. They're gitignored — keep them out.
   Auto-check-in on save only runs when that setting is on. The symbol is the
   documented per-leg check-in (#108). Do not remove it when cleaning header
   buttons. The Zugnummer screen has its own copy in the search row.
+- **Umstieg-Navigation ohne GPS (2026-11-15):** `core/indoor_nav/`
+  plant Gleis → Gleis Ebene für Ebene aus den bahnhof.de-POIs (Gleise,
+  Treppen, Rolltreppen, Aufzüge haben `level`); Anzeige als 2,5D-Stapel der
+  DB-Etagenpläne (`screens/station_map/indoor_nav_screen.dart`), Position
+  per Schrittzähler + Barometer (`pdr.dart`, ~0,4 hPa je Ebene). Es gibt
+  KEIN Indoor-Routing bei DB: `calculateroute` ist Outdoor, bahnhof.de und
+  DB Navigator (26.12-APK geprüft) haben keins. Demo-Video:
+  `flutter-app/tool/indoor_demo.sh [Station] [vonGleis] [nachGleis]`.
+- **Knappe Umstiege:** `minUmstiegsdauer` kann die Bahnhofs-Mindestzeit nur
+  erhöhen, nie senken. „Schneller ankommen“ (`utils/tight_chain.dart`) baut
+  die Kette darum selbst, Hop für Hop mit 3 min.
+- **Ticket-Reiseplan:** Ein Ticket baut den gebuchten Plan bei jedem Öffnen
+  neu; getauschte Züge kommen aus der gespeicherten Reise (gleicher Key).
+- **Overpass:** overpass-api.de antwortet auf Browser-UA mit 406; für
+  Handproben einen Spiegel nehmen, keinen eigenen UA setzen.
+
