@@ -99,8 +99,50 @@ class LegAlternativeSwitcher extends ConsumerStatefulWidget {
       LegAlternativeSwitcherState();
 }
 
+/// What one segment's departure list looked like when last loaded. A swap
+/// remounts the bar (the leg section is keyed by the train), so without this
+/// the list was gone after every step and had to be fetched again.
+typedef _AltsMemo = ({
+  List<Journey> alts,
+  String? laterRef,
+  String? earlierRef,
+  DateTime at,
+});
+
 class LegAlternativeSwitcherState
     extends ConsumerState<LegAlternativeSwitcher> {
+  /// Keyed by [_memoKey]; kept for [_memoTtl] — live times go stale.
+  static final _memo = <String, _AltsMemo>{};
+  static const _memoTtl = Duration(minutes: 3);
+
+  String get _memoKey {
+    final leg = widget.leg;
+    return '${leg.origin.vendoLocationId}|${leg.destination.vendoLocationId}'
+        '|${VendoService.produktGattungenFor(leg.line?.product)}';
+  }
+
+  void _saveMemo() {
+    _memo[_memoKey] = (
+      alts: List.of(_alts),
+      laterRef: _laterRef,
+      earlierRef: _earlierRef,
+      at: DateTime.now(),
+    );
+  }
+
+  /// Take the remembered list, if fresh. True when it did.
+  bool _restoreMemo() {
+    final m = _memo[_memoKey];
+    if (m == null || DateTime.now().difference(m.at) > _memoTtl) return false;
+    _alts
+      ..clear()
+      ..addAll(m.alts);
+    _laterRef = m.laterRef;
+    _earlierRef = m.earlierRef;
+    _loaded = true;
+    return true;
+  }
+
   final List<Journey> _alts = [];
   String? _laterRef;
 
@@ -136,6 +178,7 @@ class LegAlternativeSwitcherState
   @override
   void initState() {
     super.initState();
+    _restoreMemo();
     // Tight transfer → load eagerly so the "next reachable train" offer is
     // there the moment you look. Otherwise wait until the user reaches for it.
     if (_tight) _ensureLoaded();
@@ -196,6 +239,7 @@ class LegAlternativeSwitcherState
         _earlierRef = res.earlierRef;
         _loaded = true;
       });
+      _saveMemo();
       _prefetchNeighbors();
     } catch (_) {
       if (mounted) setState(() => _error = 'Konnte nicht laden.');
@@ -277,6 +321,7 @@ class LegAlternativeSwitcherState
           _laterRef = res.laterRef;
         }
       });
+      _saveMemo();
       _prefetchNeighbors();
     } catch (_) {
       /* keep what we have */
@@ -390,11 +435,11 @@ class LegAlternativeSwitcherState
 
   /// Step to the previous (−1) / next (+1) departure relative to the one shown.
   Future<void> _step(int dir) async {
-    if (!_loaded) {
-      await _ensureLoaded();
-      return; // bar now populated; user steps again
-    }
-    if (_alts.isEmpty) return;
+    // Load, then step in the same tap. It used to load and stop ("user steps
+    // again") — and since every swap remounts this bar with an empty list,
+    // EVERY step took two taps, the first one showing the same train.
+    if (!_loaded) await _ensureLoaded();
+    if (!mounted || _alts.isEmpty) return;
     final curId = widget.leg.tripId;
     final curDep = _currentDep;
     final idx = _alts.indexWhere((j) => j.legs.firstOrNull?.tripId == curId);
