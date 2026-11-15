@@ -133,10 +133,56 @@ class _ConnectionDetailScreenState
   // match the custom combination).
   late Journey _journey = widget.journey;
 
+  /// True while the itinerary on screen is the rider's own swapped version
+  /// from the library, not the one this screen was opened with (a ticket
+  /// always rebuilds the booked plan) — shown with a way back.
+  bool _showingSavedSwap = false;
+
+  /// Legs as "train ids" — equal when two itineraries ride the same trains.
+  static String _trainsOf(Journey j) => j.legs
+      .where((l) => !l.isWalking)
+      .map((l) => l.tripId ?? '${l.line?.name}@${l.plannedDeparture}')
+      .join('|');
+
+  /// Take the saved, swapped version of this trip if there is one.
+  ///
+  /// A swap is stored on the saved trip (same key: origin, destination,
+  /// first departure — a middle leg does not change it). But a ticket opens
+  /// with the booked plan from the order every time, so the swap seemed
+  /// forgotten: the S5 the rider switched to was the S3 again on reopen.
+  /// Not from a result list: there the rider looks at that exact connection.
+  bool _adoptSavedSwap(LibraryState lib) {
+    if (widget.fromSearch || _showingSavedSwap) return false;
+    final key = SavedJourney(journey: widget.journey, savedAtMs: 0).key;
+    final saved = lib.journeys.where((j) => j.key == key).firstOrNull;
+    if (saved == null) return false;
+    if (_trainsOf(saved.journey) == _trainsOf(widget.journey)) return false;
+    _journey = saved.journey;
+    _showingSavedSwap = true;
+    return true;
+  }
+
+  /// The trip is under way: first departure passed, last arrival not yet.
+  bool _underway(DateTime now) {
+    final legs = _journey.legs;
+    if (legs.isEmpty) return false;
+    final dep = legs.first.departure ?? legs.first.plannedDeparture;
+    final arr = legs.last.arrival ?? legs.last.plannedArrival;
+    return dep != null && arr != null && now.isAfter(dep) && now.isBefore(arr);
+  }
+
   @override
   void initState() {
     super.initState();
-    if (widget.focusCurrentLeg) {
+    _adoptSavedSwap(ref.read(libraryProvider));
+    // Cold start: the library may not be read yet when this screen opens.
+    ref.listenManual(libraryProvider, (prev, next) {
+      if (!mounted || _journey != widget.journey) return;
+      if (_adoptSavedSwap(next)) setState(() {});
+    });
+    // A trip in progress opens at the train the rider is on (or waits for),
+    // from wherever it was opened — not only from the Live Update.
+    if (widget.focusCurrentLeg || _underway(DateTime.now())) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _scrollToCurrentLeg();
@@ -670,6 +716,23 @@ class _ConnectionDetailScreenState
               : null,
           children: [
             _summary(context),
+            if (_showingSavedSwap)
+              MessageCard(
+                icon: Icons.swap_horiz_rounded,
+                title: 'Deine geänderte Fahrt',
+                body:
+                    'Du hast hier Züge getauscht. Das Ticket zeigt den '
+                    'gebuchten Plan.',
+                trailing: TextButton(
+                  // Back to the booked plan for good: the saved trip
+                  // follows, so the next open shows the original too.
+                  onPressed: () {
+                    _showingSavedSwap = false;
+                    _adoptJourney(widget.journey, refresh: true);
+                  },
+                  child: const Text('Original'),
+                ),
+              ),
             _ownExperience(context),
             _bikeNotice(context),
             _followInstead(context),
