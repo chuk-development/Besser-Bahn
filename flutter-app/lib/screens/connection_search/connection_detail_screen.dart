@@ -53,6 +53,9 @@ import '../../widgets/traewelling_logo.dart';
 import '../../widgets/trip_progress_inline.dart';
 import '../../widgets/trwl_checkin_sheet.dart';
 import '../train_lookup/widgets/train_detail_view.dart';
+import 'widgets/earlier_onward_hint.dart';
+import 'widgets/tight_chain_hint.dart';
+import '../../utils/earlier_onward.dart';
 import 'widgets/leg_switcher.dart';
 import 'widgets/transfer_coach_hint.dart';
 import '../../widgets/app_nav_bar.dart';
@@ -256,6 +259,70 @@ class _ConnectionDetailScreenState
     );
   }
 
+  /// The transit leg whose incoming change gets the "Schneller ankommen"
+  /// card: the first one still ahead with a wait of 10+ minutes. Null = none.
+  int? _tightChainIndex(List<JourneyLeg> legs, DateTime now) {
+    for (var i = 0; i < legs.length; i++) {
+      if (legs[i].isWalking) continue;
+      final prev = _prevTransitLeg(legs, i);
+      if (prev == null) continue;
+      final arr = _liveArrivalOf(prev);
+      final dep = _liveDepartureOf(legs[i]);
+      if (arr == null || dep == null || !dep.isAfter(now)) continue;
+      if (dep.difference(arr).inMinutes >= 10) return i;
+    }
+    return null;
+  }
+
+  /// Take the tight chain: everything after [prevIndex] becomes [chain].
+  void _applyTightChain(int prevIndex, Journey chain) {
+    final legs = _journey.legs;
+    if (prevIndex < 0 || prevIndex >= legs.length) return;
+    _adoptJourney(
+      Journey(legs: [...legs.sublist(0, prevIndex + 1), ...chain.legs]),
+      refresh: true,
+    );
+    final arr = chain.legs.last.arrival ?? chain.legs.last.plannedArrival;
+    _snack(
+      'Schnellere Kette übernommen'
+      '${arr != null ? ' · Ankunft ${arr.hhmm}' : ''}',
+    );
+  }
+
+  /// Take a "Früher weiter" suggestion: everything after the arriving train
+  /// [prevIndex] up to the following train [followingIndex] becomes the found
+  /// connection. The following train stays — the hint only offers what still
+  /// reaches it — so there is nothing to re-plan.
+  void _applyEarlierOnward(
+    int prevIndex,
+    int? followingIndex,
+    EarlierOnward onward,
+  ) {
+    final legs = _journey.legs;
+    if (prevIndex < 0 || prevIndex >= legs.length) return;
+    if (followingIndex != null &&
+        (followingIndex <= prevIndex || followingIndex > legs.length)) {
+      return;
+    }
+    _adoptJourney(
+      Journey(
+        legs: spliceEarlierOnward(
+          legs,
+          prevIndex + 1,
+          followingIndex,
+          onward.journey,
+        ),
+      ),
+      refresh: true,
+    );
+    final t = onward.train;
+    final dep = t.departure ?? t.plannedDeparture;
+    _snack(
+      'Früher weiter: ${t.line?.name ?? 'Zug'}'
+      '${dep != null ? ' ${dep.hhmm}' : ''} übernommen',
+    );
+  }
+
   /// Re-plan everything after leg [index] from [arrival] onwards.
   ///
   /// One search from that leg's destination to the journey's own destination.
@@ -407,6 +474,7 @@ class _ConnectionDetailScreenState
     final legs = journey.legs;
     final ticketRef = widget.ticketRef;
     final missed = MissedConnectionRescue.forJourney(journey);
+    final tightAt = _tightChainIndex(legs, DateTime.now());
     return Scaffold(
       appBar: AppBar(
         // Full route is cut off on a phone here → moved into the summary block.
@@ -660,6 +728,50 @@ class _ConnectionDetailScreenState
                   i + 1 < legs.length ? legs[i + 1] : null,
                 )
               else ...[
+                // The whole rest rebuilt with tight changes (#Bremen-Kiel: two
+                // half-hour waits that 3-minute changes would have skipped).
+                // Once per journey, at the first long wait still ahead.
+                if (i == tightAt && journey.destination != null)
+                  Builder(
+                    builder: (_) {
+                      final prev = _prevTransitLeg(legs, i)!;
+                      final prevIndex = legs.indexOf(prev);
+                      return TightChainHint(
+                        key: ValueKey('tight-chain-${prev.tripId}'),
+                        arriving: prev,
+                        arrivingAt: _liveArrivalOf(prev),
+                        destination: journey.destination!,
+                        bookedArrival: _liveArrivalOf(legs.last),
+                        bookedTail: legs.sublist(prevIndex + 1),
+                        onApply: (chain) => _applyTightChain(prevIndex, chain),
+                      );
+                    },
+                  ),
+                // Long wait here while an earlier train already goes where the
+                // next change is → "Früher weiter" (wait at the big station,
+                // not on a cold S-Bahn platform). Self-hides otherwise.
+                Builder(
+                  builder: (_) {
+                    final prev = _prevTransitLeg(legs, i);
+                    if (prev == null) return const SizedBox.shrink();
+                    final following = _nextTransitLeg(legs, i);
+                    return EarlierOnwardHint(
+                      key: ValueKey(
+                        'earlier-onward-${prev.tripId}-${legs[i].tripId}',
+                      ),
+                      arriving: prev,
+                      arrivingAt: _liveArrivalOf(prev),
+                      booked: legs[i],
+                      bookedDeparture: _liveDepartureOf(legs[i]),
+                      following: following,
+                      onApply: (onward) => _applyEarlierOnward(
+                        legs.indexOf(prev),
+                        following == null ? null : legs.indexOf(following),
+                        onward,
+                      ),
+                    );
+                  },
+                ),
                 // Which section of the train you're ON to be in, so the change
                 // here is a step across the platform (#27). Sits right under the
                 // transfer tile — vendo models the change as a FUSSWEG leg, so
