@@ -20,6 +20,10 @@ class ProductBadge extends StatelessWidget {
       'FLX' || 'FLIXBUS' => (const Color(0xFF73D700), Colors.white), // Flix
       'TGV' => (Colors.indigo.shade700, Colors.white),
       'BUS' => (Colors.purple.shade400, Colors.white),
+      // Official signage colours: green S-Bahn, blue U-Bahn, red tram.
+      'S' || 'SBAHN' || 'S-BAHN' => (const Color(0xFF008D4F), Colors.white),
+      'U' => (const Color(0xFF0065AE), Colors.white),
+      'STR' || 'TRAM' => (const Color(0xFFD5001C), Colors.white),
       _ => (
         Theme.of(context).colorScheme.primaryContainer,
         Theme.of(context).colorScheme.onPrimaryContainer,
