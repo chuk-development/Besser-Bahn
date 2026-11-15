@@ -55,26 +55,14 @@ class IndoorSegment {
   /// Metres walked (0 for a floor change).
   final double metres;
 
-  /// Route length this segment takes up for progress — a floor change counts
-  /// as [floorChangeMetres] so the dot does not jump over it.
-  final double cost;
-
   const IndoorSegment({
     required this.from,
     required this.to,
     required this.metres,
-    required this.cost,
   });
 
   bool get isFloorChange => from.level != to.level;
 }
-
-/// What a floor change counts as in progress metres: about the time of a
-/// flight of stairs or an escalator ride, at walking speed.
-const floorChangeMetres = 15.0;
-
-/// Walking speed for time estimates (m/s). DB plans with about 1.2.
-const walkingSpeed = 1.2;
 
 /// The planned route.
 class IndoorRoute {
@@ -90,157 +78,99 @@ class IndoorRoute {
       ];
 
   static IndoorSegment _segment(IndoorNode a, IndoorNode b) {
-    if (a.level != b.level) {
-      return IndoorSegment(from: a, to: b, metres: 0, cost: floorChangeMetres);
-    }
+    if (a.level != b.level) return IndoorSegment(from: a, to: b, metres: 0);
     final m = _distance.as(LengthUnit.Meter, a.latLng, b.latLng);
-    return IndoorSegment(from: a, to: b, metres: m, cost: m);
+    return IndoorSegment(from: a, to: b, metres: m);
   }
 
-  /// Total progress length (walk + floor changes).
-  double get totalCost => segments.fold(0, (s, x) => s + x.cost);
-
-  /// Metres on foot.
+  /// Metres on foot (straight lines between the points, so a lower bound).
   double get walkMetres => segments.fold(0, (s, x) => s + x.metres);
 
-  /// Estimated time.
-  Duration get duration =>
-      Duration(seconds: (totalCost / walkingSpeed).round());
-
-  /// The floors the route touches, top to bottom.
-  List<String> get usedLevels {
-    final used = nodes.map((n) => n.level).toSet();
-    return levels.where(used.contains).toList();
-  }
-
-  /// Where the rider is at [progress] metres along the route.
-  ({LatLng latLng, String level, int segment, double t}) positionAt(
-    double progress,
-  ) {
-    var left = progress.clamp(0, totalCost).toDouble();
-    for (var i = 0; i < segments.length; i++) {
-      final s = segments[i];
-      if (left <= s.cost || i == segments.length - 1) {
-        final t = s.cost == 0 ? 1.0 : (left / s.cost).clamp(0.0, 1.0);
-        if (s.isFloorChange) {
-          // The dot stays at the stairs; the floor flips half way.
-          return (
-            latLng: s.from.latLng,
-            level: t < 0.5 ? s.from.level : s.to.level,
-            segment: i,
-            t: t,
-          );
-        }
-        return (
-          latLng: _lerp(s.from.latLng, s.to.latLng, t),
-          level: s.from.level,
-          segment: i,
-          t: t,
-        );
-      }
-      left -= s.cost;
-    }
-    final last = nodes.last;
-    return (latLng: last.latLng, level: last.level, segment: 0, t: 1);
-  }
-
-  /// Progress at the START of segment [i].
-  double costBefore(int i) {
-    var c = 0.0;
-    for (var k = 0; k < i && k < segments.length; k++) {
-      c += segments[k].cost;
-    }
-    return c;
-  }
-
-  /// The instruction for [progress]: what to do now, and how far until the
-  /// next thing happens.
-  ({String text, IndoorManeuver kind, double metresToNext}) maneuverAt(
-    double progress,
-  ) {
-    final pos = positionAt(progress);
-    final i = pos.segment;
-    final seg = segments[i];
-    final segLeft = costBefore(i + 1) - progress.clamp(0, totalCost);
-    if (seg.isFloorChange) {
-      return (
-        text: floorChangeText(seg),
-        kind: _connectorKind(seg),
-        metresToNext: math.max(0, segLeft),
-      );
-    }
-    final metres = math.max(0, seg.metres * (1 - pos.t)).toDouble();
-    final to = seg.to;
-    if (to.kind == IndoorNodeKind.target) {
-      return (
-        text: '${_round(metres)} bis ${to.label ?? 'zum Ziel'}',
-        kind: IndoorManeuver.arrive,
-        metresToNext: metres,
-      );
-    }
-    final next = i + 1 < segments.length ? segments[i + 1] : null;
-    final what = next != null && next.isFloorChange
-        ? '${_connectorName(next.from.connectorType)} '
-              '${_down(next) ? 'nach unten' : 'nach oben'}'
-        : 'zum Durchgang';
-    final turn = i > 0 ? _turnWord(segments, i) : null;
-    return (
-      text: '${turn != null ? '$turn, ' : ''}${_round(metres)} bis zur $what',
-      kind: IndoorManeuver.walk,
-      metresToNext: metres,
-    );
-  }
+  /// Number of floor changes.
+  int get floorChanges => segments.where((s) => s.isFloorChange).length;
 
   bool _down(IndoorSegment s) =>
       levels.indexOf(s.to.level) > levels.indexOf(s.from.level);
 
-  String floorChangeText(IndoorSegment s) {
-    final dir = _down(s) ? 'runter' : 'hoch';
-    final name = _connectorName(s.from.connectorType);
-    return '$name $dir auf ${levelLabel(s.to.level)}';
+  /// The way as short steps a rider can follow without a map:
+  ///
+  ///  1. Auf dem Bahnsteig nach vorne (Zugspitze) zur Treppe, runter auf
+  ///     Ebene −2
+  ///  2. Ebene −2: ca. 90 m geradeaus zur Treppe, runter auf Ebene −3
+  ///  3. Ebene −3: ca. 30 m zu Gleis 11
+  ///
+  /// [arrivalBearing] is the direction the arriving train travelled
+  /// (degrees). With it the first walk on the platform says "nach vorne
+  /// (Zugspitze)" or "nach hinten" — the one direction a rider stepping off
+  /// a train always knows. Its distance is left out: the rider gets off at
+  /// their own coach, not at the point bahnhof.de puts the Gleis.
+  List<String> steps({double? arrivalBearing}) {
+    final out = <String>[];
+    double? lastBearing;
+    for (var i = 0; i < segments.length; i++) {
+      final s = segments[i];
+      if (s.isFloorChange) continue;
+      final next = i + 1 < segments.length ? segments[i + 1] : null;
+      final bearing = _distance.bearing(s.from.latLng, s.to.latLng);
+      final first = s.from.kind == IndoorNodeKind.start;
+      final String where;
+      if (first) {
+        final dir = arrivalBearing == null
+            ? null
+            : _alongTrain(arrivalBearing, bearing);
+        where = 'Auf dem Bahnsteig${dir != null ? ' $dir' : ''}';
+      } else {
+        final straight =
+            lastBearing != null && _angle(lastBearing, bearing).abs() < 45;
+        final m = s.metres < 15 ? null : 'ca. ${_round10(s.metres)} m';
+        where = [
+          '${levelLabel(s.from.level)}:',
+          ?m,
+          if (straight) 'geradeaus',
+        ].join(' ');
+      }
+      final String what;
+      if (next != null && next.isFloorChange) {
+        final name = _connectorName(next.from.connectorType);
+        final label = next.from.label;
+        final named = label != null && label != name ? ' „$label“' : '';
+        what =
+            'zur $name$named, ${_down(next) ? 'runter' : 'hoch'} auf '
+            '${levelLabel(next.to.level)}';
+      } else {
+        what = 'zu ${s.to.label ?? 'deinem Gleis'}';
+      }
+      out.add('$where $what');
+      lastBearing = bearing;
+    }
+    return out;
   }
-
-  IndoorManeuver _connectorKind(IndoorSegment s) =>
-      switch (s.from.connectorType) {
-        'ELEVATOR' => IndoorManeuver.elevator,
-        'ESCALATOR' => IndoorManeuver.escalator,
-        _ => IndoorManeuver.stairs,
-      };
 }
 
-/// The icon family of an instruction.
-enum IndoorManeuver { walk, stairs, escalator, elevator, arrive }
+/// "nach vorne (Zugspitze)" / "nach hinten (Zugende)" / null when the walk
+/// goes across.
+String? _alongTrain(double trainBearing, double walkBearing) {
+  final d = _angle(trainBearing, walkBearing).abs();
+  if (d <= 60) return 'nach vorne (Zugspitze)';
+  if (d >= 120) return 'nach hinten (Zugende)';
+  return null;
+}
+
+/// Signed difference b − a in degrees, −180..180.
+double _angle(double a, double b) {
+  var d = (b - a) % 360;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return d;
+}
+
+int _round10(double m) => math.max(10, (m / 10).round() * 10);
 
 String _connectorName(String? type) => switch (type) {
   'ELEVATOR' => 'Aufzug',
   'ESCALATOR' => 'Rolltreppe',
   _ => 'Treppe',
 };
-
-String _round(double m) {
-  if (m < 10) return '${m.round()} m';
-  return '${(m / 5).round() * 5} m';
-}
-
-/// "links"/"rechts"/null for the bend into segment [i] (walk segments only,
-/// across a floor change the rider turns around anyway).
-String? _turnWord(List<IndoorSegment> segs, int i) {
-  if (i < 1) return null;
-  final prev = segs[i - 1];
-  // A floor change right before: no meaningful bend.
-  if (prev.isFloorChange) return null;
-  final a = _distance.bearing(prev.from.latLng, prev.to.latLng);
-  final b = _distance.bearing(segs[i].from.latLng, segs[i].to.latLng);
-  var d = (b - a) % 360;
-  if (d > 180) d -= 360;
-  if (d.abs() < 35) return 'Geradeaus';
-  return d > 0 ? 'Rechts' : 'Links';
-}
-
-LatLng _lerp(LatLng a, LatLng b, double t) => LatLng(
-  a.latitude + (b.latitude - a.latitude) * t,
-  a.longitude + (b.longitude - a.longitude) * t,
-);
 
 /// "EG", "Ebene −2", "OG 1" — the floor as a rider reads it.
 String levelLabel(String level) {
@@ -249,16 +179,6 @@ String levelLabel(String level) {
   if (b != null) return 'Ebene −${b.group(1)}';
   final u = RegExp(r'^UPPER_FLOOR_(\d+)$').firstMatch(level);
   if (u != null) return 'OG ${u.group(1)}';
-  return level;
-}
-
-/// Short form for chips: "EG", "−2", "+1".
-String levelShort(String level) {
-  if (level == 'GROUND_FLOOR') return 'EG';
-  final b = RegExp(r'^BASEMENT_FLOOR_(\d+)$').firstMatch(level);
-  if (b != null) return '−${b.group(1)}';
-  final u = RegExp(r'^UPPER_FLOOR_(\d+)$').firstMatch(level);
-  if (u != null) return '+${u.group(1)}';
   return level;
 }
 

@@ -105,14 +105,18 @@ caches (`.playwright-mcp/`), signing keys. They're gitignored — keep them out.
   Auto-check-in on save only runs when that setting is on. The symbol is the
   documented per-leg check-in (#108). Do not remove it when cleaning header
   buttons. The Zugnummer screen has its own copy in the search row.
-- **Umstieg-Navigation ohne GPS (2026-11-15):** `core/indoor_nav/`
+- **Umstiegs-Weg als Text (2026-11-15):** `core/indoor_nav/indoor_route.dart`
   plant Gleis → Gleis Ebene für Ebene aus den bahnhof.de-POIs (Gleise,
-  Treppen, Rolltreppen, Aufzüge haben `level`); Anzeige als 2,5D-Stapel der
-  DB-Etagenpläne (`screens/station_map/indoor_nav_screen.dart`), Position
-  per Schrittzähler + Barometer (`pdr.dart`, ~0,4 hPa je Ebene). Es gibt
-  KEIN Indoor-Routing bei DB: `calculateroute` ist Outdoor, bahnhof.de und
-  DB Navigator (26.12-APK geprüft) haben keins. Demo-Video:
-  `flutter-app/tool/indoor_demo.sh [Station] [vonGleis] [nachGleis]`.
+  Treppen, Rolltreppen, Aufzüge haben `level`) und gibt kurze Schritte aus
+  („nach vorne (Zugspitze) zur Treppe, runter auf Ebene −2“); angezeigt in
+  der Umstiegs-Zeile (`transferWayProvider`). Eine 2,5D-Ansicht aus
+  gestapelten Etagenplänen und Schrittzähler-Navigation wurden gebaut und
+  wieder entfernt (9e11250): unlesbar, half niemandem. Recherche: es gibt
+  KEINE offenen 3D-Modelle von DB-Bahnhöfen (BIM nur intern, LoD2 nur
+  Hüllen), kein Indoor-Routing bei DB (`calculateroute` ist Outdoor,
+  bahnhof.de/DB Navigator 26.12 haben keins), AR ohne ARCore/Beacons nicht
+  machbar. Beste offene Quelle für genaueres Routing: OSM-Indoor
+  (`level`, `indoor`, `highway=elevator`; Hamburg Hbf teilweise erfasst).
 - **Knappe Umstiege:** `minUmstiegsdauer` kann die Bahnhofs-Mindestzeit nur
   erhöhen, nie senken. „Schneller ankommen“ (`utils/tight_chain.dart`) baut
   die Kette darum selbst, Hop für Hop mit 3 min.

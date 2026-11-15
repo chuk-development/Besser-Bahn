@@ -1,6 +1,7 @@
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/app_log.dart';
+import '../core/indoor_nav/indoor_route.dart';
 import '../core/osm_rail.dart';
 import '../core/platform_train.dart' as pt;
 import '../core/train_dimensions.dart';
@@ -987,5 +988,59 @@ final stepFreeTransferProvider = FutureProvider.autoDispose
           tag: 'map',
         );
         return const [];
+      }
+    });
+
+/// One transfer to describe: station, the two Gleise, the arriving train's
+/// direction (degrees, for "nach vorne") and whether only lifts will do.
+typedef TransferWayQuery = ({
+  String station,
+  String fromGleis,
+  String toGleis,
+  double? bearing,
+  bool stepFree,
+});
+
+/// The way from one Gleis to the other as short steps, or null when it is
+/// not worth saying (same floor and close) or the map can't tell.
+///
+/// Planned from the bahnhof.de POIs ([planIndoorRoute]): Hamburg-Harburg
+/// Gleis 5 → 11 is two floors down through the Schalterhalle, which the
+/// Gleis numbers alone never tell you.
+final transferWayProvider = FutureProvider.autoDispose
+    .family<List<String>?, TransferWayQuery>((ref, q) async {
+      if (q.station.isEmpty) return null;
+      try {
+        final map = await ref
+            .read(stationMapServiceProvider)
+            .fetchByStationName(q.station, background: true);
+        MapPoi? gleis(String g) {
+          final n = normalizeGleis(g);
+          for (final p in map.platforms) {
+            if (normalizeGleis(p.name) == n) return p;
+          }
+          return null;
+        }
+
+        final from = gleis(q.fromGleis);
+        final to = gleis(q.toGleis);
+        if (from == null || to == null || from == to) return null;
+        final route = planIndoorRoute(
+          map: map,
+          start: from,
+          target: to,
+          stepFree: q.stepFree,
+          startLabel: 'Gleis ${q.fromGleis}',
+          targetLabel: 'Gleis ${q.toGleis}',
+        );
+        if (route == null) return null;
+        if (route.floorChanges == 0 && route.walkMetres < 120) return null;
+        return route.steps(arrivalBearing: q.bearing);
+      } catch (e) {
+        AppLog.log(
+          'transfer way for "${AppLog.pii(q.station)}" failed: $e',
+          tag: 'map',
+        );
+        return null;
       }
     });

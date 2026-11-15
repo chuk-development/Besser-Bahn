@@ -5,11 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../../core/indoor_nav/indoor_route.dart';
 import '../../core/platform_train.dart' show ExitSide;
-import '../../models/transfer_profile.dart';
-import '../../providers/settings_provider.dart';
-import 'indoor_nav_screen.dart';
 import '../../core/train_dimensions.dart';
 import '../../models/coach_sequence.dart';
 import '../../models/station.dart';
@@ -483,63 +479,7 @@ class _StationMapScreenState extends ConsumerState<StationMapScreen> {
         ],
       ),
     );
-    final route = _transferRoute(state);
-    if (route == null) return legend;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        legend,
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-          child: SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => IndoorNavScreen(
-                    map: state.map!,
-                    route: route,
-                    stationName: state.station?.name ?? '',
-                  ),
-                ),
-              ),
-              icon: const Icon(Icons.navigation_rounded),
-              label: Text(
-                'Weg zeigen · ${route.walkMetres.round()} m'
-                '${route.usedLevels.length > 1 ? ' · ${route.usedLevels.length - 1} '
-                          '${route.usedLevels.length == 2 ? 'Ebene' : 'Ebenen'}' : ''}',
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// The floor-by-floor walk from the Ausstieg to the Einstieg Gleis, or null
-  /// when either is not on the map. Lifts only for the profiles that need
-  /// one.
-  IndoorRoute? _transferRoute(StationMapState state) {
-    final map = state.map;
-    final from = state.secondaryHighlightPoi;
-    final to = state.highlightPoi;
-    if (map == null || from == null || to == null) return null;
-    const needsLift = {
-      TransferProfile.accessible,
-      TransferProfile.child,
-      TransferProfile.bike,
-    };
-    final stepFree = needsLift.contains(
-      ref.read(settingsProvider).transferProfile,
-    );
-    return planIndoorRoute(
-      map: map,
-      start: from,
-      target: to,
-      stepFree: stepFree,
-      startLabel: 'Gleis ${state.secondaryGleis}',
-      targetLabel: 'Gleis ${state.highlightGleis}',
-    );
+    return legend;
   }
 
   Widget _buildBody(

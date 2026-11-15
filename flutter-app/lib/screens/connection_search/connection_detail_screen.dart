@@ -1849,8 +1849,12 @@ class _ConnectionDetailScreenState
     final liftWarn = _stepFreeWarning(ref, leg.origin.name, [arrG, depG]);
     final warnText = [?warn, ?liftWarn].join(' · ');
 
+    final way = leg.samePlatformTransfer
+        ? null
+        : _transferWay(ref, leg.origin.name, arrG, depG, prev);
     return _transferTile(
       context,
+      way: way,
       icon: leg.samePlatformTransfer ? Icons.swap_horiz : Icons.directions_walk,
       head: head,
       strikeBefore: changed ? '$planGap min' : null,
@@ -2023,8 +2027,12 @@ class _ConnectionDetailScreenState
     final liftWarn = _stepFreeWarning(ref, station.name, [arrGleis, depGleis]);
     final warnText = [?warn, ?liftWarn].join(' · ');
 
+    final way = samePlatform
+        ? null
+        : _transferWay(ref, station.name, arrGleis, depGleis, prev);
     return _transferTile(
       context,
+      way: way,
       icon: samePlatform ? Icons.swap_horiz : Icons.swap_calls,
       head: shown != null
           ? '$shown min zum Umsteigen in ${station.name}'
@@ -2070,6 +2078,61 @@ class _ConnectionDetailScreenState
               },
             ),
     );
+  }
+
+  /// The way from [arrG] to [depG] at [stationName] as short steps
+  /// ("Auf dem Bahnsteig nach vorne zur Treppe, runter auf Ebene −2 …"), or
+  /// null while loading / when the change is simple. Only when the Gleise
+  /// are known — a guess would send the rider the wrong way.
+  List<String>? _transferWay(
+    WidgetRef ref,
+    String stationName,
+    String? arrG,
+    String? depG,
+    JourneyLeg? arriving,
+  ) {
+    if (stationName.isEmpty || arrG == null || depG == null) return null;
+    if (arrG == depG) return null;
+    const needsLift = {
+      TransferProfile.accessible,
+      TransferProfile.child,
+      TransferProfile.bike,
+    };
+    final profile = ref.watch(settingsProvider).transferProfile;
+    return ref
+        .watch(
+          transferWayProvider((
+            station: stationName,
+            fromGleis: arrG,
+            toGleis: depG,
+            bearing: arriving == null ? null : _arrivalBearing(arriving),
+            stepFree: needsLift.contains(profile),
+          )),
+        )
+        .asData
+        ?.value;
+  }
+
+  /// Which way [leg] travels into its destination (degrees), from the stop
+  /// before it. Null when the stops carry no coordinates. Rounded to 10° so
+  /// a provider key does not change with every refresh.
+  double? _arrivalBearing(JourneyLeg leg) {
+    final stops = leg.stopovers;
+    final i = stops.lastIndexWhere((s) => s.stop.id == leg.destination.id);
+    final end = i >= 0 ? stops[i].stop : leg.destination;
+    Station? before;
+    for (var k = (i >= 0 ? i : stops.length) - 1; k >= 0; k--) {
+      if (stops[k].stop.hasLocation) {
+        before = stops[k].stop;
+        break;
+      }
+    }
+    if (before == null || !end.hasLocation) return null;
+    final b = const Distance().bearing(
+      LatLng(before.latitude!, before.longitude!),
+      LatLng(end.latitude!, end.longitude!),
+    );
+    return ((b / 10).round() * 10).toDouble();
   }
 
   /// Shared tappable transfer/walk row.
@@ -2125,6 +2188,7 @@ class _ConnectionDetailScreenState
     String? warn,
     VoidCallback? onTap,
     Widget? trailing,
+    List<String>? way,
   }) {
     final theme = Theme.of(context);
     return Container(
@@ -2183,6 +2247,40 @@ class _ConnectionDetailScreenState
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
+                        ),
+                      ),
+                    if (way != null && way.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (var k = 0; k < way.length; k++)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    SizedBox(
+                                      width: 18,
+                                      child: Text(
+                                        '${k + 1}.',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: Text(
+                                        way[k],
+                                        style: theme.textTheme.bodySmall,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     if (warn != null)

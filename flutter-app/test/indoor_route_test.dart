@@ -1,7 +1,4 @@
-import 'dart:math' as math;
-
 import 'package:besser_bahn/core/indoor_nav/indoor_route.dart';
-import 'package:besser_bahn/core/indoor_nav/pdr.dart';
 import 'package:besser_bahn/models/station_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
@@ -77,16 +74,17 @@ void main() {
       start: gleis('5'),
       target: gleis('11'),
     )!;
-    expect(r.usedLevels, [
-      'BASEMENT_FLOOR_1',
-      'BASEMENT_FLOOR_2',
-      'BASEMENT_FLOOR_3',
-    ]);
+    expect(r.floorChanges, 2);
     expect(r.segments.where((s) => s.isFloorChange).length, 2);
     expect(r.nodes[1].latLng.latitude, closeTo(53.45614, 1e-4));
     expect(r.walkMetres, inInclusiveRange(250, 350));
-    expect(r.maneuverAt(0).text, contains('Treppe nach unten'));
-    expect(r.maneuverAt(r.totalCost - 1).kind, IndoorManeuver.arrive);
+    // RE4 from Bremen arrives heading north-east; the stairs are north.
+    final steps = r.steps(arrivalBearing: 20);
+    expect(steps, [
+      'Auf dem Bahnsteig nach vorne (Zugspitze) zur Treppe, runter auf Ebene −2',
+      'Ebene −2: ca. 90 m geradeaus zur Treppe, runter auf Ebene −3',
+      'Ebene −3: ca. 40 m zu Gleis 11',
+    ]);
   });
 
   test('step-free takes the lift', () {
@@ -104,51 +102,5 @@ void main() {
           .every((n) => n.connectorType == 'ELEVATOR'),
       isTrue,
     );
-  });
-
-  test('steps stop at the stairs until the barometer says down', () {
-    final r = planIndoorRoute(
-      map: map,
-      start: gleis('5'),
-      target: gleis('11'),
-    )!;
-    final t = RouteTracker(r);
-    for (var i = 0; i < 1000; i++) {
-      t.step();
-    }
-    expect(t.progress, closeTo(r.costBefore(1), 0.01));
-    t.floorChanged(1);
-    expect(t.progress, closeTo(r.costBefore(2), 0.01));
-    expect(r.positionAt(t.progress).level, 'BASEMENT_FLOOR_2');
-  });
-
-  test('a floor change far ahead is ignored', () {
-    final r = planIndoorRoute(
-      map: map,
-      start: gleis('5'),
-      target: gleis('11'),
-    )!;
-    final t = RouteTracker(r)..floorChanged(1, window: 50);
-    expect(t.progress, 0);
-  });
-
-  test('step detector counts a walking signal', () {
-    final d = StepDetector();
-    var steps = 0;
-    // 2 steps per second for 5 s, ±2 m/s² around g.
-    for (var ms = 0; ms < 5000; ms += 20) {
-      final a = 9.81 + 2.2 * math.sin(ms / 500 * 2 * math.pi);
-      if (d.add(ms, 0, 0, a)) steps++;
-    }
-    expect(steps, inInclusiveRange(9, 11));
-  });
-
-  test('barometer: +0.4 hPa is one floor down', () {
-    final f = FloorChangeDetector();
-    var floors = 0;
-    for (var i = 0; i < 200; i++) {
-      floors += f.add(1013.0 + (i > 50 ? 0.42 : 0));
-    }
-    expect(floors, 1);
   });
 }
