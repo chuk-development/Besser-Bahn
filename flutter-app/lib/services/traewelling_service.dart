@@ -609,6 +609,10 @@ class TraewellingService {
     required String boardingName,
     required DateTime boardingDeparture,
     required String alightingName,
+
+    /// EVA/IBNR of the boarding stop, if known. Picks the right Träwelling
+    /// stop when one name maps to several.
+    String? boardingEva,
     String body = '',
     int visibility = 0,
     bool force = false,
@@ -619,22 +623,31 @@ class TraewellingService {
         'Bahnhof „$boardingName" bei Träwelling nicht gefunden.',
       );
     }
-    // Prefer an exact-ish name match, else the first hit.
-    final station = stations.firstWhere(
-      (s) => _nameEq(s.name, boardingName),
-      orElse: () => stations.first,
-    );
 
-    final deps = await departures(
-      station.id,
-      when: boardingDeparture.subtract(const Duration(minutes: 6)),
-    );
-    final dep = _matchDeparture(deps, lineName, boardingDeparture);
-    if (dep == null) {
+    // A big station can be split into several stops with the same base name
+    // (#109: München Hbf vs. „München Hbf Gl.27-36“ for platforms 27–36).
+    // The train only shows on the board of the stop it really leaves from,
+    // so try the plausible candidates in turn instead of the first hit.
+    TrwlStation? found;
+    TrwlDeparture? match;
+    for (final s in _boardingCandidates(stations, boardingName, boardingEva)) {
+      final deps = await departures(
+        s.id,
+        when: boardingDeparture.subtract(const Duration(minutes: 6)),
+      );
+      match = _matchDeparture(deps, lineName, boardingDeparture);
+      if (match != null) {
+        found = s;
+        break;
+      }
+    }
+    if (found == null || match == null) {
       throw TraewellingException(
         'Abfahrt „$lineName" um diese Zeit nicht gefunden.',
       );
     }
+    final station = found;
+    final dep = match;
 
     final t = await trip(hafasTripId: dep.tripId, lineName: dep.lineName);
     final boardIdx = t.stopovers.indexWhere(
@@ -674,6 +687,30 @@ class TraewellingService {
       visibility: visibility,
       force: force,
     );
+  }
+
+  /// Stations to try for the boarding stop, best first, at most 4 (each costs
+  /// one departures request): the EVA match, then exact name matches, then
+  /// stops whose name starts with the boarding name (split stations like
+  /// „München Hbf Gl.27-36“), then the first search hit as a last resort.
+  List<TrwlStation> _boardingCandidates(
+    List<TrwlStation> stations,
+    String boardingName,
+    String? eva,
+  ) {
+    final out = <TrwlStation>[];
+    void add(TrwlStation s) {
+      if (!out.any((o) => o.id == s.id)) out.add(s);
+    }
+
+    if (eva != null && eva.isNotEmpty) {
+      stations.where((s) => s.identifiers.contains(eva)).forEach(add);
+    }
+    stations.where((s) => _nameEq(s.name, boardingName)).forEach(add);
+    final prefix = boardingName.toLowerCase().trim();
+    stations.where((s) => s.name.toLowerCase().startsWith(prefix)).forEach(add);
+    add(stations.first);
+    return out.take(4).toList();
   }
 
   /// Pick the departure whose line matches [lineName] and whose time is closest

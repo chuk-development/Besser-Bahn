@@ -232,11 +232,16 @@ class TrwlStation {
   final double? latitude;
   final double? longitude;
 
+  /// External ids of the stop (IBNR/EVA etc.), when Träwelling sends them.
+  /// Older payloads carry a flat `ibnr`; newer ones an `identifiers` list.
+  final List<String> identifiers;
+
   const TrwlStation({
     required this.id,
     required this.name,
     this.latitude,
     this.longitude,
+    this.identifiers = const [],
   });
 
   factory TrwlStation.fromJson(Map<String, dynamic> j) => TrwlStation(
@@ -244,6 +249,11 @@ class TrwlStation {
     name: (j['name'] ?? '').toString(),
     latitude: _dbl(j['latitude']),
     longitude: _dbl(j['longitude']),
+    identifiers: [
+      if (j['ibnr'] != null) j['ibnr'].toString(),
+      for (final i in (j['identifiers'] as List<dynamic>? ?? const []))
+        if (i is Map && i['identifier'] != null) i['identifier'].toString(),
+    ],
   );
 }
 

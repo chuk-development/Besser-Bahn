@@ -59,9 +59,13 @@ class TraewellingAuthNotifier extends Notifier<TraewellingAuthState> {
       state = state.copyWith(clearUser: true, error: _kReconnect);
     };
     ref.onDispose(() => _service.onSessionCleared = null);
-    _restore();
+    ready = _restore();
     return const TraewellingAuthState();
   }
+
+  /// Completes once the stored session was restored (or found missing).
+  /// Await it before deciding "logged in or not" on a cold provider.
+  late Future<void> ready;
 
   /// On startup: if a token exists, keep the user logged in. We show the last
   /// cached profile immediately, then revalidate in the background. Only a

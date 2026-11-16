@@ -105,6 +105,13 @@ caches (`.playwright-mcp/`), signing keys. They're gitignored — keep them out.
   Auto-check-in on save only runs when that setting is on. The symbol is the
   documented per-leg check-in (#108). Do not remove it when cleaning header
   buttons. The Zugnummer screen has its own copy in the search row.
+- **Träwelling-Check-in an geteilten Bahnhöfen (#109):** Ein Name kann bei
+  Träwelling mehrere Halte haben (München Hbf vs. „München Hbf Gl.27-36“ für
+  Gleis 27–36). Der Zug steht nur auf der Tafel seines echten Halts.
+  `checkinFromTrip` probiert darum bis zu 4 Kandidaten (EVA, gleicher Name,
+  gleicher Namensanfang). Das Logo-SVG ist ein weißer Pfad und wird immer
+  eingefärbt (`TraewellingLogo`). Der Login-Zustand wird asynchron geladen:
+  vor „angemeldet?“ immer `traewellingAuthProvider.notifier.ready` abwarten.
 - **Umstiegs-Weg als Text (2026-11-15):** `core/indoor_nav/indoor_route.dart`
   plant Gleis → Gleis Ebene für Ebene aus den bahnhof.de-POIs (Gleise,
   Treppen, Rolltreppen, Aufzüge haben `level`) und gibt kurze Schritte aus

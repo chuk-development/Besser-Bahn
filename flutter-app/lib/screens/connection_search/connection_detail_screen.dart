@@ -2692,7 +2692,7 @@ class _LegSectionState extends ConsumerState<_LegSection>
     final leg = widget.leg;
     if (leg.isWalking || leg.line == null) return null;
     return IconButton(
-      icon: const TraewellingLogo(size: 20),
+      icon: const TraewellingLogo(size: 22),
       tooltip: 'In Träwelling einchecken',
       visualDensity: VisualDensity.compact,
       onPressed: () => startTrwlCheckin(
@@ -2702,6 +2702,7 @@ class _LegSectionState extends ConsumerState<_LegSection>
         boardingName: leg.origin.name,
         boardingDeparture: leg.plannedDeparture ?? leg.departure,
         alightingName: leg.destination.name,
+        boardingEva: leg.origin.id,
       ),
     );
   }

@@ -32,7 +32,12 @@ Future<void> startTrwlCheckin(
   String? boardingName,
   DateTime? boardingDeparture,
   String? alightingName,
+  String? boardingEva,
 }) async {
+  // The session is restored asynchronously on first use. Reading it before
+  // that finished made the first tap claim "not connected" (#109).
+  await ref.read(traewellingAuthProvider.notifier).ready;
+  if (!context.mounted) return;
   final auth = ref.read(traewellingAuthProvider);
   if (!auth.isLoggedIn) {
     final messenger = ScaffoldMessenger.of(context);
@@ -68,6 +73,7 @@ Future<void> startTrwlCheckin(
       boardingName: boardName,
       boardingDeparture: boardDep,
       alightingName: alightName,
+      boardingEva: boardingEva,
       visibility: settings.trwlVisibility,
     );
     return;
@@ -123,6 +129,7 @@ Future<void> autoCheckinSavedJourney(
         boardingName: l.origin.name,
         boardingDeparture: dep,
         alightingName: l.destination.name,
+        boardingEva: l.origin.id,
         visibility: settings.trwlVisibility,
       );
       ok++;
@@ -160,6 +167,7 @@ Future<bool> runTrwlCheckin(
   required DateTime boardingDeparture,
   required String alightingName,
   required int visibility,
+  String? boardingEva,
   String body = '',
   bool force = false,
 }) async {
@@ -171,6 +179,7 @@ Future<bool> runTrwlCheckin(
       boardingName: boardingName,
       boardingDeparture: boardingDeparture,
       alightingName: alightingName,
+      boardingEva: boardingEva,
       visibility: visibility,
       body: body,
       force: force,
