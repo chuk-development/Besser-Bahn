@@ -515,34 +515,8 @@ class JourneysScreen extends ConsumerWidget {
     );
   }
 
-  Widget _dateLabel(BuildContext context, SavedJourney saved) {
-    final dep = saved.journey.plannedDeparture ?? saved.journey.departure;
-    if (dep == null) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 16, 0),
-      child: Text(
-        _relativeDate(dep),
-        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-
-  /// "Heute" / "Morgen" / "Gestern" else the date — day boundaries in German
-  /// rail time, so a connection around midnight keeps its DB day abroad.
-  String _relativeDate(DateTime dt) {
-    final b = dt.berlin;
-    final now = DateTime.now().berlin;
-    final d = DateTime(b.year, b.month, b.day);
-    final today = DateTime(now.year, now.month, now.day);
-    final diff = d.difference(today).inDays;
-    if (diff == 0) return 'Heute · ${b.hhmm}';
-    if (diff == 1) return 'Morgen · ${b.hhmm}';
-    if (diff == -1) return 'Gestern · ${b.hhmm}';
-    return b.dayMonthYear;
-  }
+  Widget _dateLabel(BuildContext context, SavedJourney saved) =>
+      _TripDateLabel(saved.journey.plannedDeparture ?? saved.journey.departure);
 
   Widget _sectionHeader(BuildContext context, String title, int count) {
     return Padding(
@@ -687,6 +661,45 @@ void _dismissJourney(BuildContext context, WidgetRef ref, SavedJourney saved) {
     });
 }
 
+/// Date line above a trip card: "Heute · 14:30" / "Morgen · …" / "Gestern ·
+/// …", else the date. Every list entry (local trip, Gemerkte Reise, ticket)
+/// carries it, so trips on different days can be told apart (#107).
+class _TripDateLabel extends StatelessWidget {
+  final DateTime? departure;
+  const _TripDateLabel(this.departure);
+
+  @override
+  Widget build(BuildContext context) {
+    final dep = departure;
+    if (dep == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 16, 0),
+      child: Text(
+        _relativeDate(dep),
+        style: theme.textTheme.labelMedium?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  /// Day boundaries in German rail time, so a connection around midnight
+  /// keeps its DB day abroad.
+  static String _relativeDate(DateTime dt) {
+    final b = dt.berlin;
+    final now = DateTime.now().berlin;
+    final d = DateTime(b.year, b.month, b.day);
+    final today = DateTime(now.year, now.month, now.day);
+    final diff = d.difference(today).inDays;
+    if (diff == 0) return 'Heute · ${b.hhmm}';
+    if (diff == 1) return 'Morgen · ${b.hhmm}';
+    if (diff == -1) return 'Gestern · ${b.hhmm}';
+    return b.dayMonthYear;
+  }
+}
+
 class _SavedReiseTile extends ConsumerWidget {
   final DbSavedReiseIndex index;
 
@@ -721,6 +734,7 @@ class _SavedReiseTile extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            _TripDateLabel(j.plannedDeparture ?? j.departure),
             JourneyCard(
               journey: j,
               onTap: () => context.push('/connection', extra: j),
@@ -830,42 +844,34 @@ class _OfficialTicketTile extends ConsumerWidget {
         ),
       );
     }
+    final dep =
+        trip.journey?.plannedDeparture ??
+        trip.journey?.departure ??
+        t?.gueltigAb;
+    // Only label a card tile: the placeholder already shows the date.
+    final label = trip.journey != null
+        ? _TripDateLabel(dep)
+        : const SizedBox.shrink();
     if (!past) {
       // A booked upcoming trip is the strongest case for an offline package —
       // and the only one where the ticket part can actually report a ticket.
       final j = trip.journey;
       final key = trip.journeyKey;
-      if (j == null || key == null) return tile;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          label,
           tile,
-          OfflinePackageBar(journey: j, journeyKey: key),
+          if (j != null && key != null)
+            OfflinePackageBar(journey: j, journeyKey: key),
         ],
       );
     }
-    final dep =
-        trip.journey?.plannedDeparture ??
-        trip.journey?.departure ??
-        t?.gueltigAb;
     return Opacity(
       opacity: 0.7,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (dep != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 16, 0),
-              child: Text(
-                DateFormat('dd.MM.yyyy').format(dep.berlin),
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          tile,
-        ],
+        children: [label, tile],
       ),
     );
   }
