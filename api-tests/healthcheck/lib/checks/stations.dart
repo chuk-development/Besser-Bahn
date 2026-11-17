@@ -361,7 +361,11 @@ Future<String> checkBahnhofSitemap() async {
     headers: browserHeaders(),
   );
   r.raiseForStatus();
-  final count = '<loc>https://www.bahnhof.de/'.allMatches(r.text).length;
+  // Since 2026-11 the sitemap lists the new canonical host db.info (same
+  // site, same slugs; www.bahnhof.de still serves every page identically).
+  final count = RegExp(
+    r'<loc>https://(www\.bahnhof\.de|db\.info)/',
+  ).allMatches(r.text).length;
   if (count < 4000) {
     throw CheckError('sitemap only has $count urls (expected >4000)');
   }

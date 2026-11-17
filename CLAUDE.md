@@ -129,6 +129,11 @@ caches (`.playwright-mcp/`), signing keys. They're gitignored — keep them out.
   die Kette darum selbst, Hop für Hop mit 3 min.
 - **Ticket-Reiseplan:** Ein Ticket baut den gebuchten Plan bei jedem Öffnen
   neu; getauschte Züge kommen aus der gespeicherten Reise (gleicher Key).
+- **bahnhof.de heißt jetzt auch db.info (2026-11-17):** `sitemap.xml` und
+  `robots.txt` nennen `https://db.info/...` als kanonische Adresse. Gleiche
+  Seiten, gleiche Slugs; `www.bahnhof.de/<slug>/karte` liefert noch
+  byte-gleich. Fällt bahnhof.de irgendwann weg: Host in der App auf `db.info`
+  umstellen.
 - **Overpass:** overpass-api.de antwortet auf Browser-UA mit 406; für
   Handproben einen Spiegel nehmen, keinen eigenen UA setzen.
 
