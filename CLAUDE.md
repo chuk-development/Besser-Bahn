@@ -38,6 +38,10 @@ in `lib/src/core.dart`. Daily GitHub Action: `.github/workflows/api-health.yml`
 - **Whenever you add or change networking** (a new endpoint, media type, request
   shape, or response parsing), **add or extend a check in `api-tests/healthcheck/lib/checks/`** to
   cover it, and run the script to confirm it passes.
+- **Full run takes ~12 min** (pacing + 429 backoff). Run it in the background
+  or with `--only`/`--group`; a 5-min tool timeout kills it with exit 137.
+  A single 429 or "all Overpass mirrors unavailable" after many runs is
+  transient: rerun that check alone before you investigate.
 - Soft checks (`soft=True`) warn instead of fail — use for known-flaky sources
   (e.g. the public HAFAS mirror).
 
