@@ -19,6 +19,9 @@ git add -A && git commit -m "<conventional message>" && git push
   `upload_certificate.pem`, `pepk.jar`), `key.properties`. These are gitignored —
   keep them that way.
 
+Kein CodeRabbit in diesem Repo (Regel 2026-11-17): kein pre-push-Hook, kein
+`cr review`. Die App hat keine sicherheitskritische Server-Seite, die das lohnt.
+
 ## Network / endpoints — health-check discipline
 
 `api-tests/healthcheck/` (Dart, runs on `dart:io` — the app's own TLS stack)
