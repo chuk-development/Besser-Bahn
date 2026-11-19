@@ -10,6 +10,7 @@ import '../../providers/account_provider.dart';
 import '../../widgets/app_nav_bar.dart';
 import '../../services/update_check_service.dart';
 import '../../widgets/add_ticket_dialog.dart';
+import 'bahnbonus_screen.dart';
 import 'widgets/bahncard_view.dart';
 import '../../core/berlin_time.dart';
 
@@ -577,63 +578,71 @@ class _BahnBonusCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       color: theme.colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Icon(
-              Icons.stars_rounded,
-              color: theme.colorScheme.primary,
-              size: 36,
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'BahnBonus · ${bonus.levelName}',
-                    style: theme.textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${bonus.activeBonusPoints} Punkte · '
-                    '${bonus.activeStatusPoints} Statuspunkte',
-                    style: theme.textTheme.bodyMedium,
-                  ),
-                  if (number != null) ...[
-                    const SizedBox(height: 6),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        // Full BahnBonus (#112): digital card, vouchers, rewards, history.
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const BahnBonusScreen()),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Icon(
+                Icons.stars_rounded,
+                color: theme.colorScheme.primary,
+                size: 36,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      'BahnBonus-Nummer',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.onPrimaryContainer.withAlpha(
-                          180,
+                      'BahnBonus · ${bonus.levelName}',
+                      style: theme.textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${bonus.activeBonusPoints} Punkte · '
+                      '${bonus.activeStatusPoints} Statuspunkte',
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                    if (number != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'BahnBonus-Nummer',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onPrimaryContainer.withAlpha(
+                            180,
+                          ),
                         ),
                       ),
-                    ),
-                    SelectableText(
-                      _grouped(number),
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                        letterSpacing: 0.5,
+                      SelectableText(
+                        _grouped(number),
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                          letterSpacing: 0.5,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            if (number != null)
-              IconButton(
-                tooltip: 'BahnBonus-Nummer kopieren',
-                icon: const Icon(Icons.copy_rounded),
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: number));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('BahnBonus-Nummer kopiert')),
-                  );
-                },
-              ),
-          ],
+              if (number != null)
+                IconButton(
+                  tooltip: 'BahnBonus-Nummer kopieren',
+                  icon: const Icon(Icons.copy_rounded),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: number));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('BahnBonus-Nummer kopiert')),
+                    );
+                  },
+                ),
+              const Icon(Icons.chevron_right_rounded),
+            ],
+          ),
         ),
       ),
     );

@@ -120,6 +120,22 @@ class DbAccountConstants {
   static const bahnbonusCo2Base =
       'https://apis.deutschebahn.com/db/apis/bahnbonus/co2-service/v1';
 
+  /// The rest of the BahnBonus app's backend (#112). Same gateway, same
+  /// `fe_bb_app` bearer and app keys as CO₂.
+  static const bahnbonusLoyaltyBase =
+      'https://apis.deutschebahn.com/db/apis/bahnbonus/loyalty-service';
+  static const bahnbonusBenefitsBase =
+      'https://apis.deutschebahn.com/db/apis/bahnbonus/benefits-service';
+
+  /// Keycloak realm root. `POST {realm}/self-impersonation/create-session-link`
+  /// with `{"redirectUri": …}` returns a link that opens a bahn.de or
+  /// BahnBonus-Prämienwelt page already signed in (needs the
+  /// `self-impersonation` scope of the `fe_bb_app` token).
+  static const realmRoot = 'https://accounts.bahn.de/auth/realms/db';
+  static const praemienweltUrl = 'https://bahnbonus-praemienwelt.de/';
+  static const praemienweltOrdersUrl =
+      'https://bahnbonus-praemienwelt.de/customer/orders';
+
   /// OAuth client used by the official BahnBonus app. CO₂ deliberately does
   /// not accept DB Navigator's `kf_mobile` bearer, even for the same account.
   static const bahnbonusOAuthClientId = 'fe_bb_app';

@@ -90,6 +90,27 @@ caches (`.playwright-mcp/`), signing keys. They're gitignored — keep them out.
   `nahsh.hafas.cloud/gate`.
 - **BahnBonus-Nummer** kommt im normalen Login mit: `bbStatus.loyaltyNumber`.
   Dafür ist kein zweiter BahnBonus-Login nötig (der gilt nur für CO₂).
+- **BahnBonus-Bereich (#112)** (`screens/profile/bahnbonus_screen.dart`,
+  `providers/bahnbonus_provider.dart`, `models/bahnbonus.dart`): gleiche
+  Dienste wie die BahnBonus-App (APK `com.deutschebahn.bahnbonus` 3.8.1,
+  nur bei APKPure), gleicher `fe_bb_app`-Token und App-Keys wie CO₂.
+  Basis `apis.deutschebahn.com/db/apis/bahnbonus/`: `loyalty-service`
+  (`v3/customer/loyalty`, `v3/customer/transactions?type=bonus|status&after=`,
+  `v2/program-infos`), `benefits-service` (`v1/digital-vouchers`,
+  `v1/status-benefits?partner=Deutsche Bahn`, `v1/swap-offers`, `POST
+  v1/swap-offers/{id}/redemptions`). Die digitale Karte ist ein Aztec-Code
+  `BB0001661749;<accountNumber>` (wie `ScanAndCollectPointsViewModel`).
+  Prämienwelt angemeldet öffnen: `POST accounts.bahn.de/auth/realms/db/
+  self-impersonation/create-session-link` mit `{"redirectUri": …}` →
+  `sessionLink`. Der Shop selbst (`rewards-service/v1`: `category-tree`,
+  `cart/*`, `order/place` mit Lieferadresse) ist NICHT nachgebaut, dafür
+  der Browser-Link. Antworten sind nur aus den Kotlin-Modellen bekannt,
+  noch nie live mit Token gesehen: bei Parse-Fehlern zuerst dort prüfen.
+- **Lokales Flutter ist neuer als der Pin** (`flutter: 3.47.0` in
+  `pubspec.yaml`, für IzzyOnDroid). `flutter analyze/test` lokal mit
+  `--no-pub`. Neues Paket: Pin kurz anheben, `flutter pub add`, Pin
+  zurück, `pubspec.lock` zurücksetzen und nur die neuen Einträge von Hand
+  übernehmen (sonst steht `flutter: 3.50.0` im Lock und SDK-Pakete springen).
 - **Karten-Performance messen:** `flutter-app/tool/map_bench` (README dort).
   Emulator mit `-gpu host`, sonst SwiftShader und wertlose Raster-Zeiten. Die
   bahnhof.de-Etagenkarte darf unter Zoom 14 nie Kacheln laden (`_IndoorLayer`

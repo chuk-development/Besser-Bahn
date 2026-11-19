@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/app_log.dart';
 import '../core/constants.dart';
 import '../core/request_coalescer.dart';
+import '../models/bahnbonus.dart';
 import '../models/db_account.dart';
 import '../models/db_ticket.dart';
 import 'oauth_browser.dart';
@@ -1077,28 +1078,37 @@ class DbAccountService {
   Future<http.Response> _sendBahnBonus(
     Uri uri, {
     required bool connect,
+    String method = 'GET',
+    Object? jsonBody,
     bool retry = true,
   }) async {
     await _ensureDeviceInfo();
     await _ensureBahnBonusAccess(connect: connect);
-    final res = await _client
-        .get(
-          uri,
-          headers: {
-            'Authorization': 'Bearer $_bahnBonusAccessToken',
-            'Accept': 'application/json',
-            'Accept-Language': 'de',
-            'DB-Client-Id': DbAccountConstants.bahnbonusClientId,
-            'DB-Api-Key': DbAccountConstants.bahnbonusApiKey,
-            'User-Agent':
-                'BahnBonus/3.6.3 Android/${_deviceOsVersion ?? 'unknown'}',
-          },
-        )
-        .timeout(_timeout);
+    final headers = {
+      'Authorization': 'Bearer $_bahnBonusAccessToken',
+      'Accept': 'application/json',
+      'Accept-Language': 'de',
+      'Cache-Control': 'no-cache',
+      'DB-Client-Id': DbAccountConstants.bahnbonusClientId,
+      'DB-Api-Key': DbAccountConstants.bahnbonusApiKey,
+      'User-Agent': 'BahnBonus/3.6.3 Android/${_deviceOsVersion ?? 'unknown'}',
+      if (jsonBody != null) 'Content-Type': 'application/json',
+    };
+    final req = http.Request(method, uri)..headers.addAll(headers);
+    if (jsonBody != null) req.body = json.encode(jsonBody);
+    final res = await http.Response.fromStream(
+      await _client.send(req).timeout(_timeout),
+    ).timeout(_timeout);
     if ((res.statusCode == 401 || res.statusCode == 403) && retry) {
       final refresh = await _refreshBahnBonus();
       if (refresh == _RefreshOutcome.success) {
-        return _sendBahnBonus(uri, connect: connect, retry: false);
+        return _sendBahnBonus(
+          uri,
+          connect: connect,
+          method: method,
+          jsonBody: jsonBody,
+          retry: false,
+        );
       }
       if (refresh == _RefreshOutcome.transient) {
         throw const DbAccountException(
@@ -1109,6 +1119,143 @@ class DbAccountService {
       throw const DbBahnBonusAuthorizationRequired();
     }
     return res;
+  }
+
+  // --- BahnBonus programme (#112) -------------------------------------------
+  //
+  // Same endpoints the official BahnBonus app calls, with its `fe_bb_app`
+  // token. [connect] = true may open the one-time BahnBonus authorization.
+
+  Future<Map<String, dynamic>> _bbJson(
+    Uri uri,
+    String what, {
+    bool connect = false,
+  }) async {
+    final res = await _sendBahnBonus(uri, connect: connect);
+    return _decode(res, what);
+  }
+
+  Future<List<dynamic>> _bbList(Uri uri, String what) async {
+    final res = await _sendBahnBonus(uri, connect: false);
+    if (res.statusCode == 404 || res.statusCode == 204) return const [];
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw DbAccountException('$what HTTP ${res.statusCode}', res.statusCode);
+    }
+    final data = json.decode(utf8.decode(res.bodyBytes));
+    if (data is List) return data;
+    if (data is Map && data['items'] is List) return data['items'] as List;
+    return const [];
+  }
+
+  /// Points, status and member number.
+  Future<BbLoyalty> bahnbonusLoyalty({bool connect = false}) async {
+    final data = await _bbJson(
+      Uri.parse(
+        '${DbAccountConstants.bahnbonusLoyaltyBase}/v3/customer/loyalty',
+      ),
+      'loyalty',
+      connect: connect,
+    );
+    return BbLoyalty.fromJson(data);
+  }
+
+  /// Status points needed for Silber, Gold and Platin.
+  Future<List<BbLevelBorder>> bahnbonusLevelBorders() async {
+    final data = await _bbJson(
+      Uri.parse('${DbAccountConstants.bahnbonusLoyaltyBase}/v2/program-infos'),
+      'program-infos',
+    );
+    return BbLevelBorder.listFromJson(data);
+  }
+
+  /// One page of the points history, newest first. Pass the previous page's
+  /// `after` cursor to get the next one.
+  Future<BbTransactionPage> bahnbonusTransactions({
+    required BbPointsType type,
+    String? after,
+  }) async {
+    final uri = Uri.parse(
+      '${DbAccountConstants.bahnbonusLoyaltyBase}/v3/customer/transactions',
+    ).replace(queryParameters: {'type': type.name, 'after': ?after});
+    return BbTransactionPage.fromJson(await _bbJson(uri, 'transactions'));
+  }
+
+  /// Digital vouchers plus the Deutsche Bahn status benefits.
+  Future<List<BbDigitalVoucher>> bahnbonusVouchers() async {
+    final base = DbAccountConstants.bahnbonusBenefitsBase;
+    final results = await Future.wait([
+      _bbList(Uri.parse('$base/v1/digital-vouchers'), 'digital-vouchers'),
+      _bbList(
+        Uri.parse(
+          '$base/v1/status-benefits',
+        ).replace(queryParameters: {'partner': 'Deutsche Bahn'}),
+        'status-benefits',
+      ),
+    ]);
+    return [
+      ...BbDigitalVoucher.listFromJson(results[1], statusBenefit: true),
+      ...BbDigitalVoucher.listFromJson(results[0]),
+    ];
+  }
+
+  /// Rewards the app swaps for points in one tap.
+  Future<List<BbSwapOffer>> bahnbonusSwapOffers() async {
+    final res = await _sendBahnBonus(
+      Uri.parse('${DbAccountConstants.bahnbonusBenefitsBase}/v1/swap-offers'),
+      connect: false,
+    );
+    if (res.statusCode == 404 || res.statusCode == 204) return const [];
+    return BbSwapOffer.listFromJson(_decode(res, 'swap-offers'));
+  }
+
+  /// Spends points on [offerId]. Throws on any non-2xx answer; the server
+  /// text (e.g. "nicht genug Punkte") is passed through when it has one.
+  Future<void> redeemBahnbonusSwapOffer(String offerId) async {
+    final res = await _sendBahnBonus(
+      Uri.parse(
+        '${DbAccountConstants.bahnbonusBenefitsBase}/v1/swap-offers/'
+        '${Uri.encodeComponent(offerId)}/redemptions',
+      ),
+      connect: false,
+      method: 'POST',
+    );
+    if (res.statusCode >= 200 && res.statusCode < 300) return;
+    String? msg;
+    try {
+      final j = json.decode(utf8.decode(res.bodyBytes));
+      if (j is Map) {
+        msg = (j['detail'] ?? j['message'] ?? j['title'])?.toString();
+      }
+    } catch (_) {}
+    throw DbAccountException(
+      msg ?? 'Einlösen fehlgeschlagen (HTTP ${res.statusCode})',
+      res.statusCode,
+    );
+  }
+
+  /// A one-time link that opens [target] (bahn.de or the Prämienwelt)
+  /// already signed in. Falls back to [target] itself when DB refuses, so
+  /// the caller can always open something.
+  Future<Uri> bahnbonusSessionLink(Uri target) async {
+    try {
+      final res = await _sendBahnBonus(
+        Uri.parse(
+          '${DbAccountConstants.realmRoot}/self-impersonation/'
+          'create-session-link',
+        ),
+        connect: false,
+        method: 'POST',
+        jsonBody: {'redirectUri': target.toString()},
+      );
+      final link = _decode(res, 'session-link')['sessionLink']?.toString();
+      final uri = link == null ? null : Uri.tryParse(link);
+      if (uri != null && uri.scheme == 'https') return uri;
+    } on DbBahnBonusAuthorizationRequired {
+      rethrow;
+    } catch (e) {
+      AppLog.log('bahnbonus session link failed: $e', tag: 'db-account');
+    }
+    return target;
   }
 
   /// Fetch BahnCards. Returns null when the server replies 304 Not Modified

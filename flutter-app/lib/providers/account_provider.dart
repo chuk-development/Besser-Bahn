@@ -16,6 +16,7 @@ import '../models/station.dart';
 import '../services/db_account_service.dart';
 import '../services/oauth_browser.dart';
 import '../core/extensions.dart';
+import 'bahnbonus_provider.dart' show BahnbonusLoyaltyCache;
 import 'library_provider.dart';
 import 'service_providers.dart';
 import 'settings_provider.dart';
@@ -381,6 +382,7 @@ class DbAuthNotifier extends Notifier<DbAuthState> {
     await _ProfileCache.clear();
     await _BahnBonusCache.clear();
     await _BahnBonusCo2Cache.clear();
+    await BahnbonusLoyaltyCache.clear();
     // The key→rkUuid map points at the previous holder's saved trips.
     await ref.read(dbSavedReiseIdsProvider.notifier).clear();
   }

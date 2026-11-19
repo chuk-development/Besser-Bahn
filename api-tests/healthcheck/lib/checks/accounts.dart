@@ -70,6 +70,12 @@ final List<Check> accountsChecks = [
     soft: true,
     group: 'accounts',
   ),
+  Check(
+    'DB BahnBonus loyalty/benefits services (#112)',
+    checkDbBahnbonusServices,
+    soft: true,
+    group: 'accounts',
+  ),
   // Soft: GitHub rate-limits per IP, and CI shares its IP widely.
   Check(
     'GitHub releases API (In-App-Update-Hinweis)',
@@ -390,6 +396,50 @@ Future<String> checkDbBahnbonusCo2() async {
   return 'co2-service/v1/statistics reachable, auth-gated (status=${r.status})';
 }
 
+/// BahnBonus screen (#112): points, history, tiers, vouchers, swap offers
+/// and the signed-in Prämienwelt link. No token in CI, so prove each route
+/// still exists (401, not the gateway's 404 "No resources match").
+Future<String> checkDbBahnbonusServices() async {
+  const base = 'https://apis.deutschebahn.com/db/apis/bahnbonus';
+  const paths = [
+    '/loyalty-service/v3/customer/loyalty',
+    '/loyalty-service/v3/customer/transactions?type=bonus',
+    '/loyalty-service/v2/program-infos',
+    '/benefits-service/v1/digital-vouchers',
+    '/benefits-service/v1/status-benefits?partner=Deutsche%20Bahn',
+    '/benefits-service/v1/swap-offers',
+  ];
+  final seen = <String>[];
+  for (final p in paths) {
+    final r = await get(
+      '$base$p',
+      headers: {
+        'Accept': 'application/json',
+        'DB-Client-Id': 'b4ceb052260d1df18955c9769f2f6ee1',
+        'DB-Api-Key': 'af42968e4445cf550ad06f8b114f0cda',
+      },
+    );
+    if (r.status == 404 || r.status == 410) {
+      throw CheckError('$p gone (status=${r.status})');
+    }
+    if (![401, 403, 429].contains(r.status)) {
+      throw CheckError('$p unexpected status ${r.status} (expected 401/403)');
+    }
+    seen.add('${r.status}');
+  }
+  // create-session-link must exist on the realm (405/401/400, not 404).
+  final link = await post(
+    'https://accounts.bahn.de/auth/realms/db/self-impersonation/create-session-link',
+    headers: {'Content-Type': 'application/json'},
+    body: '{"redirectUri":"https://bahnbonus-praemienwelt.de/"}',
+  );
+  if (link.status == 404) {
+    throw CheckError('self-impersonation/create-session-link gone (404)');
+  }
+  return '${paths.length} BahnBonus routes auth-gated (${seen.join('/')}), '
+      'session-link ${link.status}';
+}
+
 /// The DB login page has to render for a request shaped like the browser the
 /// app actually opens (#35): the scheme redirect yields Keycloak's form, an
 /// RFC 8252 loopback redirect is stopped by DB's edge WAF. Browser headers are
@@ -543,7 +593,6 @@ Future<String> checkGithubReleasesApi() async {
   }
   return 'latest=$tag, ${apks.length} apk asset(s)';
 }
-
 
 /// GET /mob/kcistatus/ticketreferenz/{ref}/verbindung/{tripUUID} — Komfort-
 /// Check-in state on the ticket view. Needs a Bearer (login or the anonymous
